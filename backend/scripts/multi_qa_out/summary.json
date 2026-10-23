@@ -1,0 +1,22 @@
+{
+  "math": {
+    "ok": false,
+    "error": "[WinError 10054] An existing connection was forcibly closed by the remote host"
+  },
+  "chemistry": {
+    "ok": false,
+    "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+  },
+  "upsc": {
+    "ok": false,
+    "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+  },
+  "medical_avastin": {
+    "ok": false,
+    "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+  },
+  "medical_xolair": {
+    "ok": false,
+    "error": "[WinError 10061] No connection could be made because the target machine actively refused it"
+  }
+}

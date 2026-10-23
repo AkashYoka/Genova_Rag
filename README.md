@@ -1,0 +1,662 @@
+---
+title: Genova_Rag
+emoji: 🧠
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: true
+license: mit
+short_description: Enterprise Agentic RAG — upload PDFs and chat with AI
+---
+
+<div align="center">
+
+<br/>
+
+# Yoka
+
+### Genova_Rag
+
+**Enterprise Agentic Retrieval-Augmented Generation**
+
+<br/>
+
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://postgresql.org/)
+[![ChromaDB](https://img.shields.io/badge/ChromaDB-VectorDB-FF6B35?style=for-the-badge)](https://trychroma.com/)
+[![HuggingFace](https://img.shields.io/badge/HuggingFace-Inference-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/)
+[![Celery](https://img.shields.io/badge/Celery-Redis-37814A?style=for-the-badge&logo=celery&logoColor=white)](https://docs.celeryq.dev/)
+[![Docker](https://img.shields.io/badge/Docker-Multi--Stage-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com/)
+
+<br/>
+
+> **Upload · Embed · Retrieve · Chat** — An AI document assistant with an agentic RAG pipeline, streaming responses, and per-user data isolation.
+
+<br/>
+
+[Features](#-key-features) · [Tech Stack](#-tech-stack) · [Getting Started](#-getting-started) · [Architecture](#-architecture) · [RAG Pipeline](#-rag-pipeline) · [API Reference](#-api-reference) · [Deployment](#-deployment)
+
+---
+
+</div>
+
+## Overview
+
+**Genova_Rag** lets users upload complex PDFs, financial reports, legal contracts, and research papers — then chat with an AI that provides **accurate, cited answers** powered by a multi-stage Retrieval-Augmented Generation pipeline.
+
+The system uses **hybrid search (vector + BM25) with Reciprocal Rank Fusion** and **cross-encoder reranking** to find the most relevant document chunks, streams AI-generated answers token-by-token, and highlights exact source citations with page numbers — all inside a modern Next.js frontend with JWT-secured per-user data isolation.
+
+<br/>
+
+## Architecture
+
+> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a route-by-route system map, request-flow diagrams, and Swagger/OpenAPI documentation guidance.
+
+```mermaid
+flowchart TD
+
+subgraph group_backend["Backend"]
+  node_backend_main["App entry<br/>FastAPI app<br/>[main.py]"]
+  node_backend_routes["Routes<br/>API layer"]
+  node_backend_auth["Auth<br/>JWT/bcrypt<br/>[auth.py]"]
+  node_backend_documents["Documents<br/>doc lifecycle<br/>[documents.py]"]
+  node_backend_chat["Chat<br/>streaming RAG<br/>[chat.py]"]
+  node_backend_workspaces["Workspaces<br/>tenant scope<br/>[workspaces.py]"]
+  node_backend_graph_api["Graph API<br/>knowledge graph<br/>[graph.py]"]
+  node_backend_health["Health<br/>checks<br/>[health.py]"]
+  node_backend_admin["Admin<br/>ops API<br/>[admin.py]"]
+  node_backend_ingestion["Ingestion<br/>async pipeline"]
+  node_backend_rag_retrieval["Retrieval<br/>hybrid RAG<br/>[retriever.py]"]
+  node_backend_rag_generation["Generation<br/>prompt/LLM<br/>[prompts.py]"]
+  node_backend_graph_rag["Graph RAG<br/>entity graph<br/>[graph_builder.py]"]
+  node_backend_storage_db[("Database<br/>SQLAlchemy/PG<br/>[database.py]")]
+  node_backend_storage_vector[("Vector store<br/>ChromaDB<br/>[vectorstore.py]")]
+  node_backend_storage_cache[("Cache<br/>Redis/LRU<br/>[cache.py]")]
+  node_backend_queue["Queue<br/>Celery/Redis<br/>[celery_app.py]"]
+end
+
+subgraph group_frontend["Frontend"]
+  node_frontend_app["Next app<br/>App Router"]
+  node_frontend_chat["Chat UI<br/>stream client"]
+  node_frontend_documents["Docs UI<br/>document workspace"]
+  node_frontend_graph["Graph view<br/>knowledge graph<br/>[KnowledgeGraph.tsx]"]
+  node_frontend_state["State<br/>Zustand stores"]
+  node_frontend_api["API client<br/>fetch layer<br/>[api.ts]"]
+end
+
+subgraph group_ops["Ops & Integrations"]
+  node_integrations_bot["Discord bot<br/>integration<br/>[bot.py]"]
+  node_ops_obs["Observability<br/>metrics/tracing<br/>[observability.py]"]
+  node_ops_deploy["Deploy stack<br/>containers<br/>[docker-compose.yml]"]
+end
+
+node_frontend_app -->|"uses"| node_frontend_api
+node_frontend_api -->|"requests"| node_backend_main
+node_frontend_chat -->|"reads/writes"| node_frontend_state
+node_frontend_documents -->|"reads/writes"| node_frontend_state
+node_frontend_graph -->|"loads"| node_frontend_api
+node_backend_main -->|"mounts"| node_backend_routes
+node_backend_routes -->|"exposes"| node_backend_auth
+node_backend_routes -->|"exposes"| node_backend_documents
+node_backend_routes -->|"exposes"| node_backend_chat
+node_backend_routes -->|"exposes"| node_backend_workspaces
+node_backend_routes -->|"exposes"| node_backend_graph_api
+node_backend_routes -->|"exposes"| node_backend_health
+node_backend_routes -->|"exposes"| node_backend_admin
+node_backend_documents -->|"enqueues"| node_backend_queue
+node_backend_queue -->|"runs"| node_backend_ingestion
+node_backend_ingestion -->|"persists"| node_backend_storage_db
+node_backend_ingestion -->|"indexes"| node_backend_storage_vector
+node_backend_ingestion -->|"caches"| node_backend_storage_cache
+node_backend_chat -->|"retrieves"| node_backend_rag_retrieval
+node_backend_rag_retrieval -->|"searches"| node_backend_storage_vector
+node_backend_rag_retrieval -->|"filters"| node_backend_storage_db
+node_backend_rag_retrieval -->|"supplies context"| node_backend_rag_generation
+node_backend_rag_generation -->|"streams"| node_backend_chat
+node_backend_graph_api -->|"queries"| node_backend_graph_rag
+node_backend_graph_rag -->|"persists"| node_backend_storage_db
+node_backend_auth -->|"authenticates"| node_backend_storage_db
+node_backend_workspaces -->|"scopes"| node_backend_storage_db
+node_backend_health -->|"checks"| node_backend_storage_db
+node_backend_health -->|"checks"| node_backend_storage_cache
+node_backend_health -->|"checks"| node_backend_queue
+node_backend_health -->|"checks"| node_backend_storage_vector
+node_ops_obs -->|"observes"| node_backend_main
+node_ops_deploy -->|"runs"| node_backend_main
+node_ops_deploy -->|"runs"| node_frontend_app
+node_integrations_bot -.->|"integrates"| node_backend_routes
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_backend_main,node_backend_routes,node_backend_auth,node_backend_documents,node_backend_chat,node_backend_workspaces,node_backend_graph_api,node_backend_health,node_backend_admin,node_backend_ingestion,node_backend_rag_retrieval,node_backend_rag_generation,node_backend_graph_rag,node_backend_storage_db,node_backend_storage_vector,node_backend_storage_cache,node_backend_queue toneBlue
+class node_frontend_app,node_frontend_chat,node_frontend_documents,node_frontend_graph,node_frontend_state,node_frontend_api toneAmber
+class node_integrations_bot,node_ops_obs,node_ops_deploy toneMint
+```
+
+<br/>
+
+### System Flow Overview
+
+1. User uploads a document via the Next.js frontend.
+2. FastAPI queues a Celery ingestion task backed by Redis.
+3. The worker chunks the document, generates local embeddings (cached via Redis/LRU), builds a BM25 index, and stores vectors in ChromaDB.
+4. At query time, hybrid search merges vector and BM25 results via Reciprocal Rank Fusion.
+5. A cross-encoder reranker refines the top candidates.
+6. The agent assembles a prompt and calls the HuggingFace Inference API.
+7. Streamed SSE tokens are returned to the frontend chat panel.
+
+<br/>
+
+## Tech Stack
+
+<div align="center">
+
+### Backend
+
+| | Technology | Purpose |
+|---|---|---|
+| <img src="https://skillicons.dev/icons?i=fastapi" width="30"/> | **FastAPI** | Async web framework + routing |
+| <img src="https://skillicons.dev/icons?i=python" width="30"/> | **Python 3.11** | Runtime environment |
+| <img src="https://skillicons.dev/icons?i=postgresql" width="30"/> | **PostgreSQL / SQLite** | Relational database (SQLAlchemy ORM) |
+| <img src="https://img.shields.io/badge/JWT-000000?style=flat&logo=jsonwebtokens&logoColor=white" height="24"/> | **JWT + bcrypt** | Authentication & password hashing |
+| <img src="https://img.shields.io/badge/ChromaDB-000000?style=flat" height="24"/> | **ChromaDB** | Local vector store (embeddings) |
+| <img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=flat&logo=huggingface&logoColor=black" height="24"/> | **HuggingFace Inference API** | LLM answer generation |
+| <img src="https://img.shields.io/badge/sentence--transformers-000000?style=flat" height="24"/> | **sentence-transformers** | Local embedding model (all-MiniLM-L6-v2) |
+
+### Frontend
+
+| | Technology | Purpose |
+|---|---|---|
+| <img src="https://skillicons.dev/icons?i=nextjs" width="30"/> | **Next.js 14** | React framework (App Router) |
+| <img src="https://skillicons.dev/icons?i=typescript" width="30"/> | **TypeScript** | Frontend language |
+| <img src="https://skillicons.dev/icons?i=tailwind" width="30"/> | **Tailwind CSS** | Utility-first styling |
+
+### AI / ML Pipeline
+
+| | Technology | Purpose |
+|---|---|---|
+| <img src="https://img.shields.io/badge/sentence--transformers-000000?style=flat" height="24"/> | **sentence-transformers (all-MiniLM-L6-v2)** | Generates vector embeddings for document chunks |
+| <img src="https://img.shields.io/badge/ChromaDB-000000?style=flat" height="24"/> | **ChromaDB** | Stores + retrieves embeddings locally |
+| <img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=flat&logo=huggingface&logoColor=black" height="24"/> | **HuggingFace Inference API** | Generates answers from retrieved context |
+| <img src="https://img.shields.io/badge/Cross--Encoder-000000?style=flat" height="24"/> | **BAAI/bge-reranker-v2-m3** | Cross-encoder reranking for retrieval quality |
+| <img src="https://img.shields.io/badge/GraphRAG-000000?style=flat" height="24"/> | **Knowledge Graph (GraphRAG)** | Entity extraction + relationship graphs |
+| <img src="https://img.shields.io/badge/PyMuPDF-FF0000?style=flat" height="24"/> | **PyMuPDF + pdfplumber + python-docx** | Document text extraction |
+
+### DevOps & Tooling
+
+| | Technology | Purpose |
+|---|---|---|
+| <img src="https://skillicons.dev/icons?i=docker" width="30"/> | **Docker Multi-Stage** | Containerised deployment |
+| <img src="https://skillicons.dev/icons?i=githubactions" width="30"/> | **GitHub Actions** | CI/CD (E2E, security, deploy) |
+| <img src="https://img.shields.io/badge/Playwright-45ba4b?style=flat&logo=playwright&logoColor=white" height="24"/> | **Playwright** | E2E + visual regression tests |
+| <img src="https://img.shields.io/badge/Prometheus-E6522C?style=flat&logo=prometheus&logoColor=white" height="24"/> | **Prometheus + Grafana** | Metrics & observability |
+| <img src="https://img.shields.io/badge/HuggingFace_Spaces-FFD21E?style=flat&logo=huggingface&logoColor=black" height="24"/> | **HuggingFace Spaces** | Production deployment |
+
+</div>
+
+<br/>
+
+## Key Features
+
+### Recent Updates
+
+- Discord Bot Integration
+- Celery + Redis Background PDF Processing
+- Email Verification Workflow
+- RAGAS Evaluation Pipeline
+- Response Caching with Redis
+- Optimized Docker Deployment
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### Users
+- JWT-secured register, login & email verification
+- Upload **PDF**, **DOCX**, **TXT**, and **Markdown**
+- URL ingestion via web crawler
+- Ask questions in natural language
+- **Streaming AI responses** token-by-token
+- Inline **source citations** with page numbers
+- Export chat as **Markdown, TXT, or PDF**
+- Per-user complete data isolation
+
+</td>
+<td width="33%" valign="top">
+
+### RAG Pipeline
+- Smart **recursive text chunking** (configurable size & overlap)
+- **Local embeddings** — no data leaves your machine
+- **Embedding cache** (Redis + LRU) — skip redundant computation
+- **Hybrid search** — vector + BM25 merged via RRF
+- **Cross-encoder reranking** for precision answers
+- **Image caption extraction** from PDF figures
+- **URL extraction** from PDF link annotations
+- **Knowledge graph** (GraphRAG) per document
+
+</td>
+<td width="33%" valign="top">
+
+### Engineering
+- **Async FastAPI** with SSE streaming
+- **PostgreSQL** metadata + **ChromaDB** vectors
+- **Celery + Redis** async ingestion pipeline
+- **Multi-stage Docker** with CPU & GPU profiles
+- **Prometheus metrics** + Grafana dashboard
+- **Deep health endpoint** — DB, Redis, Celery, ChromaDB
+- Rate limiting, CORS, file validation, JWT expiry
+- **Playwright** E2E + visual regression tests
+
+</td>
+</tr>
+</table>
+
+<br/>
+
+## Project Structure
+
+```
+Genova_Rag/
+│
+├── backend/
+│   ├── app/
+│   │   ├── main.py                 # FastAPI app — lifespan, middleware, routers
+│   │   ├── config.py               # Pydantic settings (env vars)
+│   │   ├── models.py               # SQLAlchemy ORM models
+│   │   ├── schemas.py              # Pydantic request/response schemas
+│   │   ├── database.py             # Engine, session, migrations
+│   │   ├── auth.py                 # JWT helpers
+│   │   ├── tasks.py                # Celery task definitions
+│   │   │
+│   │   ├── routes/
+│   │   │   ├── auth.py             # Register, login, OAuth
+│   │   │   ├── documents.py        # Upload, list, delete, status
+│   │   │   ├── chat.py             # Ask, stream, history, export
+│   │   │   ├── health.py           # Deep health check endpoint
+│   │   │   ├── admin.py            # Admin stats
+│   │   │   └── workspaces.py       # Workspace management
+│   │   │
+│   │   ├── rag/
+│   │   │   ├── chunker.py          # PDF/DOCX/TXT extraction + chunking
+│   │   │   ├── embeddings.py       # Local embeddings + Redis/LRU cache
+│   │   │   ├── vectorstore.py      # ChromaDB operations
+│   │   │   ├── bm25.py             # BM25 index per document
+│   │   │   ├── retriever.py        # Hybrid search + RRF + reranking
+│   │   │   ├── reranker.py         # Cross-encoder reranker
+│   │   │   ├── vision.py           # Image caption extraction
+│   │   │   ├── url_extractor.py    # PDF URL/link extraction
+│   │   │   ├── graph_builder.py    # Knowledge graph (GraphRAG)
+│   │   │   ├── agent.py            # LLM answer generation
+│   │   │   └── summarizer.py       # Document summarisation
+│   │   │
+│   │   └── services/
+│   │       └── document_ingestion.py  # End-to-end ingestion pipeline
+│   │
+│   ├── tests/                      # pytest test suite
+│   ├── requirements.txt
+│   └── migrate_add_extracted_urls.py
+│
+├── frontend/
+│   ├── src/
+│   │   ├── app/                    # Next.js App Router pages
+│   │   ├── components/             # React components
+│   │   ├── store/                  # Zustand state stores
+│   │   ├── lib/                    # API client, auth, utilities
+│   │   └── services/               # API service layer
+│   ├── e2e/                        # Playwright E2E + snapshot tests
+│   ├── next.config.ts
+│   └── playwright.config.ts
+│
+├── docs/
+│   └── ARCHITECTURE.md
+│
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                  # Backend CI
+│       ├── e2e.yml                 # Playwright E2E + visual regression
+│       ├── deploy.yml              # Docker build (main branch)
+│       └── devsecops.yml           # Security scans
+│
+├── docker-compose.yml              # CPU + GPU + debug profiles + log rotation
+├── Dockerfile                      # Multi-stage backend build
+├── frontend/Dockerfile             # Multi-stage frontend build (nginx)
+└── .env.example
+```
+
+<br/>
+
+## Getting Started
+
+### Prerequisites
+
+- ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white) **Python 3.11+** (3.13 works for local Ollama setup)
+- ![Node](https://img.shields.io/badge/Node.js-20+-339933?style=flat&logo=nodedotjs&logoColor=white) **Node.js 20+**
+- ![Ollama](https://img.shields.io/badge/Ollama-local-000000?style=flat) **Ollama** running at `http://localhost:11434` (default LLM + embeddings)
+- ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white) **Docker + Docker Compose** (optional — not required for local Ollama)
+
+**Default local models (override via OS env vars if needed):**
+- Chat: `qwen2.5:3b`
+- Embeddings: `nomic-embed-text` (768-d)
+- Chroma persist dir: `./data/chroma_db_ollama_nomic` (separate from any MiniLM 384-d index)
+
+A `.env` file is **not required**. HuggingFace `HF_TOKEN` is optional when using Ollama.
+
+---
+
+### 1. Project root
+
+Work from the project root directory for all setup and run commands below.
+
+### 2. Windows + Ollama (recommended local path — no Docker, no `.env`)
+
+#### One-time setup
+
+```powershell
+# From the project root
+# 1) Confirm Ollama is running and models exist
+ollama list
+# If missing:
+#   ollama pull qwen2.5:3b
+#   ollama pull nomic-embed-text
+
+# 2) Backend venv + deps
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 3) Frontend deps (new terminal or after deactivating)
+cd ..\frontend
+npm install
+```
+
+#### Every time you start the app
+
+```powershell
+# Terminal A — ensure Ollama is running (Windows app or:)
+# ollama serve
+
+# Terminal B — backend (cwd must be backend/)
+cd backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 7860
+
+# Terminal C — frontend
+cd frontend
+npm run dev
+```
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:7860 |
+| API Docs (Swagger) | http://localhost:7860/docs |
+| Health | http://localhost:7860/api/v1/health/status |
+
+**Notes for Windows local mode:**
+- SQLite is used by default (`./data/app.db`) — Postgres is not required.
+- Redis/Celery are optional. If Redis is down, Celery runs in **eager** mode and uploads still ingest in-process.
+- Register a user in the UI (no SMTP → account is auto-verified for local testing).
+- Optional overrides (PowerShell session only, no `.env` file):
+
+```powershell
+$env:LLM_MODEL = "qwen2.5:3b"
+$env:EMBEDDING_MODEL = "nomic-embed-text"
+$env:OLLAMA_BASE_URL = "http://localhost:11434"
+$env:NEXT_PUBLIC_API_URL = "http://localhost:7860"
+```
+
+### 3. Optional: HuggingFace Inference instead of Ollama
+
+```powershell
+$env:LLM_PROVIDER = "huggingface"
+$env:EMBEDDING_PROVIDER = "huggingface"   # or keep ollama embeddings
+$env:LLM_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+$env:HF_TOKEN = "hf_..."
+$env:EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+$env:EMBEDDING_DIMENSION = "384"
+$env:CHROMA_PERSIST_DIR = "./data/chroma_db"   # separate from Ollama index
+```
+
+### 4. Optional `.env` file
+
+Copy `.env.example` only if you prefer file-based config. The app also reads OS environment variables. Do not commit secrets.
+
+#### Email Verification Setup (optional)
+
+Without SMTP settings, registration auto-verifies (or returns a local verification link) so you can test without email credentials.
+
+### 5. Run with Docker (optional full stack)
+
+```bash
+# CPU-only (no GPU needed)
+docker compose --profile cpu up --build
+
+# GPU-accelerated (requires NVIDIA Container Toolkit)
+docker compose --profile gpu up --build
+
+# Also start pgAdmin at http://localhost:5050
+docker compose --profile cpu --profile debug up --build
+```
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:7860 |
+| API Docs | http://localhost:7860/docs |
+| pgAdmin | http://localhost:5050 (debug profile) |
+
+### 6. Set up crawl4ai (URL Upload Feature — optional)
+
+```bash
+crawl4ai-setup
+```
+
+### Troubleshooting (Windows + Ollama)
+
+| Symptom | Fix |
+|---------|-----|
+| `Cannot reach Ollama` / health `ollama: down` | Start the Ollama Windows app, then open `http://localhost:11434/api/tags`. |
+| `model ... is not installed` | `ollama pull qwen2.5:3b` and `ollama pull nomic-embed-text` |
+| Upload fails with `python-magic` / libmagic | `pip uninstall python-magic` then `pip install python-magic-bin==0.4.14` (unstructured may reinstall pure `python-magic`) |
+| Answers ignore the PDF / no citations | Confirm health shows Ollama `up`, re-upload after embedding model change, and check Chroma dir is `./data/chroma_db_ollama_nomic` |
+| Redis / Celery shown as down | Expected locally — Celery falls back to eager/in-process ingestion |
+| Frontend cannot reach API | Ensure backend is on port 7860; frontend defaults to `http://localhost:7860` |
+| Mixing MiniLM (384-d) and nomic (768-d) vectors | Do not reuse `./data/chroma_db`. Ollama uses a separate persist dir by default |
+
+<br/>
+
+## RAG Pipeline
+
+```
+                    ┌─────────────────────────────────────────────┐
+                    │         PDF / DOCX / TXT / MD Upload        │
+                    └───────────────────┬─────────────────────────┘
+                                        │
+                                        ▼
+                    ┌─────────────────────────────────────────────┐
+                    │   PyMuPDF / pdfplumber / python-docx Parser │
+                    │   + Image caption extraction                │
+                    │   + PDF URL/link annotation extraction      │
+                    └───────────────────┬─────────────────────────┘
+                                        │
+                                        ▼
+                    ┌─────────────────────────────────────────────┐
+                    │      Recursive Character Text Splitter      │
+                    │   chunk_size=1000  |  overlap=200           │
+                    └───────────────────┬─────────────────────────┘
+                                        │
+                                        ▼
+                    ┌─────────────────────────────────────────────┐
+                    │  all-MiniLM-L6-v2  (local embeddings)       │
+                    │  384-dim · Redis + LRU cache (24h TTL)      │
+                    └──────────────┬──────────────────────────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    ▼                             ▼
+         ┌──────────────────┐         ┌─────────────────────┐
+         │ ChromaDB vectors │         │  BM25 keyword index │
+         │ (per-user coll.) │         │  (per-document .pkl)│
+         └──────────────────┘         └─────────────────────┘
+
+                          ── At Query Time ──
+
+  User Question ──▶ Embed (cached) ──▶ Vector Search (Top-K=20)
+                         │
+                         ├──▶ BM25 Search (Top-K=20)
+                         │
+                         ▼
+              Reciprocal Rank Fusion (RRF, k=60)
+                         │
+                         ▼
+          BGE-Reranker-v2-m3 Cross-Encoder (Top-K=8)
+                         │
+                         ▼
+        Prompt Assembly (system + context + question)
+                         │
+                         ▼
+        Qwen2.5-72B-Instruct (HF Inference API)
+                         │
+                         ▼
+        Streamed SSE tokens ──▶ Frontend ChatPanel
+```
+
+<br/>
+
+## API Reference
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/v1/auth/register` | ❌ | Create a new user account |
+| `POST` | `/api/v1/auth/login` | ❌ | Login and receive JWT tokens |
+| `GET` | `/api/v1/auth/me` | ✅ | Get current user profile |
+| `POST` | `/api/v1/documents/upload` | ✅ | Upload PDF/DOCX/TXT and enqueue ingestion (`202`) |
+| `POST` | `/api/v1/documents/urlupload` | ✅ | Crawl a URL and ingest as document |
+| `GET` | `/api/v1/documents/` | ✅ | List documents (pagination + `?q=` name filter) |
+| `GET` | `/api/v1/documents/{id}` | ✅ | Get document metadata (incl. extracted URLs) |
+| `GET` | `/api/v1/documents/{id}/status` | ✅ | Poll ingestion progress |
+| `DELETE` | `/api/v1/documents/{id}` | ✅ | Soft-delete document |
+| `POST` | `/api/v1/chat/ask/stream` | ✅ | Ask a question (SSE streaming) |
+| `GET` | `/api/v1/chat/history/{doc_id}` | ✅ | Get chat history for a document |
+| `DELETE` | `/api/v1/chat/history/{doc_id}` | ✅ | Clear chat history |
+| `GET` | `/api/v1/chat/export/{doc_id}` | ✅ | Export transcript as MD / TXT / PDF |
+| `GET` | `/api/v1/chat/sessions` | ✅ | List chat sessions |
+| `POST` | `/api/v1/chat/sessions` | ✅ | Create chat session |
+| `GET` | `/api/v1/health/status` | ❌ | Deep health check (DB, Redis, Celery, ChromaDB) |
+| `GET` | `/api/health` | ❌ | Basic liveness check |
+
+> Full interactive docs at `/docs` (Swagger UI) when running locally.
+
+<br/>
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `SECRET_KEY` | ❌ (dev) | insecure default | JWT signing secret. Override in production. |
+| `LLM_PROVIDER` | ❌ | `ollama` | `ollama` or `huggingface` |
+| `EMBEDDING_PROVIDER` | ❌ | `ollama` | `ollama` or `huggingface` |
+| `OLLAMA_BASE_URL` | ❌ | `http://localhost:11434` | Local Ollama server |
+| `LLM_MODEL` | ❌ | `qwen2.5:3b` | Ollama chat model (or HF repo id if provider=huggingface) |
+| `EMBEDDING_MODEL` | ❌ | `nomic-embed-text` | Ollama embedding model (768-d) |
+| `EMBEDDING_DIMENSION` | ❌ | `768` | Must match embedding model |
+| `HF_TOKEN` | ❌ | — | Required only when `LLM_PROVIDER=huggingface` |
+| `DATABASE_URL` | ❌ | `sqlite:///./data/app.db` | SQLAlchemy connection string (SQLite or PostgreSQL) |
+| `CELERY_BROKER_URL` | ❌ | `redis://localhost:6379/0` | Redis broker for Celery (optional locally) |
+| `CELERY_RESULT_BACKEND` | ❌ | `redis://localhost:6379/1` | Redis backend for Celery results |
+| `REDIS_URL` | ❌ | — | Redis URL for response + embedding cache |
+| `UPLOAD_DIR` | ❌ | `./data/uploads` | File storage directory |
+| `CHROMA_PERSIST_DIR` | ❌ | `./data/chroma_db_ollama_nomic` | ChromaDB persistence directory (Ollama/nomic) |
+| `EMBEDDING_CACHE_TTL` | ❌ | `86400` | Embedding cache TTL in seconds (24h) |
+| `LLM_TEMPERATURE` | ❌ | `0.3` | LLM sampling temperature |
+| `RERANKER_MODEL` | ❌ | `BAAI/bge-reranker-v2-m3` | Cross-encoder reranker model |
+| `USE_HYBRID_SEARCH` | ❌ | `True` | Enable BM25 + vector hybrid search |
+| `RRF_K` | ❌ | `60` | RRF smoothing constant |
+| `CHUNK_SIZE` | ❌ | `1000` | Characters per document chunk |
+| `CHUNK_OVERLAP` | ❌ | `200` | Overlap between consecutive chunks |
+| `TOP_K_RETRIEVAL` | ❌ | `20` | Candidates retrieved from vector store |
+| `TOP_K_RERANK` | ❌ | `8` | Final chunks after reranking |
+| `VISION_PROVIDER` | ❌ | — | Set to `openai` to use GPT-4o-mini for image captions |
+| `OPENAI_API_KEY` | ❌ | — | Required when `VISION_PROVIDER=openai` |
+| `ENVIRONMENT` | ❌ | `development` | Set to `production` to lock CORS |
+| `FRONTEND_URL` | ❌ | `http://localhost:3000` | Public frontend URL for OAuth + email links |
+| `NEXT_PUBLIC_API_URL` | ❌ | `http://localhost:7860` | Backend URL for the Next.js client |
+
+<br/>
+
+## Scripts
+
+### Backend (`backend/`)
+
+| Command | Description |
+|---------|-------------|
+| `uvicorn app.main:app --reload` | Start FastAPI with hot reload |
+| `celery -A app.celery_app.celery_app worker --loglevel=info` | Start Celery worker |
+| `python migrate_add_extracted_urls.py` | Run URL extraction column migration |
+| `python scripts/run_ragas_eval.py --user-id <id>` | Run RAGAS evaluation (vector vs GraphRAG) |
+
+### Frontend (`frontend/`)
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start Next.js dev server |
+| `npm run build` | Production build |
+| `npm run test` | Run Vitest unit tests |
+| `npm run test:e2e` | Run Playwright E2E tests |
+| `npx playwright test e2e/snapshots.spec.ts --update-snapshots` | Regenerate visual regression baselines |
+
+### Docker
+
+| Command | Description |
+|---------|-------------|
+| `docker compose --profile cpu up --build` | Full stack — CPU only |
+| `docker compose --profile gpu up --build` | Full stack — GPU accelerated |
+| `docker compose --profile debug up` | Also start pgAdmin at http://localhost:5050 |
+| `docker compose down` | Stop all containers |
+
+> **GPU profile** requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+
+<br/>
+
+## Deployment
+
+### HuggingFace Spaces
+
+1. Create a Space at [huggingface.co/new-space](https://huggingface.co/new-space) (SDK: Docker)
+2. Set Space secrets: `HF_TOKEN`, `SECRET_KEY`, `DATABASE_URL`
+3. Push to the `hf` remote:
+
+```bash
+git remote add hf https://<username>:<HF_TOKEN>@huggingface.co/spaces/<username>/<space-name>
+git push hf main
+```
+
+### Self-Hosted / VPS
+
+```bash
+docker compose --profile cpu up -d --build
+# App at http://your-server:7860
+# Frontend at http://your-server:3000
+```
+
+<br/>
+
+---
+
+<div align="center">
+
+<br/>
+
+**Yoka** — [Genova_Rag](https://github.com/AkashYoka/Genova_Rag)
+
+<br/>
+
+</div>

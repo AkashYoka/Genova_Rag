@@ -1,0 +1,1218 @@
+"""
+Chat routes — ask questions with RAG, stream responses via SSE, manage history.
+"""
+
+import html
+import json
+import time
+from datetime import datetime, timezone
+from io import BytesIO
+import logging
+from typing import Optional, List
+
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import Response, StreamingResponse
+from sqlalchemy.orm import Session
+
+from app.auth import get_current_user
+from app.cache import get_cached_response, set_cached_response
+from app.database import get_db
+from app.exceptions import (
+    NotFoundException,
+    UnauthorizedException,
+    ValidationException, )
+from app.metrics import record_query_response_time
+from app.models import User, ChatMessage, Document, SharedMessage, ChatSession
+from app.rate_limit import CHAT_QUERY_RATE_LIMIT, check_chat_ws_rate_limit, limiter
+from app.rag.security import UnsafePromptError, validate_user_input
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    ChatMessageResponse,
+    ChatHistoryResponse,
+    FeedbackRequest,
+    ShareAnswerResponse,
+    ShareLinkResponse,
+    SourceChunk,
+    ChatSessionCreate,
+    ChatSessionUpdate,
+    ChatSessionResponse,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/chat", tags=["Chat"])
+
+
+@router.websocket("/ws")
+async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
+    """WebSocket endpoint for streaming agentic thoughts and tokens.
+
+    Authenticate via `token` query param or expect first JSON message
+    containing `{token, question, document_id?, session_id?}`.
+    """
+    await websocket.accept()
+
+    # Simple DB-backed auth similar to get_current_user
+    from app.database import SessionLocal
+    from app.auth import decode_token
+    from app.models import ApiKey, User
+
+    db = SessionLocal()
+    user = None
+
+    try:
+        # Try token from query param
+        if token:
+            tok = token
+            initial_payload = None
+        else:
+            # Expect first message to contain token and the payload
+            msg = await websocket.receive_json()
+            tok = msg.get("token")
+            initial_payload = msg
+
+        if not tok:
+            await websocket.send_json({"type": "error", "data": "Missing token"})
+            await websocket.close()
+            return
+
+        # API key check
+        if tok.startswith("pdf_rag_"):
+            import hashlib
+            hashed = hashlib.sha256(tok.encode("utf-8")).hexdigest()
+            api_key = db.query(ApiKey).filter(ApiKey.hashed_key == hashed, ApiKey.is_active == True).first()
+            if not api_key:
+                await websocket.send_json({"type": "error", "data": "Invalid API key"})
+                await websocket.close()
+                return
+            user = api_key.user
+        else:
+            user_id = decode_token(tok)
+            if not user_id:
+                await websocket.send_json({"type": "error", "data": "Invalid or expired token"})
+                await websocket.close()
+                return
+            user = db.query(User).filter(User.id == user_id).first()
+
+        if not user:
+            await websocket.send_json({"type": "error", "data": "User not found"})
+            await websocket.close()
+            return
+
+        # /chat/ask and /chat/ask/stream enforce CHAT_QUERY_RATE_LIMIT via
+        # @limiter.limit, but that decorator only works on HTTP routes — it
+        # never runs for this WebSocket handler. Without this check, a client
+        # could call the same generate_answer_stream(...) RAG/LLM pipeline an
+        # unbounded number of times per minute by sending requests over /chat/ws
+        # (or opening multiple connections), completely bypassing the limit.
+        if not check_chat_ws_rate_limit(user.id):
+            await websocket.send_json({"type": "error", "data": "Rate limit exceeded"})
+            await websocket.close()
+            return
+
+        # Receive or reuse initial payload
+        if initial_payload:
+            payload = initial_payload
+        else:
+            payload = await websocket.receive_json()
+
+        question = payload.get("question")
+        document_id = payload.get("document_id")
+        session_id = payload.get("session_id")
+
+        from app.rag.security import validate_user_input, UnsafePromptError
+
+        try:
+            validate_user_input(question)
+        except UnsafePromptError as exc:
+            await websocket.send_json({"type": "error", "data": str(exc)})
+            await websocket.close()
+            return
+
+        # Validate document if given
+        if document_id:
+            doc = db.query(Document).filter(
+                Document.id == document_id,
+                Document.user_id == user.id,
+                Document.is_deleted.is_(False),
+            ).first()
+            if not doc:
+                await websocket.send_json({"type": "error", "data": "Document not found"})
+                await websocket.close()
+                return
+            if doc.status != "ready":
+                progress = getattr(doc, "processing_progress", None)
+                stage = getattr(doc, "processing_stage", None)
+                detail = f"Document is still {doc.status}."
+                if progress is not None:
+                    detail += f" Progress: {progress}%"
+                if stage:
+                    detail += f" Stage: {stage}"
+                await websocket.send_json({"type": "error", "data": detail})
+                await websocket.close()
+                return
+
+        # Resolve or create session
+        if not session_id:
+            session = db.query(ChatSession).filter(ChatSession.user_id == user.id).first()
+            if not session:
+                session = ChatSession(user_id=user.id, title="Default Chat")
+                db.add(session)
+                db.commit()
+                db.refresh(session)
+            session_id = session.id
+
+        # Build chat history
+        recent_messages = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.session_id == session_id,
+                ChatMessage.user_id == user.id,
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(12)
+            .all()
+        )
+        recent_messages.reverse()
+        chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
+
+        # Save user message
+        _save_message(db, user.id, document_id, "user", question, session_id=session_id)
+
+        # Stream answer using existing generator and forward structured events
+        try:
+            for chunk in generate_answer_stream(
+                question=question,
+                user_id=user.id,
+                document_id=document_id,
+                hf_token=user.hf_token,
+                chat_history=chat_history,
+            ):
+                # chunk is SSE-style string like 'data: {json}\n\n' or similar
+                try:
+                    if chunk.startswith("data: "):
+                        payload = json.loads(chunk[6:].strip())
+                        await websocket.send_json(payload)
+                    else:
+                        # Fallback: send raw token
+                        await websocket.send_json({"type": "token", "data": chunk})
+                except Exception:
+                    await websocket.send_json({"type": "token", "data": chunk})
+
+            # Notify client
+            await websocket.send_json({"type": "done"})
+
+        except WebSocketDisconnect:
+            return
+        except Exception as e:
+            await websocket.send_json({"type": "error", "data": str(e)})
+
+    except WebSocketDisconnect:
+        return
+    except Exception as e:
+        try:
+            await websocket.send_json({"type": "error", "data": str(e)})
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+@router.get(
+    "/share/{message_id}",
+    response_model=ShareAnswerResponse,
+    summary="Read a public shared answer",
+    description=(
+        "Returns a previously shared assistant answer and its safe citation "
+        "metadata without requiring authentication."
+    ),
+)
+def get_shared_answer(
+    message_id: str,
+    db: Session = Depends(get_db),
+):
+    """Return a public shared assistant answer by message ID."""
+    message = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.id == message_id,
+            ChatMessage.role == "assistant",
+        )
+        .first()
+    )
+
+    if not message or not db.query(SharedMessage).filter(SharedMessage.message_id == message.id).first():
+        raise NotFoundException("Shared answer")
+
+    return _share_answer_response(message)
+
+
+@router.post(
+    "/share/{message_id}",
+    response_model=ShareLinkResponse,
+    summary="Create a public share link for an assistant answer",
+    description=(
+        "Marks one authenticated user's assistant message as shareable and " "returns the frontend share URL."
+    ),
+)
+def create_share_link(
+    message_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create or reuse a public share record for an assistant answer."""
+    message = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.id == message_id,
+            ChatMessage.user_id == user.id,
+        )
+        .first()
+    )
+
+    if not message:
+        raise NotFoundException("Message")
+
+    if message.role != "assistant":
+        raise ValidationException("Only assistant messages can be shared")
+
+    shared_message = db.query(SharedMessage).filter(SharedMessage.message_id == message.id).first()
+    if not shared_message:
+        shared_message = SharedMessage(message_id=message.id)
+        db.add(shared_message)
+        db.commit()
+
+    return ShareLinkResponse(
+        message_id=str(message.id),
+        share_url=f"/share?message_id={message.id}",
+    )
+
+
+@router.get(
+    "/sessions",
+    response_model=List[ChatSessionResponse],
+    summary="List chat sessions",
+    description="Returns all chat sessions owned by the authenticated user, newest first.",
+)
+def get_chat_sessions(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve all chat sessions for the authenticated user."""
+    sessions = (
+        db.query(ChatSession).filter(ChatSession.user_id == user.id).order_by(ChatSession.created_at.desc()).all()
+    )
+    return sessions
+
+
+@router.post(
+    "/sessions",
+    response_model=ChatSessionResponse,
+    status_code=201,
+    summary="Create a chat session",
+    description="Creates a named chat session owned by the authenticated user.",
+)
+def create_chat_session(
+    payload: ChatSessionCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a new chat session for the authenticated user."""
+    session = ChatSession(
+        user_id=user.id,
+        title=payload.title,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.put(
+    "/sessions/{session_id}",
+    response_model=ChatSessionResponse,
+    summary="Rename a chat session",
+    description="Renames one chat session after verifying it belongs to the authenticated user.",
+)
+def rename_chat_session(
+    session_id: str,
+    payload: ChatSessionCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Rename an existing chat session owned by the authenticated user."""
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise NotFoundException("Chat session")
+    session.title = payload.title
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.patch(
+    "/sessions/{session_id}",
+    response_model=ChatSessionResponse,
+    summary="Update a chat session title",
+    description="Partially updates a chat session title after verifying ownership.",
+)
+def update_chat_session(
+    session_id: str,
+    payload: ChatSessionUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update the title of an existing chat session owned by the authenticated user."""
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise NotFoundException("Chat session")
+    session.title = payload.title
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    summary="Delete a chat session",
+    description="Deletes one owned chat session and cascades its messages through the database relationship.",
+)
+def delete_chat_session(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a chat session owned by the authenticated user."""
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise NotFoundException("Chat session")
+    db.delete(session)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.get(
+    "/history/session/{session_id}",
+    response_model=ChatHistoryResponse,
+    summary="Get chat history for a session",
+    description="Returns ordered user and assistant messages for one owned chat session.",
+)
+def get_session_history(
+    session_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve ordered chat history for a specific owned chat session."""
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise NotFoundException("Chat session")
+
+    messages = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.user_id == user.id,
+        )
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+
+    formatted = []
+    for msg in messages:
+        sources = []
+        if msg.sources_json:
+            try:
+                sources = [SourceChunk(**s) for s in json.loads(msg.sources_json)]
+            except Exception:
+                pass
+
+        formatted.append(
+            ChatMessageResponse(
+                id=str(msg.id),
+                role=msg.role,
+                content=msg.content,
+                sources=sources,
+                created_at=msg.created_at,
+            )
+        )
+
+    return ChatHistoryResponse(messages=formatted, document_id=None)
+
+
+def generate_answer(
+    question: str,
+    user_id: str,
+    document_id: Optional[str] = None,
+    document_ids: Optional[List[str]] = None,
+    hf_token: Optional[str] = None,
+    top_k: Optional[int] = None,
+    chat_history: Optional[list] = None,
+):
+    from app.rag.agent import generate_answer as _generate_answer
+
+    return _generate_answer(
+        question=question,
+        user_id=user_id,
+        document_id=document_id,
+        document_ids=document_ids,
+        hf_token=hf_token,
+        top_k=top_k,
+        chat_history=chat_history,
+    )
+
+
+def generate_answer_stream(
+    question: str,
+    user_id: str,
+    document_id: Optional[str] = None,
+    document_ids: Optional[List[str]] = None,
+    hf_token: Optional[str] = None,
+    top_k: Optional[int] = None,
+    chat_history: Optional[list] = None,
+):
+    from app.rag.agent import generate_answer_stream as _generate_answer_stream
+
+    return _generate_answer_stream(
+        question=question,
+        user_id=user_id,
+        document_id=document_id,
+        document_ids=document_ids,
+        hf_token=hf_token,
+        top_k=top_k,
+        chat_history=chat_history,
+    )
+
+
+@router.post(
+    "/ask",
+    response_model=ChatResponse,
+    summary="Ask a RAG question",
+    description=(
+        "Runs non-streaming retrieval-augmented generation for the authenticated "
+        "user, optionally scoped to one ready document."
+    ),
+)
+@limiter.limit(CHAT_QUERY_RATE_LIMIT)
+def ask_question(
+    payload: ChatRequest,
+    request: Request = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Ask a question with RAG retrieval and return the complete answer."""
+    started_at = time.perf_counter()
+    
+    # Bind query parameters to request context variables and state
+    if request is not None:
+        request.state.query = payload.question
+    from app.observability import query_text_var
+    query_text_var.set(payload.question)
+    logger.info(f"Processing RAG chat query: '{payload.question}'")
+
+    try:
+        try:
+            validate_user_input(payload.question)
+        except UnsafePromptError as exc:
+            raise ValidationException(str(exc)) from exc
+
+        # Validate document exists if specified
+        if payload.document_id:
+            doc = (
+                db.query(Document)
+                .filter(
+                    Document.id == payload.document_id,
+                    Document.user_id == user.id,
+                    Document.is_deleted.is_(False),
+                )
+                .first()
+            )
+
+            if not doc:
+                raise NotFoundException("Document")
+
+            if doc.status != "ready":
+                progress = getattr(doc, "processing_progress", None)
+                stage = getattr(doc, "processing_stage", None)
+                detail = f"Document is still {doc.status}. Please wait for processing to complete."
+                if progress is not None:
+                    detail += f" Progress: {progress}%"
+                if stage:
+                    detail += f" Stage: {stage}"
+                raise ValidationException(detail)
+
+            # Update last_accessed_at timestamp
+            doc.last_accessed_at = datetime.now(timezone.utc)
+            db.commit()
+
+        # Validate documents if multiple specified
+        elif payload.document_ids:
+            docs = (
+                db.query(Document)
+                .filter(
+                    Document.id.in_(payload.document_ids),
+                    Document.user_id == user.id,
+                    Document.is_deleted.is_(False),
+                )
+                .all()
+            )
+
+            found_ids = {doc.id for doc in docs}
+            missing = [doc_id for doc_id in payload.document_ids if doc_id not in found_ids]
+            if missing:
+                raise NotFoundException("Document")
+
+            not_ready = [doc.original_name for doc in docs if doc.status != "ready"]
+            if not_ready:
+                raise ValidationException(
+                    f"Some documents are still processing: {', '.join(not_ready)}. Please wait."
+                )
+
+            for doc in docs:
+                doc.last_accessed_at = datetime.now(timezone.utc)
+            db.commit()
+
+        # Resolve or create session
+        session_id = payload.session_id
+        if not session_id:
+            session = db.query(ChatSession).filter(ChatSession.user_id == user.id).first()
+            if not session:
+                session = ChatSession(user_id=user.id, title="Default Chat")
+                db.add(session)
+                db.commit()
+                db.refresh(session)
+            session_id = session.id
+
+        # Build chat history from last 6 exchanges
+        recent_messages = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.session_id == session_id,
+                ChatMessage.user_id == user.id,
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(12)
+            .all()
+        )
+        recent_messages.reverse()
+        chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
+
+        cache_doc_key = str(payload.document_id or "")
+        if payload.document_ids:
+            cache_doc_key = "multi:" + ",".join(sorted(payload.document_ids))
+        # Cache check — return instantly if this (user, document, question) was answered before
+        cached_answer = get_cached_response(
+            user_id=user.id,
+            document_id=cache_doc_key,
+            question=payload.question,
+        )
+        if cached_answer is not None:
+            logger.debug("Returning cached response for question: %s", payload.question[:40])
+            return ChatResponse(
+                answer=cached_answer,
+                sources=[],
+                document_id=payload.document_id,
+            )
+
+        result = generate_answer(
+            question=payload.question,
+            user_id=user.id,
+            document_id=payload.document_id,
+            document_ids=payload.document_ids,
+            hf_token=user.hf_token,
+            top_k=payload.top_k,
+            chat_history=chat_history,
+        )
+
+        # Bind chunks retrieved to request state and context variables
+        chunks_count = len(result.get("sources", []))
+        if request is not None:
+            request.state.chunks_retrieved = chunks_count
+        from app.observability import chunks_retrieved_var
+        chunks_retrieved_var.set(chunks_count)
+        logger.info(f"RAG chat query processed successfully, retrieved {chunks_count} chunks")
+
+        # Store result in cache for future identical questions
+        set_cached_response(
+            user_id=user.id,
+            document_id=cache_doc_key,
+            question=payload.question,
+            answer=result["answer"],
+        )
+
+        # Save to chat history
+        _save_message(db, user.id, cache_doc_key, "user", payload.question, session_id=session_id)
+        _save_message(
+            db, user.id, cache_doc_key, "assistant", result["answer"], result["sources"], session_id=session_id
+        )
+
+        return ChatResponse(
+            answer=result["answer"],
+            sources=[SourceChunk(**s) for s in result["sources"]],
+            document_id=payload.document_id,
+        )
+    finally:
+        record_query_response_time(time.perf_counter() - started_at)
+
+
+@router.post(
+    "/ask/stream",
+    summary="Stream a RAG answer",
+    description=(
+        "Runs retrieval-augmented generation and streams answer tokens as "
+        "server-sent events. The final assistant response is saved to history."
+    ),
+)
+@limiter.limit(CHAT_QUERY_RATE_LIMIT)
+def ask_question_stream(
+    payload: ChatRequest,
+    request: Request = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Ask a question and stream the answer using Server-Sent Events."""
+    # Bind query parameters to request context variables and state
+    if request is not None:
+        request.state.query = payload.question
+    from app.observability import query_text_var
+    query_text_var.set(payload.question)
+    logger.info(f"Processing streaming RAG chat query: '{payload.question}'")
+
+    try:
+        validate_user_input(payload.question)
+    except UnsafePromptError as exc:
+        raise ValidationException(str(exc)) from exc
+
+    # Validate document
+    if payload.document_id:
+        doc = (
+            db.query(Document)
+            .filter(
+                Document.id == payload.document_id,
+                Document.user_id == user.id,
+                Document.is_deleted.is_(False),
+            )
+            .first()
+        )
+
+        if not doc:
+            raise NotFoundException("Document")
+
+        if doc.status != "ready":
+            progress = getattr(doc, "processing_progress", None)
+            stage = getattr(doc, "processing_stage", None)
+            detail = f"Document is still {doc.status}. Please wait for processing to complete."
+            if progress is not None:
+                detail += f" Progress: {progress}%"
+            if stage:
+                detail += f" Stage: {stage}"
+            raise ValidationException(detail)
+
+        # Update last_accessed_at timestamp
+        doc.last_accessed_at = datetime.now(timezone.utc)
+        db.commit()
+
+    # Validate documents if multiple specified
+    elif payload.document_ids:
+        docs = (
+            db.query(Document)
+            .filter(
+                Document.id.in_(payload.document_ids),
+                Document.user_id == user.id,
+                Document.is_deleted.is_(False),
+            )
+            .all()
+        )
+
+        found_ids = {doc.id for doc in docs}
+        missing = [doc_id for doc_id in payload.document_ids if doc_id not in found_ids]
+        if missing:
+            raise NotFoundException("Document")
+
+        not_ready = [doc.original_name for doc in docs if doc.status != "ready"]
+        if not_ready:
+            raise ValidationException(
+                f"Some documents are still processing: {', '.join(not_ready)}. Please wait."
+            )
+
+        for doc in docs:
+            doc.last_accessed_at = datetime.now(timezone.utc)
+        db.commit()
+
+    started_at = time.perf_counter()
+
+    # Resolve or create session
+    session_id = payload.session_id
+    if not session_id:
+        session = db.query(ChatSession).filter(ChatSession.user_id == user.id).first()
+        if not session:
+            session = ChatSession(user_id=user.id, title="Default Chat")
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+        session_id = session.id
+
+    # Build chat history from last 6 exchanges (before saving current message)
+    recent_messages = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.user_id == user.id,
+        )
+        .order_by(ChatMessage.created_at.desc())
+        .limit(12)
+        .all()
+    )
+    recent_messages.reverse()
+    chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
+
+    cache_doc_key = str(payload.document_id or "")
+    if payload.document_ids:
+        cache_doc_key = "multi:" + ",".join(sorted(payload.document_ids))
+    
+    # Save user message immediately
+    _save_message(db, user.id, cache_doc_key, "user", payload.question, session_id=session_id)
+
+    # Cache check before starting the stream
+    cached_answer = get_cached_response(
+        user_id=user.id,
+        document_id=cache_doc_key,
+        question=payload.question,
+    )
+    if cached_answer is not None:
+        logger.debug("Returning cached stream response for question: %s", payload.question[:40])
+
+        async def cached_event_stream():
+            payload_json = json.dumps({"type": "token", "data": cached_answer})
+            yield f"data: {payload_json}\n\n"
+            done_json = json.dumps({"type": "done"})
+            yield f"data: {done_json}\n\n"
+
+        return StreamingResponse(
+            cached_event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # Stream response
+    def event_stream():
+        full_answer = ""
+        sources = []
+
+        try:
+            for chunk in generate_answer_stream(
+                question=payload.question,
+                user_id=user.id,
+                document_id=cache_doc_key,
+                document_ids=payload.document_ids,
+                hf_token=user.hf_token,
+                top_k=payload.top_k,
+                chat_history=chat_history,
+            ):
+                # Parse to accumulate full answer for history
+                try:
+                    if chunk.startswith("data: "):
+                        data = json.loads(chunk[6:].strip())
+                        if data.get("type") == "done":
+                            continue  # We will yield our own done event with response time
+                        if data.get("type") == "token":
+                            full_answer += data.get("data", "")
+                        elif data.get("type") == "sources":
+                            sources = data.get("data", [])
+                except Exception:
+                    pass
+                yield chunk
+
+            # Cache the full answer for future identical questions
+            if full_answer:
+                set_cached_response(
+                    user_id=user.id,
+                    document_id=cache_doc_key,
+                    question=payload.question,
+                    answer=full_answer,
+                )
+
+            # Save assistant response to history
+            from app.database import get_db_session
+
+            with get_db_session() as save_db:
+                _save_message(
+                    save_db, user.id, cache_doc_key, "assistant", full_answer, sources, session_id=session_id
+                )
+
+            # Log streaming response RAG completion
+            chunks_count = len(sources)
+            from app.observability import chunks_retrieved_var, query_text_var, user_id_var
+            user_id_var.set(user.id)
+            query_text_var.set(payload.question)
+            chunks_retrieved_var.set(chunks_count)
+            logger.info(f"Streaming RAG chat query completed, retrieved {chunks_count} chunks")
+
+            elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+            yield f"data: {json.dumps({'type': 'done', 'response_time_ms': elapsed_ms})}\n\n"
+        finally:
+            record_query_response_time(time.perf_counter() - started_at)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get(
+    "/history/{document_id}",
+    response_model=ChatHistoryResponse,
+    summary="Get document chat history",
+    description="Returns ordered chat messages for one document owned by the authenticated user.",
+)
+def get_chat_history(
+    document_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve the complete chat history for a specific document."""
+    messages = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.user_id == user.id,
+            ChatMessage.document_id == document_id,
+        )
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+
+    formatted = []
+    for msg in messages:
+        sources = []
+        if msg.sources_json:
+            try:
+                sources = [SourceChunk(**s) for s in json.loads(msg.sources_json)]
+            except Exception:
+                pass
+
+        formatted.append(
+            ChatMessageResponse(
+                id=str(msg.id),
+                role=msg.role,
+                content=msg.content,
+                sources=sources,
+                feedback=msg.feedback,
+                created_at=msg.created_at,
+            )
+        )
+
+    return ChatHistoryResponse(messages=formatted, document_id=document_id)
+
+
+@router.get(
+    "/export/{document_id}",
+    summary="Export document chat history",
+    description=(
+        "Downloads one document's chat history as Markdown, plain text, or PDF. "
+        "The browser download flow authenticates with a query token."
+    ),
+)
+def export_chat_history(
+    document_id: str,
+    format: str = "md",
+    token: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Export the chat history for a document as a downloadable file."""
+    from app.auth import decode_token as _decode
+
+    resolved_user = None
+    if token:
+        user_id = _decode(token)
+        if user_id:
+            resolved_user = db.query(User).filter(User.id == user_id).first()
+
+    if resolved_user is None:
+        raise UnauthorizedException("Authentication required")
+
+    if format not in ("md", "txt", "pdf"):
+        raise ValidationException("Format must be 'md', 'txt', or 'pdf'")
+
+    # Verify document exists and belongs to user
+    doc = db.query(Document).filter(
+        Document.id == document_id,
+        Document.user_id == resolved_user.id,
+        Document.is_deleted.is_(False),
+    ).first()
+
+    if not doc:
+        raise NotFoundException("Document")
+
+    messages = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.user_id == resolved_user.id,
+            ChatMessage.document_id == document_id,
+        )
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+
+    if not messages:
+        raise NotFoundException("Chat history")
+
+    if format == "md":
+        content = _format_markdown(doc, messages)
+        media_type = "text/markdown"
+        extension = "md"
+    elif format == "txt":
+        content = _format_plaintext(doc, messages)
+        media_type = "text/plain"
+        extension = "txt"
+    else:
+        from app.routes.chat_export import format_pdf as _format_pdf
+
+        content = _format_pdf(doc, messages)
+        media_type = "application/pdf"
+        extension = "pdf"
+
+    safe_name = doc.original_name.rsplit(".", 1)[0]
+    filename = f"{safe_name}_chat_history.{extension}"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.delete(
+    "/history/{document_id}",
+    summary="Clear document chat history",
+    description="Deletes all chat messages for one document owned by the authenticated user.",
+)
+def clear_chat_history(
+    document_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete all chat messages associated with a specific document."""
+    # Find the query/subquery of chat messages to delete
+    message_ids_query = db.query(ChatMessage.id).filter(
+        ChatMessage.user_id == user.id,
+        ChatMessage.document_id == document_id,
+    )
+
+    # Delete any associated SharedMessage records first
+    db.query(SharedMessage).filter(
+        SharedMessage.message_id.in_(message_ids_query)
+    ).delete(synchronize_session=False)
+
+    # Delete the ChatMessage records
+    db.query(ChatMessage).filter(
+        ChatMessage.user_id == user.id,
+        ChatMessage.document_id == document_id,
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    return {"message": "Chat history cleared"}
+
+
+@router.patch("/feedback/{message_id}")
+def submit_feedback(
+    message_id: str,
+    payload: FeedbackRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Submit thumbs up/down feedback for an assistant message."""
+    msg = db.query(ChatMessage).filter(
+        ChatMessage.id == message_id,
+        ChatMessage.user_id == user.id,
+    ).first()
+
+    if not msg:
+        raise NotFoundException("Message")
+    if msg.role != "assistant":
+        raise ValidationException("Can only provide feedback on assistant messages")
+
+    msg.feedback = payload.feedback
+    db.commit()
+    db.refresh(msg)
+
+    return ChatMessageResponse(
+        id=msg.id,
+        role=msg.role,
+        content=msg.content,
+        feedback=msg.feedback,
+        created_at=msg.created_at,
+    )
+
+
+def _save_message(
+    db: Session,
+    user_id: str,
+    document_id: Optional[str],
+    role: str,
+    content: str,
+    sources: list = None,
+    session_id: Optional[str] = None,
+):
+    """Save a chat message to the database."""
+    if not session_id:
+        session = db.query(ChatSession).filter(ChatSession.user_id == user_id).first()
+        if not session:
+            session = ChatSession(user_id=user_id, title="Default Chat")
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+        session_id = session.id
+
+    msg = ChatMessage(
+        user_id=user_id,
+        document_id=document_id,
+        session_id=session_id,
+        role=role,
+        content=content,
+        sources_json=json.dumps(sources) if sources else None,
+    )
+    db.add(msg)
+    db.commit()
+
+
+def _share_answer_response(message: ChatMessage) -> ShareAnswerResponse:
+    """Format a shared assistant message with only safe public fields."""
+    sources = []
+    if message.sources_json:
+        try:
+            sources = [SourceChunk(**item) for item in json.loads(message.sources_json)]
+        except Exception:
+            sources = []
+
+    return ShareAnswerResponse(
+        id=str(message.id),
+        content=message.content,
+        created_at=message.created_at,
+        sources=sources,
+    )
+
+
+def _format_markdown(doc, messages) -> str:
+    """Format chat history as a Markdown document."""
+    lines = [
+        f"# Chat History — {doc.original_name}",
+        "",
+        f"**Document:** {doc.original_name}  ",
+        f"**Exported at:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
+        f"**Total messages:** {len(messages)}",
+        "",
+        "---",
+        "",
+    ]
+
+    for msg in messages:
+        timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S") if msg.created_at else ""
+        role_label = "**You**" if msg.role == "user" else "**Assistant**"
+
+        lines.append(f"### {role_label}")
+        lines.append(f"*{timestamp}*")
+        lines.append("")
+        lines.append(msg.content)
+        lines.append("")
+
+        if msg.role == "assistant" and msg.sources_json:
+            try:
+                sources = json.loads(msg.sources_json)
+                if sources:
+                    lines.append("**Sources:**")
+                    lines.append("")
+                    for i, src in enumerate(sources, 1):
+                        lines.append(
+                            f"> **[{i}]** {src.get('filename', 'Unknown')}, "
+                            f"Page {src.get('page', '?')} "
+                            f"(Confidence: {src.get('confidence', 0)}%)"
+                        )
+                        text_preview = src.get("text", "")[:150]
+                        if text_preview:
+                            lines.append(f"> {text_preview}...")
+                        lines.append(">")
+                    lines.append("")
+            except Exception:
+                pass
+
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _format_plaintext(doc, messages) -> str:
+    """Format chat history as a plain text document."""
+    lines = [
+        f"Chat History — {doc.original_name}",
+        f"Exported at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Total messages: {len(messages)}",
+        "=" * 60,
+        "",
+    ]
+
+    for msg in messages:
+        timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S") if msg.created_at else ""
+        role_label = "You" if msg.role == "user" else "Assistant"
+
+        lines.append(f"[{role_label}] ({timestamp})")
+        lines.append(msg.content)
+
+        if msg.role == "assistant" and msg.sources_json:
+            try:
+                sources = json.loads(msg.sources_json)
+                if sources:
+                    lines.append("")
+                    lines.append("Sources:")
+                    for i, src in enumerate(sources, 1):
+                        lines.append(
+                            f"  [{i}] {src.get('filename', 'Unknown')}, "
+                            f"Page {src.get('page', '?')} "
+                            f"(Confidence: {src.get('confidence', 0)}%)"
+                        )
+            except Exception:
+                pass
+
+        lines.append("-" * 60)
+        lines.append("")
+
+    return "\n".join(lines)

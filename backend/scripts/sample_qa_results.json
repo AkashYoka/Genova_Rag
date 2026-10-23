@@ -1,0 +1,96 @@
+{
+  "doc_id": "97c48403-de89-4da4-98aa-398700fb64f2",
+  "pdf": "C:\\PC\\Yoka\\Misc\\genova-rag\\samples\\payment\\01_Vendor_Invoice_Goods_CGST_SGST.pdf",
+  "results": [
+    {
+      "q": "What is this document?",
+      "ok": true,
+      "answer": "This document appears to be an invoice issued by Sri Venkateswara Enterprises (Vendor) to YENPU TECHNOLOGIES PRIVATE LIMITED (Buyer). The invoice details goods and services provided, including their descriptions, quantities, unit measurements, rates, tax percentages, and total amounts. It also includes payment terms and other relevant information such as the GSTIN numbers of both parties.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n\nThe invoice specifies that it is a computer-generated document and provides contact details for YENPU TECHNOLOGIES PRIVATE LIMITED. It also includes notes regarding goods sold and interest rates after the due date, as well as information about jurisdiction.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 4]\n\nThe invoice is structured to detail each item purchased with its corresponding CGST (Central Goods and Services Tax) and SGST (State Goods and Services Tax), which are both at a rate of 9%. The total amount for the invoice is Rs. 87,320.00.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 4]\n\nThe document concludes with bank details for Sri Venkateswara Enterprises, including their account name and number at HDFC Bank in Vijayawada.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 4]",
+      "sources": 4
+    },
+    {
+      "q": "Who is the vendor or supplier on this invoice?",
+      "ok": true,
+      "answer": "The vendor or supplier on this invoice is Sri Venkateswara Enterprises. This can be determined from the document header where their contact details and GSTIN number are provided:\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n\nAdditionally, the invoice mentions that it is for \"YENPU TECHNOLOGIES PRIVATE LIMITED\" (Buyer), but Sri Venkateswara Enterprises is clearly identified as the seller in this document.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "Who is the buyer or bill-to party?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe bill-to party or buyer is YENPU TECHNOLOGIES PRIVATE LIMITED. This can be determined from the \"Bill To (Buyer)\" section of the document on page 1, which states:\n| Bill To (Buyer) | Ship To |\n| --- | --- |\n| YENPU TECHNOLOGIES PRIVATE LIMITED Door No. 12-3-45, Near RTC Bus Stand Proddatur, YSR Kadapa District Andhra Pradesh - 516360 GSTIN: 37AABCY9876K1Z2 PAN: AABCY9876K |\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 2]\n\nTherefore, the buyer on this invoice is YENPU TECHNOLOGIES PRIVATE LIMITED. [Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 2]",
+      "sources": 4
+    },
+    {
+      "q": "What is the invoice number?",
+      "ok": true,
+      "answer": "Based on the provided document context in [Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1], the invoice number is SVE/2025-26/01487.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "What is the invoice date?",
+      "ok": true,
+      "answer": "Based on the provided document context in [Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1], the invoice date is 18-Jul-2026.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "What goods or items are listed?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe following goods or items are listed:\n- Industrial Grade Copper Wire 2.5 sq.mm (100m coil)\n- PVC Insulated Cable 4 Core 16 sq.mm\n- MCB 32A Double Pole (Schneider)\n- Cable Gland Brass 25mm\n\nThese details can be found in the \"Description of Goods\" section on page 1, where each item is listed with its corresponding HSN code, quantity, unit measurement, rate, taxable value, and total amount.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 2]",
+      "sources": 4
+    },
+    {
+      "q": "What is the taxable / subtotal amount before tax?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe taxable amount before tax is Rs 87,320.00. This can be found in the \"Grand Total\" section of page 1, which states:\n- CGST: Rs 6,660.00\n- SGST: Rs 6,660.00\n- Grand Total: Rs 87,320.00\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n\nTherefore, the taxable / subtotal amount before tax is Rs 87,320.00.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "What CGST amount is charged?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe CGST amount charged is Rs 6,660.00. This can be found in the \"Taxable Value\" section of page 1, where it states:\n- CGST: Rs 6,660.00\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n\nTherefore, the CGST amount charged is Rs 6,660.00.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "What SGST amount is charged?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe SGST amount charged is Rs 6,660.00. This can be found in the \"Taxable Value\" section of page 1, where it states:\n- CGST: Rs 6,660.00\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n\nTherefore, the SGST amount charged is Rs 6,660.00.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "What is the total invoice amount including tax?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe total invoice amount including tax is Rs 87,320.00. This can be found in the \"Grand Total\" section of page 1, which states:\n- CGST: Rs 6,660.00\n- SGST: Rs 6,660.00\n- Grand Total: Rs 87,320.00\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n\nTherefore, the total invoice amount including tax is Rs 87,320.00.",
+      "sources": 4
+    },
+    {
+      "q": "What is the currency used?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe currency used is Indian Rupees (Rs). This can be found in the \"Grand Total\" section of page 1, which states:\n- CGST: Rs 6,660.00\n- SGST: Rs 6,660.00\n- Grand Total: Rs 87,320.00\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "Is there a purchase order (PO) number mentioned?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThere is no purchase order (PO) number mentioned. The PO Number field is left blank and does not contain any specific number or reference.\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "Summarize the payment or tax terms if any are stated.",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe payment terms are Net 30 Days from Invoice Date. This can be found in the \"Payment Terms\" section of page 1, which states:\n- Payment Terms: Net 30 Days from Invoice Date\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n\nTherefore, the payment or tax terms stated are Net 30 Days from Invoice Date.",
+      "sources": 4
+    },
+    {
+      "q": "List all numeric amounts found on the invoice.",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\n- The CGST amount is Rs 6,660.00.\n- The SGST amount is Rs 6,660.00.\n- The total invoice amount including tax is Rs 87,320.00.\n\nThese amounts are listed in the \"Taxable Value\" section of page 1 and the \"Grand Total\" section of page 1 respectively:\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n- CGST: Rs 6,660.00\n- SGST: Rs 6,660.00\n- Grand Total: Rs 87,320.00\n\nTherefore, the numeric amounts found on the invoice are:\n- **Rs 6,660.00** (CGST)\n- **Rs 6,660.00** (SGST)\n- **Rs 87,320.00** (Total Invoice Amount)\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]",
+      "sources": 4
+    },
+    {
+      "q": "What GST rates apply on this invoice?",
+      "ok": true,
+      "answer": "Based on the provided invoice details in the document:\n\nThe GST rates apply as follows:\n- CGST (Central Goods and Services Tax): 9%\n- SGST (State Goods and Services Tax): 9%\n\nThese rates are listed in the \"Taxable Value\" section of page 1, where it states:\n- CGST: Rs 6,660.00\n- SGST: Rs 6,660.00\n\n[Source: 01_Vendor_Invoice_Goods_CGST_SGST.pdf, Page 1]\n\nTherefore, the GST rates apply at a rate of 9% for both CGST and SGST on this invoice.",
+      "sources": 4
+    }
+  ]
+}

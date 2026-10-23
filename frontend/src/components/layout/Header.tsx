@@ -1,0 +1,519 @@
+"use client";
+
+import { useEffect, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
+import { useAuth } from "@/lib/auth";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Brain,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  LogOut,
+  Menu,
+  X,
+  Briefcase,
+  ChevronDown,
+  Sun,
+  Moon,
+  Settings,
+  Eye,
+  EyeOff,
+  Columns2,
+} from "lucide-react";
+import { KeyRound } from "lucide-react";
+import { useTheme } from "next-themes";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  useWorkspaceStore,
+  WORKSPACES,
+  type WorkspaceId,
+} from "@/store/workspace-store";
+import { api } from "@/lib/api";
+
+import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
+import Logo from "./Logo";
+
+interface HeaderProps {
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
+  viewerOpen: boolean;
+  onToggleViewer: () => void;
+  compareOpen: boolean;
+  onToggleCompare: () => void;
+  /** Pass DocumentSidebar JSX so the mobile sheet can render it */
+  mobileSheetContent?: React.ReactNode;
+}
+
+const subscribe = () => () => {};
+const getSnapshot = () => true;
+const getServerSnapshot = () => false;
+
+export default function Header({
+  sidebarOpen,
+  onToggleSidebar,
+  viewerOpen,
+  onToggleViewer,
+  compareOpen,
+  onToggleCompare,
+  mobileSheetContent,
+}: HeaderProps) {
+  const { user, logout } = useAuth();
+  const router = useRouter();
+  const { theme, setTheme } = useTheme();
+  const mounted = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot,
+  ); // ← replaces useState + useEffect
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [temperature, setTemperature] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("temperature");
+      return saved ? Number(saved) : 0.5;
+    }
+    return 0.5;
+  });
+  const [hfModalOpen, setHfModalOpen] = useState(false);
+  const [hfToken, setHfToken] = useState("");
+  const [showToken, setShowToken] = useState(false);
+  const [hfError, setHfError] = useState("");
+  const [hfSuccess, setHfSuccess] = useState("");
+  const [hfLoading, setHfLoading] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("temperature", temperature.toString());
+  }, [temperature]);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const workspace = useWorkspaceStore((s) => s.workspace);
+  const setWorkspace = useWorkspaceStore((s) => s.setWorkspace);
+
+  const currentWorkspaceLabel =
+    WORKSPACES.find((w) => w.id === workspace)?.label ?? workspace;
+  const isDark = theme === "dark";
+  const toggleTheme = () => setTheme(isDark ? "light" : "dark");
+
+  const handleLogout = () => {
+    logout();
+    router.replace("/login");
+  };
+
+  const fetchDocumentsForWorkspace = async (id: string) => {
+    setWorkspaceLoading(true);
+    try {
+      const res = await api
+        .get(`/api/v1/documents?workspace=${encodeURIComponent(id)}`)
+        .catch(() => null);
+      console.log("workspace change, fetched documents:", res);
+    } catch (err) {
+      console.warn("Failed to fetch documents for workspace", id, err);
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <header className="h-14 flex items-center justify-between px-4 border-b border-border/50 bg-card/50 backdrop-blur-md flex-shrink-0 z-50">
+        {/* Left */}
+        <div className="flex items-center gap-3">
+          {/* Hamburger - mobile only */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 md:hidden"
+            onClick={() => setSheetOpen(true)}
+            title="Open sidebar"
+            aria-label="Open document navigation"
+            aria-expanded={sheetOpen}
+            aria-controls="mobile-document-navigation"
+          >
+            <Menu className="w-4 h-4" />
+          </Button>
+
+          {/* Desktop sidebar toggle - hidden on mobile */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 hidden md:inline-flex"
+            onClick={onToggleSidebar}
+            title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+            aria-label={
+              sidebarOpen ? "Close document sidebar" : "Open document sidebar"
+            }
+            aria-pressed={sidebarOpen}
+          >
+            {sidebarOpen ? (
+              <PanelLeftClose className="w-4 h-4" />
+            ) : (
+              <PanelLeftOpen className="w-4 h-4" />
+            )}
+          </Button>
+
+          {/* LOGO — clicking navigates to dashboard */}
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-2.5 hover:opacity-85 transition-opacity cursor-pointer"
+            aria-label="Go to homepage"
+          >
+            <Logo size={28} />
+            <span className="font-semibold text-sm hidden sm:inline">
+              Document AI Analyst
+            </span>
+          </Link>
+        </div>
+
+        {/* Right */}
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onToggleViewer}
+            title={viewerOpen ? "Close viewer" : "Open viewer"}
+            aria-label={viewerOpen ? "Close PDF viewer" : "Open PDF viewer"}
+            aria-pressed={viewerOpen}
+          >
+            {viewerOpen ? (
+              <PanelRightClose className="w-4 h-4" />
+            ) : (
+              <PanelRightOpen className="w-4 h-4" />
+            )}
+          </Button>
+          <Button
+            variant={compareOpen ? "secondary" : "ghost"}
+            size="icon"
+            className="h-8 w-8"
+            onClick={onToggleCompare}
+            title={
+              compareOpen
+                ? "Close compare view"
+                : "Compare two PDFs side-by-side"
+            }
+            aria-label={
+              compareOpen ? "Close compare view" : "Open compare view"
+            }
+            aria-pressed={compareOpen}
+          >
+            <Columns2 className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setSettingsOpen(true)}
+            title="LLM Settings"
+            aria-label="Open LLM settings"
+          >
+            <Settings className="w-4 h-4" />
+          </Button>
+
+          {mounted && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={toggleTheme}
+              title={isDark ? "Light mode" : "Dark mode"}
+              aria-label={
+                isDark ? "Switch to light mode" : "Switch to dark mode"
+              }
+            >
+              {isDark ? (
+                <Sun className="w-4 h-4" />
+              ) : (
+                <Moon className="w-4 h-4" />
+              )}
+            </Button>
+          )}
+
+          <KeyboardShortcutsModal />
+
+          {/* Workspace switcher */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="flex items-center h-8 gap-2 px-2 rounded-md hover:bg-accent transition-colors cursor-pointer"
+              aria-label={`Select workspace. Current workspace: ${currentWorkspaceLabel}`}
+              aria-busy={workspaceLoading}
+            >
+              {workspaceLoading ? (
+                <>
+                  <Skeleton className="h-4 w-4 rounded-sm" />
+                  <Skeleton className="hidden h-4 w-16 sm:block" />
+                </>
+              ) : (
+                <>
+                  <Briefcase className="w-4 h-4" />
+                  <span className="text-sm hidden sm:inline">
+                    {currentWorkspaceLabel}
+                  </span>
+                  <ChevronDown className="w-3 h-3" />
+                </>
+              )}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              {WORKSPACES.map((w) => (
+                <DropdownMenuItem
+                  key={w.id}
+                  className={`cursor-pointer ${w.id === workspace ? "font-medium" : ""}`}
+                  onClick={async () => {
+                    setWorkspace(w.id as WorkspaceId);
+                    await fetchDocumentsForWorkspace(w.id);
+                  }}
+                >
+                  {w.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="flex items-center h-8 gap-2 px-2 rounded-md hover:bg-accent transition-colors cursor-pointer"
+              aria-label={`Open user menu for ${user?.username ?? "current user"}`}
+            >
+              <Avatar className="w-6 h-6">
+                <AvatarFallback className="text-[10px] bg-primary text-primary-foreground">
+                  {user?.username?.slice(0, 2).toUpperCase() || "U"}
+                </AvatarFallback>
+              </Avatar>
+              <span className="text-sm hidden sm:inline">{user?.username}</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <div className="px-3 py-2">
+                <p className="text-sm font-medium">{user?.username}</p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {user?.email}
+                </p>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  setHfToken(user?.hf_token ? "" : "");
+                  setHfError("");
+                  setHfSuccess("");
+                  setHfModalOpen(true);
+                }}
+              >
+                <KeyRound className="w-4 h-4 mr-2" />
+                HuggingFace Token
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-destructive cursor-pointer"
+                onClick={handleLogout}
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+
+      {/* Mobile navigation sheet - backdrop */}
+      {sheetOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
+          onClick={() => setSheetOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        id="mobile-document-navigation"
+        className={[
+          "fixed inset-y-0 left-0 z-50 w-72 flex flex-col",
+          "bg-sidebar border-r border-sidebar-border",
+          "transform transition-transform duration-300 ease-in-out md:hidden",
+          sheetOpen ? "translate-x-0" : "-translate-x-full",
+        ].join(" ")}
+        aria-label="Mobile navigation"
+        aria-hidden={!sheetOpen}
+        {...(!sheetOpen ? { inert: true } : {})}
+      >
+        <div className="h-14 flex items-center justify-between px-4 border-b border-sidebar-border flex-shrink-0">
+          {/* MOBILE LOGO — clicking navigates to dashboard and closes the sheet */}
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-2.5 hover:opacity-85 transition-opacity cursor-pointer"
+            aria-label="Go to homepage"
+            onClick={() => setSheetOpen(false)}
+          >
+            <Logo size={28} />
+            <span className="font-semibold text-sm">Document AI Analyst</span>
+          </Link>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setSheetOpen(false)}
+            aria-label="Close navigation"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-hidden">
+          {sheetOpen ? mobileSheetContent : null}
+        </div>
+      </aside>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>LLM Settings</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <label className="text-sm">Temperature: {temperature}</label>
+
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={temperature}
+              onChange={(e) => setTemperature(Number(e.target.value))}
+              className="w-full"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={hfModalOpen} onOpenChange={setHfModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>HuggingFace Token</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {user?.hf_token && (
+              <div className="text-sm">
+                <span className="font-medium">Token configured: </span>
+                <span>
+                  {user.hf_token.slice(0, 7)}
+                  {"****"}
+                  {user.hf_token.slice(-4)}
+                </span>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label htmlFor="hf-token-input" className="text-sm font-medium">
+                HuggingFace API Token
+              </label>
+              <div className="relative">
+                <input
+                  id="hf-token-input"
+                  type={showToken ? "text" : "password"}
+                  value={hfToken}
+                  onChange={(e) => setHfToken(e.target.value)}
+                  placeholder="hf_..."
+                  className="w-full border rounded-md px-3 py-2 pr-10 text-sm bg-background"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2"
+                  aria-label={showToken ? "Hide token" : "Show token"}
+                  onClick={() => setShowToken((s) => !s)}
+                >
+                  {showToken ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {hfError && <p className="text-sm text-destructive">{hfError}</p>}
+            {hfSuccess && <p className="text-sm text-green-600">{hfSuccess}</p>}
+
+            <div className="flex justify-between gap-2">
+              {user?.hf_token && (
+                <Button
+                  variant="outline"
+                  className="text-destructive"
+                  disabled={hfLoading}
+                  onClick={async () => {
+                    setHfError("");
+                    setHfSuccess("");
+                    setHfLoading(true);
+                    try {
+                      await api.put("/api/v1/auth/hf-token", { hf_token: "" });
+                      setHfSuccess("Token removed successfully");
+                    } catch (e: unknown) {
+                      setHfError(
+                        e instanceof Error ? e.message : "Failed to save token",
+                      );
+                    } finally {
+                      setHfLoading(false);
+                    }
+                  }}
+                >
+                  Remove
+                </Button>
+              )}
+
+              <div className="flex gap-2 ml-auto">
+                <Button variant="ghost" onClick={() => setHfModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={!hfToken || hfLoading}
+                  onClick={async () => {
+                    setHfError("");
+                    setHfSuccess("");
+
+                    if (!hfToken.startsWith("hf_")) {
+                      setHfError("Token must start with 'hf_'");
+                      return;
+                    }
+                    if (hfToken.length < 10) {
+                      setHfError("Token is too short");
+                      return;
+                    }
+
+                    setHfLoading(true);
+                    try {
+                      await api.put("/api/v1/auth/hf-token", {
+                        hf_token: hfToken,
+                      });
+                      setHfSuccess("Token saved successfully");
+                    } catch (e: unknown) {
+                      setHfError(
+                        e instanceof Error ? e.message : "Failed to save token",
+                      );
+                    } finally {
+                      setHfLoading(false);
+                    }
+                  }}
+                >
+                  {user?.hf_token ? "Update Token" : "Save Token"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
