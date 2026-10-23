@@ -206,7 +206,7 @@ export default function ChatSessionSidebar() {
     <>
       <div
         className={cn(
-          "relative hidden h-full border-r border-border/50 bg-card/20 select-none transition-all duration-300 md:flex",
+          "relative hidden h-full border-r border-border/40 bg-sidebar/40 select-none transition-all duration-300 md:flex",
           isOpen ? "w-64" : "w-0"
         )}
       >

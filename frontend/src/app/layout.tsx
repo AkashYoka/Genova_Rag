@@ -1,22 +1,35 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Syne, Figtree, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import I18nProvider from "@/components/providers/I18nProvider";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
+import MuiProvider from "@/components/providers/MuiProvider";
 
-const inter = Inter({
+const display = Syne({
+  variable: "--font-display",
+  subsets: ["latin"],
+  display: "swap",
+});
+
+const sans = Figtree({
   variable: "--font-sans",
   subsets: ["latin"],
   display: "swap",
 });
 
+const mono = JetBrains_Mono({
+  variable: "--font-mono",
+  subsets: ["latin"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Document AI Analyst — Enterprise RAG System",
+  title: "Genova_Rag — Yoka Document Intelligence",
   description:
-    "Upload complex PDFs and chat with an AI agent that pulls specific insights, summarizes data, and accurately cites sources using Retrieval-Augmented Generation.",
-  keywords: ["RAG", "Document AI", "PDF Analysis", "LLM", "Vector Search"],
+    "Upload complex PDFs and chat with an AI agent that retrieves precise insights and cites sources using Retrieval-Augmented Generation.",
+  keywords: ["RAG", "Document AI", "PDF Analysis", "Genova", "Yoka"],
 };
 
 export default function RootLayout({
@@ -25,8 +38,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>
-      <body className="min-h-full flex flex-col bg-background text-foreground">
+    <html
+      lang="en"
+      className={`${display.variable} ${sans.variable} ${mono.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
+      <body className="min-h-full flex flex-col bg-background text-foreground font-sans">
         <ThemeProvider
           attribute="class"
           defaultTheme="light"
@@ -34,13 +51,13 @@ export default function RootLayout({
           disableTransitionOnChange
           themes={["light", "dark", "ocean", "forest", "sunset"]}
         >
-          <AuthProvider>
-            <I18nProvider>
-              <TooltipProvider>
-                {children}
-              </TooltipProvider>
-            </I18nProvider>
-          </AuthProvider>
+          <MuiProvider>
+            <AuthProvider>
+              <I18nProvider>
+                <TooltipProvider>{children}</TooltipProvider>
+              </I18nProvider>
+            </AuthProvider>
+          </MuiProvider>
         </ThemeProvider>
       </body>
     </html>

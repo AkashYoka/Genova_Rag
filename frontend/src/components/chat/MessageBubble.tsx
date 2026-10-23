@@ -197,16 +197,16 @@ export default function MessageBubble({ message }: Props) {
       className={`flex gap-3 py-3 animate-fade-in-up ${isUser ? "justify-end" : "justify-start"}`}
     >
       {!isUser && (
-        <div className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center shrink-0 mt-0.5">
+        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary/25 to-[oklch(0.86_0.16_125/0.2)] border border-primary/20 flex items-center justify-center shrink-0 mt-0.5">
           <Brain className="w-4 h-4 text-primary" />
         </div>
       )}
 
       <div
-        className={`relative max-w-[80%] rounded-xl px-4 py-3 ${
+        className={`relative max-w-[80%] rounded-2xl px-4 py-3 ${
           isUser
-            ? "bg-primary text-primary-foreground rounded-br-sm"
-            : "group bg-card border border-border/50 rounded-bl-sm"
+            ? "bg-primary text-primary-foreground rounded-br-md shadow-lg shadow-primary/20"
+            : "group bg-card/80 border border-border/50 rounded-bl-md backdrop-blur-sm"
         }`}
       >
         {isUser ? (

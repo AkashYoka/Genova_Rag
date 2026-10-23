@@ -39,31 +39,37 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="h-14 flex items-center gap-3 px-6 border-b border-border/50 bg-card/50 backdrop-blur-md">
+      <header className="h-14 flex items-center gap-3 px-6 genova-rail">
         <Link
           href="/dashboard"
           className="flex items-center gap-2 hover:opacity-75 transition-opacity"
           aria-label="Back to dashboard"
         >
-          <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
+          <div className="w-7 h-7 rounded-xl bg-primary/15 flex items-center justify-center">
             <Settings className="w-4 h-4 text-primary" />
           </div>
-          <span className="font-semibold text-sm">Settings</span>
+          <span className="font-display font-semibold text-sm tracking-tight">
+            Settings
+          </span>
         </Link>
       </header>
 
       <main className="max-w-2xl mx-auto px-6 py-10 space-y-8">
         <div>
-          <h1 className="text-2xl font-bold">Settings</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">
+            Settings
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Manage your account and integrations.
           </p>
         </div>
 
-        <section className="rounded-xl border border-border/50 bg-card/50 p-6 space-y-4">
+        <section className="genova-panel p-6 space-y-4">
           <div className="flex items-center gap-2">
             <Key className="w-4 h-4 text-primary" />
-            <h2 className="font-semibold text-base">HuggingFace Token</h2>
+            <h2 className="font-display font-semibold text-base tracking-tight">
+              HuggingFace Token
+            </h2>
           </div>
           <p className="text-sm text-muted-foreground">
             Connect your HuggingFace API token to enable inference endpoints and model access.
@@ -91,10 +97,12 @@ export default function SettingsPage() {
           </HuggingFaceTokenModal>
         </section>
 
-        <section className="rounded-xl border border-border/50 bg-card/50 p-6 space-y-4">
+        <section className="genova-panel p-6 space-y-4">
           <div className="flex items-center gap-2">
             <Type className="w-4 h-4 text-primary" />
-            <h2 className="font-semibold text-base">Chat Typography</h2>
+            <h2 className="font-display font-semibold text-base tracking-tight">
+              Chat Typography
+            </h2>
           </div>
           <p className="text-sm text-muted-foreground">
             Adjust the font size of messages in the chat panel to your preference.

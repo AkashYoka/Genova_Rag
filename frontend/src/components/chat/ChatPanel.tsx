@@ -776,16 +776,19 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             ))}
           </div>
         ) : showEmptyState ? (
-          <div className="h-full flex flex-col items-center justify-center py-20">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
-              <MessageSquare className="w-8 h-8 text-primary/60" />
+          <div className="h-full flex flex-col items-center justify-center py-20 px-6">
+            <div className="relative mb-5">
+              <div className="absolute inset-0 rounded-3xl bg-primary/20 blur-xl" />
+              <div className="relative w-16 h-16 rounded-3xl bg-gradient-to-br from-primary/25 to-[oklch(0.86_0.16_125/0.2)] border border-primary/20 flex items-center justify-center">
+                <MessageSquare className="w-8 h-8 text-primary" />
+              </div>
             </div>
-            <h3 className="text-lg font-semibold mb-1">
+            <h3 className="font-display text-xl font-semibold mb-1.5 tracking-tight">
               {activeDoc
                 ? t("chat.askAboutDocument")
                 : t("chat.selectDocument")}
             </h3>
-            <p className="text-sm text-muted-foreground text-center max-w-sm">
+            <p className="text-sm text-muted-foreground text-center max-w-sm leading-relaxed">
               {activeDoc
                 ? t("chat.readyPrompt", { name: activeDoc.original_name })
                 : t("chat.uploadPrompt")}
@@ -834,7 +837,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
       </button>
 
       {/* ── Input Area ─────────────────────────────── */}
-      <div className="border-t border-border/50 p-4 pl-16 sm:pl-4 bg-card/30 backdrop-blur-sm relative">
+      <div className="border-t border-border/40 p-4 pl-16 sm:pl-4 bg-card/45 backdrop-blur-xl relative">
         <div className="max-w-3xl mx-auto relative">
           {/* Status / Error Message Area */}
           {(isRecording || speechError) && (

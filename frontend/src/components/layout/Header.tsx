@@ -15,7 +15,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Brain,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -129,30 +128,30 @@ export default function Header({
     }
   };
 
+  const toolBtn =
+    "h-8 w-8 text-[var(--gd-muted,#5c636c)] hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]";
+
   return (
     <>
-      <header className="h-14 flex items-center justify-between px-4 border-b border-border/50 bg-card/50 backdrop-blur-md flex-shrink-0 z-50">
-        {/* Left */}
-        <div className="flex items-center gap-3">
-          {/* Hamburger - mobile only */}
+      <header className="genova-desk-top">
+        <div className="flex min-w-0 items-center gap-2">
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 md:hidden"
+            className={`${toolBtn} md:hidden`}
             onClick={() => setSheetOpen(true)}
             title="Open sidebar"
             aria-label="Open document navigation"
             aria-expanded={sheetOpen}
             aria-controls="mobile-document-navigation"
           >
-            <Menu className="w-4 h-4" />
+            <Menu className="h-4 w-4" />
           </Button>
 
-          {/* Desktop sidebar toggle - hidden on mobile */}
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 hidden md:inline-flex"
+            className={`${toolBtn} hidden md:inline-flex`}
             onClick={onToggleSidebar}
             title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             aria-label={
@@ -161,46 +160,49 @@ export default function Header({
             aria-pressed={sidebarOpen}
           >
             {sidebarOpen ? (
-              <PanelLeftClose className="w-4 h-4" />
+              <PanelLeftClose className="h-4 w-4" />
             ) : (
-              <PanelLeftOpen className="w-4 h-4" />
+              <PanelLeftOpen className="h-4 w-4" />
             )}
           </Button>
 
-          {/* LOGO — clicking navigates to dashboard */}
           <Link
             href="/dashboard"
-            className="flex items-center gap-2.5 hover:opacity-85 transition-opacity cursor-pointer"
+            className="flex min-w-0 cursor-pointer items-center gap-2.5"
             aria-label="Go to homepage"
           >
-            <Logo size={28} />
-            <span className="font-semibold text-sm hidden sm:inline">
-              Document AI Analyst
+            <Logo size={26} />
+            <span className="hidden min-w-0 flex-col sm:flex">
+              <span className="brand-name">Genova</span>
+              <span className="brand-sub">by Yoka</span>
             </span>
           </Link>
         </div>
 
-        {/* Right */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className={toolBtn}
             onClick={onToggleViewer}
             title={viewerOpen ? "Close viewer" : "Open viewer"}
             aria-label={viewerOpen ? "Close PDF viewer" : "Open PDF viewer"}
             aria-pressed={viewerOpen}
           >
             {viewerOpen ? (
-              <PanelRightClose className="w-4 h-4" />
+              <PanelRightClose className="h-4 w-4" />
             ) : (
-              <PanelRightOpen className="w-4 h-4" />
+              <PanelRightOpen className="h-4 w-4" />
             )}
           </Button>
           <Button
             variant={compareOpen ? "secondary" : "ghost"}
             size="icon"
-            className="h-8 w-8"
+            className={
+              compareOpen
+                ? "h-8 w-8 bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)]"
+                : toolBtn
+            }
             onClick={onToggleCompare}
             title={
               compareOpen
@@ -212,44 +214,41 @@ export default function Header({
             }
             aria-pressed={compareOpen}
           >
-            <Columns2 className="w-4 h-4" />
+            <Columns2 className="h-4 w-4" />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className={toolBtn}
             onClick={() => setSettingsOpen(true)}
             title="LLM Settings"
             aria-label="Open LLM settings"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="h-4 w-4" />
           </Button>
 
           {mounted && (
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className={toolBtn}
               onClick={toggleTheme}
               title={isDark ? "Light mode" : "Dark mode"}
               aria-label={
                 isDark ? "Switch to light mode" : "Switch to dark mode"
               }
             >
-              {isDark ? (
-                <Sun className="w-4 h-4" />
-              ) : (
-                <Moon className="w-4 h-4" />
-              )}
+              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
           )}
 
           <KeyboardShortcutsModal />
 
-          {/* Workspace switcher */}
+          <span className="mx-1 hidden h-5 w-px bg-[var(--gd-border,#e2e5ea)] sm:block" aria-hidden />
+
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="flex items-center h-8 gap-2 px-2 rounded-md hover:bg-accent transition-colors cursor-pointer"
+              className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[13px] text-[var(--gd-muted,#5c636c)] transition-colors hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]"
               aria-label={`Select workspace. Current workspace: ${currentWorkspaceLabel}`}
               aria-busy={workspaceLoading}
             >
@@ -260,11 +259,9 @@ export default function Header({
                 </>
               ) : (
                 <>
-                  <Briefcase className="w-4 h-4" />
-                  <span className="text-sm hidden sm:inline">
-                    {currentWorkspaceLabel}
-                  </span>
-                  <ChevronDown className="w-3 h-3" />
+                  <Briefcase className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">{currentWorkspaceLabel}</span>
+                  <ChevronDown className="h-3 w-3" />
                 </>
               )}
             </DropdownMenuTrigger>
@@ -286,20 +283,20 @@ export default function Header({
 
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="flex items-center h-8 gap-2 px-2 rounded-md hover:bg-accent transition-colors cursor-pointer"
+              className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-1.5 transition-colors hover:bg-[var(--gd-raised,#eceef2)]"
               aria-label={`Open user menu for ${user?.username ?? "current user"}`}
             >
-              <Avatar className="w-6 h-6">
-                <AvatarFallback className="text-[10px] bg-primary text-primary-foreground">
+              <Avatar className="h-6 w-6">
+                <AvatarFallback className="bg-[var(--gd-primary,#1a1d21)] text-[10px] text-[var(--gd-primary-ink,#fff)]">
                   {user?.username?.slice(0, 2).toUpperCase() || "U"}
                 </AvatarFallback>
               </Avatar>
-              <span className="text-sm hidden sm:inline">{user?.username}</span>
+              <span className="hidden text-[13px] sm:inline">{user?.username}</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               <div className="px-3 py-2">
                 <p className="text-sm font-medium">{user?.username}</p>
-                <p className="text-xs text-muted-foreground truncate">
+                <p className="truncate text-xs text-muted-foreground">
                   {user?.email}
                 </p>
               </div>
@@ -313,14 +310,14 @@ export default function Header({
                   setHfModalOpen(true);
                 }}
               >
-                <KeyRound className="w-4 h-4 mr-2" />
+                <KeyRound className="mr-2 h-4 w-4" />
                 HuggingFace Token
               </DropdownMenuItem>
               <DropdownMenuItem
-                className="text-destructive cursor-pointer"
+                className="cursor-pointer text-destructive"
                 onClick={handleLogout}
               >
-                <LogOut className="w-4 h-4 mr-2" />
+                <LogOut className="mr-2 h-4 w-4" />
                 Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -331,7 +328,7 @@ export default function Header({
       {/* Mobile navigation sheet - backdrop */}
       {sheetOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
           onClick={() => setSheetOpen(false)}
           aria-hidden="true"
         />

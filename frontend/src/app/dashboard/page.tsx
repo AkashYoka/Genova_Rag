@@ -17,28 +17,24 @@ import ChatPanel from "@/components/chat/ChatPanel";
 import CompareView from "@/components/document/CompareView";
 import DashboardDropOverlay from "@/components/document/DashboardDropOverlay";
 import { useDashboardDrop } from "@/hooks/useDashboardDrop";
+import { Button } from "@/components/ui/button";
+import { Columns2, PanelRightClose, PanelRightOpen } from "lucide-react";
+import "./dashboard.css";
 
 function PDFViewerSkeleton() {
   return (
     <div
-      className="h-full flex flex-col bg-background"
+      className="flex h-full flex-col bg-[var(--gd-surface,#fff)]"
       aria-busy="true"
       aria-label="Loading PDF viewer"
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 bg-card/50 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-md bg-muted/70 animate-pulse" />
-          <div className="h-7 w-20 rounded-md bg-muted/70 animate-pulse" />
-          <div className="h-7 w-7 rounded-md bg-muted/70 animate-pulse" />
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-md bg-muted/70 animate-pulse" />
-          <div className="h-4 w-10 rounded bg-muted/70 animate-pulse" />
-          <div className="h-7 w-7 rounded-md bg-muted/70 animate-pulse" />
-        </div>
+      <div className="flex shrink-0 items-center justify-between border-b border-[var(--gd-border,#e2e5ea)] px-3 py-2">
+        {/* taste-skill-ignore: loading skeleton shimmer */}
+        <div className="h-7 w-24 rounded bg-[var(--gd-raised,#eceef2)]" />
+        <div className="h-7 w-16 rounded bg-[var(--gd-raised,#eceef2)]" />
       </div>
       <div className="flex-1 p-4">
-        <div className="h-full rounded-lg border border-border/50 bg-muted/40 animate-pulse" />
+        <div className="h-full rounded border border-[var(--gd-border,#e2e5ea)] bg-[var(--gd-raised,#eceef2)]" />
       </div>
     </div>
   );
@@ -70,6 +66,20 @@ export interface DocInfo {
   keywords?: string[];
 }
 
+function formatBytes(n: number): string {
+  if (!n || n < 0) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function statusClass(status: string): string {
+  if (status === "ready") return "status-ready";
+  if (status === "failed" || status === "error") return "status-failed";
+  if (status === "processing" || status === "pending") return "status-processing";
+  return "";
+}
+
 export default function DashboardPage() {
   const { user, initialized } = useAuth();
   const router = useRouter();
@@ -94,6 +104,11 @@ export default function DashboardPage() {
   const [connectionError, setConnectionError] = useState("");
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [compareOpen, setCompareOpen] = useState(false);
+  // Avoid SSR/client tree mismatch (auth + MUI CssBaseline) on first paint
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleDocumentRenamed = useCallback((renamedDocument: DocInfo) => {
     setDocuments((current) =>
@@ -106,12 +121,10 @@ export default function DashboardPage() {
     );
   }, []);
 
-  // Auth guard
   useEffect(() => {
     if (initialized && !user) router.replace("/login");
   }, [user, initialized, router]);
 
-  // Check if Hugging Face token configuration is present
   useEffect(() => {
     if (user) {
       const hasHfToken = !!(user.hf_token || localStorage.getItem("hf_token"));
@@ -123,14 +136,30 @@ export default function DashboardPage() {
     }
   }, [user]);
 
-  // Load documents
-  const loadDocuments = useCallback(async () => {
-    setDocumentsLoading(true);
+  const loadDocuments = useCallback(async (opts?: { silent?: boolean }) => {
+    // Polling must stay silent — toggling loading remounts the list (blink).
+    if (!opts?.silent) setDocumentsLoading(true);
     try {
       const data = await api.get<{ documents?: DocInfo[]; items?: DocInfo[] }>(
         "/api/v1/documents/",
       );
-      setDocuments(data?.documents ?? data?.items ?? []);
+      const next = data?.documents ?? data?.items ?? [];
+      setDocuments(next);
+      setActiveDoc((current) => {
+        if (!current) return current;
+        const updated = next.find((d) => d.id === current.id);
+        if (!updated) return current;
+        if (
+          updated.status === current.status &&
+          updated.page_count === current.page_count &&
+          updated.chunk_count === current.chunk_count &&
+          updated.original_name === current.original_name &&
+          updated.file_size === current.file_size
+        ) {
+          return current;
+        }
+        return updated;
+      });
       setConnectionError("");
     } catch (err) {
       const message =
@@ -146,10 +175,10 @@ export default function DashboardPage() {
       setConnectionError(
         message === CONNECTION_ERROR_MESSAGE
           ? CONNECTION_ERROR_BANNER_MESSAGE
-          : `⚠️ ${message}`,
+          : message,
       );
     } finally {
-      setDocumentsLoading(false);
+      if (!opts?.silent) setDocumentsLoading(false);
     }
   }, [router]);
 
@@ -160,7 +189,6 @@ export default function DashboardPage() {
     })();
   }, [user, loadDocuments]);
 
-  // ── Full-page drag-and-drop ──────────────────────────────────────────────
   const handlePageDrop = useCallback(
     async (files: File[]) => {
       for (const file of files) {
@@ -183,7 +211,6 @@ export default function DashboardPage() {
     disabled: !user,
   });
 
-  // Ingest status change toast notification handler
   useEffect(() => {
     const prev = prevDocsRef.current;
     const nextPrevDocs: Record<string, string> = {};
@@ -193,11 +220,11 @@ export default function DashboardPage() {
       if (oldStatus && oldStatus !== doc.status) {
         if (doc.status === "ready") {
           toast.success(
-            `🎉 Ingestion complete: '${doc.original_name}' is ready!`,
+            `Ingestion complete: '${doc.original_name}' is ready.`,
           );
         } else if (doc.status === "failed") {
           toast.error(
-            `❌ Ingestion failed for '${doc.original_name}': ${doc.error_message || "Unknown error"}`,
+            `Ingestion failed for '${doc.original_name}': ${doc.error_message || "Unknown error"}`,
           );
         }
       }
@@ -205,27 +232,33 @@ export default function DashboardPage() {
     prevDocsRef.current = nextPrevDocs;
   }, [documents]);
 
-  // Poll for processing status
   useEffect(() => {
     const hasPending = (documents || []).some(
       (d) => d.status === "pending" || d.status === "processing",
     );
     if (!hasPending) return;
-    const interval = setInterval(loadDocuments, 3000);
+    const interval = setInterval(() => {
+      void loadDocuments({ silent: true });
+    }, 3000);
     return () => clearInterval(interval);
   }, [documents, loadDocuments]);
 
-  // Close graph panel when active document changes — derive from render
   const prevDocIdRef = useRef<string | null>(null);
   if (activeDoc?.id !== prevDocIdRef.current) {
     prevDocIdRef.current = activeDoc?.id ?? null;
     if (graphOpen) setGraphOpen(false);
   }
 
-  if (!initialized || !user) {
+  // Keep KnowledgeGraph in the bundle path used by the product
+  void KnowledgeGraph;
+
+  if (!mounted || !initialized || !user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse-glow w-12 h-12 rounded-full bg-primary/20" />
+      <div className="flex min-h-screen items-center justify-center bg-[#f2f4f7]">
+        <div
+          className="h-8 w-8 rounded-full bg-[#e6e8ec]"
+          aria-label="Loading"
+        />
       </div>
     );
   }
@@ -244,12 +277,34 @@ export default function DashboardPage() {
     />
   );
 
+  const showPdfDock =
+    !compareOpen &&
+    viewerOpen &&
+    !!activeDoc &&
+    activeDoc.original_name.endsWith(".pdf");
+
+  const readyCount = documents.filter((d) => d.status === "ready").length;
+  const processingCount = documents.filter(
+    (d) => d.status === "pending" || d.status === "processing",
+  ).length;
+
+  const titleFinding = activeDoc
+    ? activeDoc.status === "ready"
+      ? "Ask this file. Answers cite pages."
+      : activeDoc.status === "failed"
+        ? `Ingestion failed${activeDoc.error_message ? `: ${activeDoc.error_message}` : "."}`
+        : `Ingesting (${activeDoc.status}).`
+    : documents.length === 0
+      ? "Upload a PDF to start asking."
+      : `${readyCount} ready${processingCount ? `, ${processingCount} ingesting` : ""}. Select a document.`;
+
   return (
-    <div className="h-screen flex flex-col overflow-hidden min-w-[375px]">
+    <div className="genova-desk flex h-screen min-w-[375px] flex-col overflow-hidden">
       <DashboardDropOverlay
         isDraggingOver={isDraggingOver}
         dropZoneProps={dropZoneProps}
       />
+
       <Header
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
@@ -260,67 +315,133 @@ export default function DashboardPage() {
         mobileSheetContent={sidebarContent}
       />
 
-      {connectionError && (
-        <div
-          role="alert"
-          className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive"
-        >
+      {connectionError ? (
+        <div className="genova-desk-alert" role="alert">
           {connectionError}
         </div>
-      )}
+      ) : null}
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* ── Left: Document Sidebar — desktop only ───────────────────── */}
-        {sidebarOpen && (
-          <div className="hidden md:block w-72 flex-shrink-0 border-r border-border/50 overflow-hidden animate-fade-in-up">
-            {sidebarContent}
+      <div className="genova-desk-stage">
+        {/* Region 1 — document library (nav) */}
+        <aside
+          className={`genova-desk-docs${sidebarOpen ? " is-open" : ""}`}
+          aria-label="Document library"
+        >
+          {sidebarContent}
+        </aside>
+
+        {/* Region 2 — chat sessions (list) */}
+        <aside className="genova-desk-sessions" aria-label="Chat sessions">
+          <div className="dashboard-sessions-shell h-full">
+            <ChatSessionSidebar />
           </div>
-        )}
+        </aside>
 
-        {/* ── Left-Center: Chat Sessions Sidebar ──────────────────────── */}
-        <ChatSessionSidebar />
+        {/* Region 3 — open conversation */}
+        <section className="genova-desk-chat" aria-label="Assistant">
+          <div className="genova-desk-title">
+            <div className="min-w-0">
+              <h1>
+                {activeDoc?.original_name ?? "Document desk"}
+              </h1>
+              <p className="sub">
+                {activeDoc ? (
+                  <>
+                    <span className={statusClass(activeDoc.status)}>
+                      {activeDoc.status}
+                    </span>
+                    <span className="text-[var(--gd-faint)]">, </span>
+                    <span className="num">{formatBytes(activeDoc.file_size)}</span>
+                    <span className="text-[var(--gd-faint)]">, </span>
+                    <span className="num">{activeDoc.page_count || "–"}</span> pages
+                    <span className="text-[var(--gd-faint)]">, </span>
+                    <span className="num data-hue">
+                      {activeDoc.chunk_count || 0}
+                    </span>{" "}
+                    chunks
+                    <span className="text-[var(--gd-faint)]">. </span>
+                    {titleFinding}
+                  </>
+                ) : (
+                  titleFinding
+                )}
+              </p>
+            </div>
+            <div className="actions lg:hidden">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setViewerOpen(!viewerOpen)}
+                aria-label={viewerOpen ? "Close PDF viewer" : "Open PDF viewer"}
+              >
+                {viewerOpen ? (
+                  <PanelRightClose className="h-4 w-4" />
+                ) : (
+                  <PanelRightOpen className="h-4 w-4" />
+                )}
+              </Button>
+              <Button
+                variant={compareOpen ? "secondary" : "ghost"}
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setCompareOpen(!compareOpen)}
+                aria-label={
+                  compareOpen ? "Close compare view" : "Open compare view"
+                }
+              >
+                <Columns2 className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
 
-        {/* ── Center: Chat Panel ───────────────────────────────────────── */}
-        <div className="flex-1 min-w-0 flex flex-col">
-          <ChatPanel
-            activeDoc={activeDoc}
-            onCitationClick={(target) => {
-              setPdfPage(target.page);
-              setPdfHighlightTarget({
-                page: target.page,
-                rects: target.highlightRects,
-              });
-              if (!viewerOpen) setViewerOpen(true);
-            }}
-          />
-        </div>
+          <div className="genova-desk-chat-body">
+            <ChatPanel
+              activeDoc={activeDoc}
+              onCitationClick={(target) => {
+                setPdfPage(target.page);
+                setPdfHighlightTarget({
+                  page: target.page,
+                  rects: target.highlightRects,
+                });
+                if (!viewerOpen) setViewerOpen(true);
+              }}
+            />
+          </div>
+        </section>
 
-        {/* ── Right: Compare View or Single PDF Viewer ────────────── */}
+        {/* Region 3b — details (PDF / compare) */}
         {compareOpen ? (
-          <div className="hidden md:flex flex-1 min-w-0 border-l border-border/50 overflow-hidden animate-fade-in-up">
+          <aside
+            className="genova-desk-inspector is-open is-compare"
+            aria-label="Compare documents"
+          >
             <CompareView
               documents={documents}
               onClose={() => setCompareOpen(false)}
             />
-          </div>
+          </aside>
         ) : (
-          viewerOpen &&
-          activeDoc &&
-          activeDoc.original_name.endsWith(".pdf") && (
-            <div className="hidden md:block w-[480px] flex-shrink-0 border-l border-border/50 overflow-hidden animate-fade-in-up">
-              <PDFViewer
-                documentId={activeDoc.id}
-                currentPage={pdfPage}
-                onPageChange={(page) => {
-                  setPdfPage(page);
-                  if (pdfHighlightTarget?.page !== page) {
-                    setPdfHighlightTarget(null);
-                  }
-                }}
-                totalPages={activeDoc.page_count}
-                highlightTarget={pdfHighlightTarget}
-              />
-            </div>
+          showPdfDock && (
+            <aside
+              className="genova-desk-inspector is-open"
+              aria-label="Page inspector"
+            >
+              <div className="flex h-full min-h-0 flex-1 flex-col">
+                <PDFViewer
+                  documentId={activeDoc.id}
+                  currentPage={pdfPage}
+                  onPageChange={(page) => {
+                    setPdfPage(page);
+                    if (pdfHighlightTarget?.page !== page) {
+                      setPdfHighlightTarget(null);
+                    }
+                  }}
+                  totalPages={activeDoc.page_count}
+                  highlightTarget={pdfHighlightTarget}
+                />
+              </div>
+            </aside>
           )
         )}
       </div>

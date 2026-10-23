@@ -22,7 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import LinearProgress from "@mui/material/LinearProgress";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface AdminStats {
@@ -68,13 +68,15 @@ function MetricCard({
   detail: string;
 }) {
   return (
-    <Card className="min-h-36">
+    <Card className="min-h-36 genova-panel border-border/50">
       <CardHeader className="grid-cols-[1fr_auto]">
         <div>
           <CardDescription>{label}</CardDescription>
-          <CardTitle className="mt-2 text-3xl tabular-nums">{value}</CardTitle>
+          <CardTitle className="mt-2 font-display text-3xl tabular-nums tracking-tight">
+            {value}
+          </CardTitle>
         </div>
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/15 text-primary">
           <Icon className="h-4 w-4" />
         </div>
       </CardHeader>
@@ -246,7 +248,11 @@ export default function AdminPage() {
                 <CardDescription>{diskDetail}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Progress value={stats.disk_space_usage.usage_percent} />
+                <LinearProgress
+                  variant="determinate"
+                  value={stats.disk_space_usage.usage_percent}
+                  sx={{ height: 8, borderRadius: 999 }}
+                />
                 <div className="grid gap-3 text-sm sm:grid-cols-3">
                   <div>
                     <p className="text-muted-foreground">Used</p>

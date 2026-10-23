@@ -4,7 +4,6 @@ import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { DocInfo } from "@/app/dashboard/page";
 import { api } from "@/lib/api";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,21 +41,18 @@ interface Props {
 
 function DocumentListSkeleton() {
   return (
-    <div className="space-y-2 pb-3" aria-hidden="true">
-      {Array.from({ length: 5 }).map((_, index) => (
+    <div className="space-y-1 pb-3" aria-hidden="true">
+      {Array.from({ length: 6 }).map((_, index) => (
         <div
           key={index}
-          className="rounded-lg border border-sidebar-border/60 p-2.5"
+          className="rounded-md border border-sidebar-border/60 px-2 py-1.5"
         >
-          <div className="flex items-start gap-2.5">
-            <Skeleton className="mt-0.5 h-4 w-4 rounded-full bg-sidebar-accent" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <Skeleton className="h-4 w-4/5 bg-sidebar-accent" />
-              <Skeleton className="h-3 w-full bg-sidebar-accent/80" />
-              <div className="flex gap-2">
-                <Skeleton className="h-3 w-10 bg-sidebar-accent/70" />
-                <Skeleton className="h-3 w-12 bg-sidebar-accent/70" />
-              </div>
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-3.5 w-3.5 shrink-0 rounded-full bg-sidebar-accent" />
+            <div className="min-w-0 flex-1 space-y-1">
+              <Skeleton className="h-3.5 w-3/5 bg-sidebar-accent" />
+              <Skeleton className="h-2.5 w-full bg-sidebar-accent/80" />
+              <Skeleton className="h-2.5 w-2/5 bg-sidebar-accent/70" />
             </div>
           </div>
         </div>
@@ -426,7 +422,7 @@ export default function DocumentSidebar({
   };
 
   return (
-    <div className="h-full flex flex-col bg-sidebar">
+    <div className="h-full flex flex-col bg-transparent">
       {/* ── Upload Zone ─────────────────────────────── */}
       <div className="p-3 border-b border-sidebar-border space-y-2">
         {uploadError && (
@@ -436,7 +432,7 @@ export default function DocumentSidebar({
         )}
         <div
           {...getRootProps()}
-          className={`relative rounded-lg border-2 border-dashed p-4 text-center cursor-pointer transition-all duration-200
+          className={`relative rounded-2xl border-2 border-dashed p-4 text-center cursor-pointer transition-all duration-200
             ${isDragActive ? "border-primary bg-primary/10 scale-[1.02]" : "border-sidebar-border hover:border-primary/40 hover:bg-sidebar-accent/50"}
             ${uploading ? "pointer-events-none opacity-60" : ""}`}
           aria-label="Upload documents"
@@ -514,9 +510,12 @@ export default function DocumentSidebar({
 
         <TabsContent
           value="active"
-          className="flex-1 min-h-0 m-0 data-[state=active]:flex flex-col"
+          className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          <ScrollArea className="flex-1 px-3 overflow-auto" aria-busy={loading}>
+          <div
+            className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-contain px-3"
+            aria-busy={loading}
+          >
             {loading ? (
               <DocumentListSkeleton />
             ) : documents.length === 0 ? (
@@ -550,7 +549,7 @@ export default function DocumentSidebar({
                         doc.status === "ready" && !isEditing && onSelectDoc(doc)
                       }
                       onKeyDown={(e) => handleDocumentKeyDown(doc, e)}
-                      className={`w-full text-left p-2.5 rounded-lg transition-all duration-200 group
+                      className={`w-full text-left px-2 py-1.5 rounded-md transition-colors duration-150 group
                         ${
                           activeDoc?.id === doc.id
                             ? "bg-primary/15 border border-primary/30"
@@ -560,7 +559,7 @@ export default function DocumentSidebar({
                         }
                         ${doc.status !== "ready" ? "opacity-60 cursor-default" : "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"}`}
                     >
-                      <div className="flex items-start gap-2.5">
+                      <div className="flex items-center gap-2">
                         {/* ── Checkbox ── */}
                         <input
                           type="checkbox"
@@ -568,11 +567,11 @@ export default function DocumentSidebar({
                           checked={isSelected}
                           onChange={(e) => toggleSelect(doc.id, e)}
                           onClick={(e) => e.stopPropagation()}
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-sm border border-muted-foreground/40 accent-primary cursor-pointer opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                          className="h-3.5 w-3.5 shrink-0 rounded-sm border border-muted-foreground/40 accent-primary cursor-pointer opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
                           style={isSelected ? { opacity: 1 } : undefined}
                         />
 
-                        {statusIcon(doc.status)}
+                        <span className="shrink-0">{statusIcon(doc.status)}</span>
                         <div className="flex-1 min-w-0">
                           {isEditing ? (
                             <Input
@@ -586,7 +585,7 @@ export default function DocumentSidebar({
                             />
                           ) : (
                             <p
-                              className="text-sm font-medium truncate leading-tight"
+                              className="text-[13px] font-medium truncate leading-tight"
                               onDoubleClick={(e) => startRename(doc, e)}
                               title="Double-click to rename"
                             >
@@ -594,27 +593,33 @@ export default function DocumentSidebar({
                             </p>
                           )}
 
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {doc.summary || "📄 No summary available"}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] text-muted-foreground">
+                          {doc.summary ? (
+                            <p
+                              className="mt-0.5 text-[11px] leading-snug text-muted-foreground line-clamp-1"
+                              title={doc.summary}
+                            >
+                              {doc.summary}
+                            </p>
+                          ) : null}
+
+                          <div className="mt-0.5 flex min-w-0 items-center gap-x-1.5 text-[10px] text-muted-foreground">
+                            <span className="shrink-0 tabular-nums">
                               {formatSize(doc.file_size)}
                             </span>
                             {doc.status === "ready" && (
                               <>
-                                <span className="text-[10px] text-muted-foreground">
-                                  •
+                                <span className="shrink-0 opacity-40" aria-hidden>
+                                  ·
                                 </span>
-                                <span className="text-[10px] text-muted-foreground">
+                                <span className="shrink-0 tabular-nums">
                                   {t("documents.pagesShort", {
                                     count: doc.page_count,
                                   })}
                                 </span>
-                                <span className="text-[10px] text-muted-foreground">
-                                  •
+                                <span className="shrink-0 opacity-40" aria-hidden>
+                                  ·
                                 </span>
-                                <span className="text-[10px] text-muted-foreground">
+                                <span className="shrink-0 tabular-nums">
                                   {t("documents.chunks", {
                                     count: doc.chunk_count,
                                   })}
@@ -624,7 +629,7 @@ export default function DocumentSidebar({
                             {doc.status === "processing" && (
                               <Badge
                                 variant="secondary"
-                                className="text-[9px] h-4 px-1.5"
+                                className="h-4 px-1.5 text-[9px]"
                               >
                                 {t("documents.processing")}
                               </Badge>
@@ -632,13 +637,13 @@ export default function DocumentSidebar({
                             {doc.status === "failed" && (
                               <Badge
                                 variant="destructive"
-                                className="text-[9px] h-4 px-1.5"
+                                className="h-4 px-1.5 text-[9px]"
                               >
                                 {t("documents.failed")}
                               </Badge>
                             )}
+                            <DocumentCard document={doc} compact />
                           </div>
-                          <DocumentCard document={doc} />
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <Button
@@ -674,15 +679,15 @@ export default function DocumentSidebar({
                 })}
               </div>
             )}
-          </ScrollArea>
+          </div>
         </TabsContent>
 
         <TabsContent
           value="trash"
-          className="flex-1 min-h-0 m-0 data-[state=active]:flex flex-col"
+          className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          <ScrollArea
-            className="flex-1 px-3 overflow-auto"
+          <div
+            className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-contain px-3"
             aria-busy={loadingTrash}
           >
             {loadingTrash ? (
@@ -744,7 +749,7 @@ export default function DocumentSidebar({
                 })}
               </div>
             )}
-          </ScrollArea>
+          </div>
         </TabsContent>
       </Tabs>
 

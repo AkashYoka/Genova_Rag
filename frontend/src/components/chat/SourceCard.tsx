@@ -118,17 +118,17 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-border/50 bg-card/50 overflow-hidden">
+    <div className="rounded-2xl border border-primary/15 bg-card/70 overflow-hidden shadow-[0_12px_40px_-28px_oklch(0.5_0.08_195/0.55)]">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
         aria-controls={sourceListId}
         aria-label={`${expanded ? "Collapse" : "Expand"} ${sources.length} cited source${sources.length > 1 ? "s" : ""}`}
-        className="w-full flex items-center justify-between px-3 py-2 text-xs hover:bg-accent/30 transition-colors"
+        className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs hover:bg-accent/40 transition-colors"
       >
-        <span className="flex items-center gap-1.5 text-muted-foreground">
-          <FileText className="w-3.5 h-3.5" />
+        <span className="flex items-center gap-1.5 text-muted-foreground font-medium tracking-wide">
+          <FileText className="w-3.5 h-3.5 text-primary" />
           {sources.length} source{sources.length > 1 ? "s" : ""} cited
         </span>
         {expanded ? (

@@ -1,0 +1,81 @@
+{
+  "chat_title": "UPSC Prelims Complete Guide",
+  "session_id": "adda6268-de94-4e62-b751-6202a63c71fb",
+  "document_id": "a6b65ad4-002c-476d-9328-25d25cd0840f",
+  "pdf": "C:\\PC\\Yoka\\PDF-Assistant-RAG-dev\\PDF-Assistant-RAG-dev\\backend\\data\\sample_subsets\\upsc-text.pdf",
+  "source_pdf": "C:\\PC\\Yoka\\Misc\\genova-rag\\samples\\Education\\upsc-prelims-complete.pdf",
+  "answered": "11/12",
+  "results": [
+    {
+      "q": "What is this document and who is it for?",
+      "ok": true,
+      "answer": "This document appears to be an examination or practice test for the UPSC (Union Public Service Commission) Preliminary Examination in 2026. The context provided contains multiple-choice questions from various subjects such as International Organisations & Groupings, Environmental Governance & Legislation, Ancient History, Indian Economy, Sustainable Agriculture & Forestry, Defence Technology, Protected Areas & Wildlife, Atmosphere & Climatology, and Biodiversity & Conservation.\n\nBased on the codes given below each question (e.g., A B C D), it seems to be a practice test for candidates preparing for the UPSC Preliminary Examination. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "What is the UPSC Civil Services Preliminary exam structure according to this PDF?",
+      "ok": true,
+      "answer": "Based on the provided document excerpts from \"upsc-text.pdf,\" there is no specific information about the structure of the UPSC Civil Services Preliminary exam. The document contains multiple-choice questions and their corresponding codes for answers related to various subjects such as Environment & Ecology, Indian Economy, Ancient History, etc. However, it does not provide details on how these exams are structured or organized.\n\nI couldn't find sufficient information in the uploaded documents to answer this question. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "How many papers are there in the Prelims and what do they cover?",
+      "ok": true,
+      "answer": "Based on the provided document excerpts from \"upsc-text.pdf,\" there is no specific information about the number of papers in the UPSC Civil Services Preliminary exam or what they cover. The document contains multiple-choice questions and their corresponding codes for answers related to various subjects such as Environment & Ecology, Indian Economy, Ancient History, etc. However, it does not provide details on how these exams are structured or organized.\n\nI couldn't find sufficient information in the uploaded documents to answer this question. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "What is the marking scheme or negative marking mentioned?",
+      "ok": true,
+      "answer": "I couldn't find sufficient information in the uploaded documents to answer this question. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "List the major syllabus areas for General Studies Paper I.",
+      "ok": true,
+      "answer": "Based on the provided document excerpts from \"upsc-text.pdf,\" there is no specific information about the syllabus areas for General Studies Paper I of the UPSC Civil Services Preliminary exam. The document contains multiple-choice questions and their corresponding codes for answers related to various subjects such as International Organisations & Groupings, Environmental Governance & Legislation, Ancient History, Indian Economy, Sustainable Agriculture & Forestry, Defence Technology, Protected Areas & Wildlife, Atmosphere & Climatology, Biodiversity & Conservation, Awards & Honours, Tennis Grand Slams, International Relations & Treaties, Computer & Information Technology, Digital Payments & Financial Inclusion, and Science & Technology Institutions. However, it does not provide details on the syllabus areas for General Studies Paper I.\n\nI couldn't find sufficient information in the uploaded documents to answer this question. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "What does CSAT / Paper II cover?",
+      "ok": true,
+      "answer": "I couldn't find sufficient information in the uploaded documents to answer this question. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "What eligibility criteria are mentioned?",
+      "ok": true,
+      "answer": "I couldn't find sufficient information in the uploaded documents to answer this question. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "What exam strategy tips are given in the early pages?",
+      "ok": true,
+      "answer": "I couldn't find sufficient information in the uploaded documents to provide exam strategy tips or any specific advice related to the UPSC Civil Services Preliminary exam. The provided document excerpts do not contain any such strategies or guidelines. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "Are there recommended books or resources listed?",
+      "ok": true,
+      "answer": "Based on the provided document excerpts from \"upsc-text.pdf,\" there is no specific mention of recommended books or resources related to any of the exams or subjects discussed. The document contains multiple-choice questions and their corresponding codes for answers related to various subjects such as Environment & Ecology, Indian Economy, Modern History, Science & Technology, etc. However, it does not provide details on recommended books or study materials.\n\nI couldn't find sufficient information in the uploaded documents to answer this question. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "Summarize the cut-off or selection process if described.",
+      "ok": true,
+      "answer": "I couldn't find sufficient information in the uploaded documents to provide details about the cut-off or selection process for the UPSC Civil Services Preliminary exam. The provided document excerpts do not contain any specific information regarding the cut-offs or selection criteria used by the UPSC for the Preliminary exam.\n\n[Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "What is the difference between Prelims and Mains here?",
+      "ok": true,
+      "answer": "I couldn't find sufficient information in the uploaded documents to provide details about the difference between Prelims and Mains for the UPSC Civil Services exam. The provided document excerpts do not contain any specific information regarding the distinction between Preliminary (Prelims) and Main examinations. [Source: upsc-text.pdf, Page 1]",
+      "sources": 8
+    },
+    {
+      "q": "List any important dates or stages of the selection process mentioned.",
+      "ok": false,
+      "answer": "{\"error\":{\"code\":\"OLLAMA_ERROR\",\"message\":\"Cannot list Ollama models at http://localhost:11434/api/tags. Is Ollama running?\",\"details\":{\"service\":\"Ollama\"},\"request_id\":\"704ecfa2\"}}"
+    }
+  ]
+}

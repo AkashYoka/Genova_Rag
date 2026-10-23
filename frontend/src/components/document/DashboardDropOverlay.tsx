@@ -33,8 +33,8 @@ export default function DashboardDropOverlay({
       <div
         className={[
           "relative z-10 flex flex-col items-center justify-center gap-4",
-          "rounded-2xl border-2 border-dashed border-primary",
-          "bg-primary/5 px-16 py-14 shadow-2xl",
+          "rounded-3xl border-2 border-dashed border-primary",
+          "bg-gradient-to-br from-primary/10 to-[oklch(0.86_0.16_125/0.08)] px-16 py-14 shadow-2xl shadow-primary/20",
           "animate-in zoom-in-95 fade-in duration-200",
         ].join(" ")}
       >
@@ -46,7 +46,7 @@ export default function DashboardDropOverlay({
         </div>
 
         <div className="text-center space-y-1">
-          <p className="text-lg font-semibold text-foreground">
+          <p className="font-display text-lg font-semibold text-foreground tracking-tight">
             Drop files to upload
           </p>
           <p className="text-sm text-muted-foreground">

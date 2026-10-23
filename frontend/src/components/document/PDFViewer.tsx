@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,7 +77,13 @@ export default function PDFViewer({
   const [pageInput, setPageInput] = useState(String(currentPage));
   const [pageInputError, setPageInputError] = useState(false);
   const [prevCurrentPage, setPrevCurrentPage] = useState(currentPage);
-  const viewerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pageAnchorRef = useRef<HTMLDivElement>(null);
+  // Keep auth header stable so <Document> does not remount / blink on parent re-renders
+  const tokenRef = useRef<string | null>(null);
+  if (typeof window !== "undefined" && tokenRef.current === null) {
+    tokenRef.current = localStorage.getItem("token");
+  }
 
   // --- NEW: Search State ---
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
@@ -98,23 +104,37 @@ export default function PDFViewer({
   }
 
   const pdfUrl = `${API_BASE}/api/v1/documents/${documentId}/pdf`;
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-  // Configure file object with Authorization headers (memoized to prevent re-renders)
+  // Configure file object with Authorization headers (memoized to prevent remounts)
   const fileConfig = useMemo(
     () => ({
       url: pdfUrl,
-      httpHeaders: token ? { Authorization: `Bearer ${token}` } : undefined,
+      httpHeaders: tokenRef.current
+        ? { Authorization: `Bearer ${tokenRef.current}` }
+        : undefined,
     }),
-    [pdfUrl, token],
+    [pdfUrl],
   );
 
+  const handleDocumentLoad = useCallback((pdf: PDFDocumentProxy) => {
+    setPdfDoc(pdf);
+  }, []);
+
+  // Scroll the page into the viewer pane — never scrollIntoView the whole panel
+  // (that fights the layout and can look like continuous blinking).
   useEffect(() => {
-    if (viewerRef.current && highlightTarget?.page === currentPage) {
-      viewerRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    if (highlightTarget?.page !== currentPage) return;
+    const container = scrollContainerRef.current;
+    const anchor = pageAnchorRef.current;
+    if (!container || !anchor) return;
+    const top = Math.max(0, anchor.offsetTop - 12);
+    container.scrollTo({ top, behavior: "smooth" });
   }, [currentPage, highlightTarget?.page]);
+
+  // Reset captured doc when the file identity changes
+  useEffect(() => {
+    setPdfDoc(null);
+  }, [documentId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -200,8 +220,8 @@ export default function PDFViewer({
   };
 
   return (
-    <div className="h-full flex flex-col bg-background" ref={viewerRef}>
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border/50 bg-card/50 shrink-0">
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <div className="flex shrink-0 items-center justify-between border-b border-border/50 bg-card/50 px-3 py-2">
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
@@ -361,26 +381,30 @@ export default function PDFViewer({
       </div>
 
       {/* ── PDF Render ──────────────────────────────── */}
-      <div className="flex-1 overflow-auto bg-muted/30 flex justify-center items-start p-4 relative w-full">
+      <div
+        ref={scrollContainerRef}
+        className="relative flex min-h-0 w-full flex-1 items-start justify-center overflow-auto bg-muted/30 p-4"
+      >
         <Document
+          key={documentId}
           file={fileConfig}
-          onLoadSuccess={(pdf) => setPdfDoc(pdf)} // NEW: Capture PDF Doc instance
+          onLoadSuccess={handleDocumentLoad}
           onLoadError={(err) => {
             console.error("PDF load error:", err);
           }}
           loading={
-            <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            <div className="flex items-center justify-center p-12">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
           }
           error={
-            <div className="flex flex-col items-center justify-center p-8 text-center bg-card border border-destructive/20 rounded-lg max-w-md mx-auto my-12 shadow-sm gap-3">
-              <AlertCircle className="w-8 h-8 text-destructive animate-pulse" />
+            <div className="mx-auto my-12 flex max-w-md flex-col items-center justify-center gap-3 rounded-lg border border-destructive/20 bg-card p-8 text-center shadow-sm">
+              <AlertCircle className="h-8 w-8 text-destructive" />
               <div>
-                <p className="font-semibold text-sm text-foreground mb-1">
+                <p className="mb-1 text-sm font-semibold text-foreground">
                   Failed to load PDF
                 </p>
-                <p className="text-xs text-muted-foreground leading-relaxed">
+                <p className="text-xs leading-relaxed text-muted-foreground">
                   We encountered an error loading this PDF document. Please
                   verify the document is ready or try refreshing the page.
                 </p>
@@ -388,8 +412,8 @@ export default function PDFViewer({
             </div>
           }
           noData={
-            <div className="flex flex-col items-center justify-center p-8 text-center bg-card border border-border rounded-lg max-w-md mx-auto my-12 shadow-sm gap-2">
-              <p className="font-semibold text-sm text-foreground">
+            <div className="mx-auto my-12 flex max-w-md flex-col items-center justify-center gap-2 rounded-lg border border-border bg-card p-8 text-center shadow-sm">
+              <p className="text-sm font-semibold text-foreground">
                 No PDF document selected
               </p>
               <p className="text-xs text-muted-foreground">
@@ -397,9 +421,9 @@ export default function PDFViewer({
               </p>
             </div>
           }
-          className="shadow-md border border-border bg-card max-w-full"
+          className="max-w-full border border-border bg-card shadow-md"
         >
-          <div className="relative">
+          <div ref={pageAnchorRef} className="relative">
             <Page
               pageNumber={currentPage}
               scale={scale}
@@ -408,23 +432,23 @@ export default function PDFViewer({
               renderTextLayer={true}
               loading={
                 <div className="flex items-center justify-center p-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
                 </div>
               }
             />
             {/* Overlay Container (RAG + Search) */}
-            <div className="absolute inset-0 pointer-events-none z-10">
+            <div className="pointer-events-none absolute inset-0 z-10">
               {overlayRects.map((style, index) => (
                 <div
                   key={`rag-${index}`}
-                  className="absolute bg-yellow-400/40 rounded-sm border border-yellow-300/50"
+                  className="absolute rounded-sm border border-yellow-300/50 bg-yellow-400/40"
                   style={style}
                 />
               ))}
               {searchHighlights.map((style, index) => (
                 <div
                   key={`search-${index}`}
-                  className="absolute bg-blue-400/40 rounded-sm border border-blue-300/50"
+                  className="absolute rounded-sm border border-blue-300/50 bg-blue-400/40"
                   style={style}
                 />
               ))}
