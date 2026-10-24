@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { api } from "@/lib/api";
+import { isDevAuthBypass } from "@/lib/dev-auth";
 
 export interface AuthUser {
   id: string;
@@ -41,9 +42,10 @@ const clearStoredTokens = () => {
 };
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
+  // Keep SSR/client first paint identical — read localStorage only in initializeAuth
   user: null,
-  token: getStoredToken(),
-  loading: !!getStoredToken(),
+  token: null,
+  loading: true,
   initialized: false,
 
   async login(email, password) {
@@ -130,10 +132,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
     }
 
-    const bypassEnabled =
-      process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS !== "false" &&
-      (typeof window === "undefined" ||
-        ["localhost", "127.0.0.1"].includes(window.location.hostname));
+    const bypassEnabled = isDevAuthBypass();
 
     // 2. Local/dev auto sign-in — skip the login form when no token is stored
     if (!storedToken && bypassEnabled) {

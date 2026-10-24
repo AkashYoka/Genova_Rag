@@ -171,27 +171,33 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   async deleteSession(id) {
     try {
-      await api.delete(`/api/v1/chat/sessions/${id}`);
-      set((state) => {
-        const nextSessions = state.sessions.filter((s) => s.id !== id);
-        let nextActiveId = state.activeSessionId;
-        if (state.activeSessionId === id) {
-          nextActiveId = nextSessions.length > 0 ? nextSessions[0].id : null;
-        }
-        return {
-          sessions: nextSessions,
-          activeSessionId: nextActiveId,
-        };
-      });
-      const activeId = get().activeSessionId;
-      if (activeId) {
-        await get().fetchSessionHistory(activeId);
-      } else {
-        set({ messages: [] });
-      }
+      await api.delete(`/api/v1/chat/sessions/${encodeURIComponent(id)}`);
     } catch (err) {
-      console.error("Failed to delete chat session:", err);
-      throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      // Idempotent: first click may have deleted on the server while the
+      // client failed parsing an empty 204 — treat "not found" as success.
+      if (!/not found/i.test(message)) {
+        console.error("Failed to delete chat session:", err);
+        throw err;
+      }
+    }
+
+    set((state) => {
+      const nextSessions = state.sessions.filter((s) => s.id !== id);
+      let nextActiveId = state.activeSessionId;
+      if (state.activeSessionId === id) {
+        nextActiveId = nextSessions.length > 0 ? nextSessions[0].id : null;
+      }
+      return {
+        sessions: nextSessions,
+        activeSessionId: nextActiveId,
+      };
+    });
+    const activeId = get().activeSessionId;
+    if (activeId) {
+      await get().fetchSessionHistory(activeId);
+    } else {
+      set({ messages: [] });
     }
   },
 

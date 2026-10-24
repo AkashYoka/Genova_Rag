@@ -17,6 +17,10 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+vi.mock("@/lib/dev-auth", () => ({
+  isDevAuthBypass: () => false,
+}));
+
 // Import AFTER vi.mock so the store picks up the mocked api
 import { api } from "@/lib/api";
 import { useAuthStore, type AuthUser } from "./auth-store";

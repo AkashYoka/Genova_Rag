@@ -1,12 +1,18 @@
 "use client";
 
 import { ThemeProvider, createTheme, CssBaseline } from "@mui/material";
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 
 /** Material UI theme bridged to Genova tokens — use selectively. */
 export default function MuiProvider({ children }: { children: ReactNode }) {
   const { resolvedTheme, theme } = useTheme();
+  // CssBaseline injects emotion <style> tags; only after mount so SSR HTML matches.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const active = resolvedTheme ?? theme ?? "light";
   const mode = active === "light" ? "light" : "dark";
 
@@ -37,7 +43,7 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
 
   return (
     <ThemeProvider theme={muiTheme}>
-      <CssBaseline enableColorScheme />
+      {mounted ? <CssBaseline enableColorScheme /> : null}
       {children}
     </ThemeProvider>
   );

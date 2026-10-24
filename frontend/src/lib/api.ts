@@ -4,6 +4,8 @@
  * and automatic token refresh on 401 responses.
  */
 
+import { isDevAuthBypass } from "@/lib/dev-auth";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:7860";
 const CONNECTION_ERROR_MESSAGE = "Could not connect to the server. Please try again later.";
 const CONNECTION_ERROR_BANNER_MESSAGE = `⚠️ ${CONNECTION_ERROR_MESSAGE}`;
@@ -118,7 +120,17 @@ class ApiClient {
 
   private handleUnauthorized(): void {
     this.clearTokens();
-    if (typeof window !== "undefined" && window.location.pathname.startsWith("/dashboard")) {
+    if (typeof window === "undefined") return;
+    // With login bypass, bounce to dashboard so AuthProvider re-runs dev-login
+    if (isDevAuthBypass()) {
+      if (!window.location.pathname.startsWith("/dashboard")) {
+        window.location.href = "/dashboard";
+      } else {
+        window.location.reload();
+      }
+      return;
+    }
+    if (window.location.pathname.startsWith("/dashboard")) {
       window.location.href = "/login";
     }
   }
@@ -299,14 +311,15 @@ class ApiClient {
   }
 
   async delete<T>(path: string, options?: FetchOptions): Promise<T> {
+    const { token, _skipRefresh, ...fetchInit } = options ?? {};
     const res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
+      ...fetchInit,
       method: "DELETE",
-      headers: this.getHeaders(options?.token),
-      ...options,
+      headers: this.getHeaders(token),
     });
 
     // Auto-refresh on 401
-    if (res.status === 401 && !options?._skipRefresh) {
+    if (res.status === 401 && !_skipRefresh) {
       const newToken = await this.tryRefreshToken();
       if (newToken) {
         return this.delete<T>(path, { ...options, token: newToken, _skipRefresh: true });
@@ -318,7 +331,15 @@ class ApiClient {
       throw new Error(await this.getErrorMessage(res, res.statusText || "Delete failed"));
     }
 
-    return res.json();
+    // 204/205 and empty bodies are valid delete responses — do not call res.json()
+    if (res.status === 204 || res.status === 205) {
+      return undefined as T;
+    }
+    const text = await res.text();
+    if (!text) {
+      return undefined as T;
+    }
+    return JSON.parse(text) as T;
   }
 
   /**

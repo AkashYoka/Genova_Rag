@@ -30,6 +30,7 @@ import {
   Eye,
   EyeOff,
   Columns2,
+  StickyNote,
 } from "lucide-react";
 import { KeyRound } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -54,6 +55,8 @@ interface HeaderProps {
   onToggleSidebar: () => void;
   viewerOpen: boolean;
   onToggleViewer: () => void;
+  notesOpen?: boolean;
+  onToggleNotes?: () => void;
   compareOpen: boolean;
   onToggleCompare: () => void;
   /** Pass DocumentSidebar JSX so the mobile sheet can render it */
@@ -69,6 +72,8 @@ export default function Header({
   onToggleSidebar,
   viewerOpen,
   onToggleViewer,
+  notesOpen = false,
+  onToggleNotes,
   compareOpen,
   onToggleCompare,
   mobileSheetContent,
@@ -195,6 +200,23 @@ export default function Header({
               <PanelRightOpen className="h-4 w-4" />
             )}
           </Button>
+          {onToggleNotes ? (
+            <Button
+              variant={notesOpen ? "secondary" : "ghost"}
+              size="icon"
+              className={
+                notesOpen
+                  ? "h-8 w-8 bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)]"
+                  : toolBtn
+              }
+              onClick={onToggleNotes}
+              title={notesOpen ? "Close notes" : "Open notes"}
+              aria-label={notesOpen ? "Close notes panel" : "Open notes panel"}
+              aria-pressed={notesOpen}
+            >
+              <StickyNote className="h-4 w-4" />
+            </Button>
+          ) : null}
           <Button
             variant={compareOpen ? "secondary" : "ghost"}
             size="icon"

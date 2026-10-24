@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { isDevAuthBypass } from "@/lib/dev-auth";
 import { toast } from "sonner";
 import {
   api,
@@ -19,7 +20,17 @@ import DashboardDropOverlay from "@/components/document/DashboardDropOverlay";
 import { useDashboardDrop } from "@/hooks/useDashboardDrop";
 import { Button } from "@/components/ui/button";
 import { Columns2, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { useNotesStore } from "@/store/notes-store";
 import "./dashboard.css";
+
+const NotesPanel = dynamic(() => import("@/components/notes/NotesPanel"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
+      Loading notes…
+    </div>
+  ),
+});
 
 function PDFViewerSkeleton() {
   return (
@@ -104,11 +115,10 @@ export default function DashboardPage() {
   const [connectionError, setConnectionError] = useState("");
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [compareOpen, setCompareOpen] = useState(false);
-  // Avoid SSR/client tree mismatch (auth + MUI CssBaseline) on first paint
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const [inspectorTab, setInspectorTab] = useState<"notes" | "pdf">("notes");
+  const notesOpen = useNotesStore((s) => s.notesOpen);
+  const setNotesOpen = useNotesStore((s) => s.setNotesOpen);
+  const notesFocusToken = useNotesStore((s) => s.focusToken);
 
   const handleDocumentRenamed = useCallback((renamedDocument: DocInfo) => {
     setDocuments((current) =>
@@ -122,7 +132,9 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (initialized && !user) router.replace("/login");
+    if (initialized && !user && !isDevAuthBypass()) {
+      router.replace("/login");
+    }
   }, [user, initialized, router]);
 
   useEffect(() => {
@@ -165,9 +177,10 @@ export default function DashboardPage() {
       const message =
         err instanceof Error ? err.message : CONNECTION_ERROR_MESSAGE;
       if (
-        message.includes("Invalid or expired token") ||
-        message.includes("Unauthorized") ||
-        message.includes("User not found")
+        !isDevAuthBypass() &&
+        (message.includes("Invalid or expired token") ||
+          message.includes("Unauthorized") ||
+          message.includes("User not found"))
       ) {
         router.replace("/login");
         return;
@@ -243,6 +256,13 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [documents, loadDocuments]);
 
+  useEffect(() => {
+    if (notesFocusToken > 0) {
+      setCompareOpen(false);
+      setInspectorTab("notes");
+    }
+  }, [notesFocusToken]);
+
   const prevDocIdRef = useRef<string | null>(null);
   if (activeDoc?.id !== prevDocIdRef.current) {
     prevDocIdRef.current = activeDoc?.id ?? null;
@@ -252,12 +272,16 @@ export default function DashboardPage() {
   // Keep KnowledgeGraph in the bundle path used by the product
   void KnowledgeGraph;
 
-  if (!mounted || !initialized || !user) {
+  if (!initialized || !user) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#f2f4f7]">
+      <div
+        className="flex min-h-screen items-center justify-center bg-[#f2f4f7]"
+        suppressHydrationWarning
+      >
         <div
           className="h-8 w-8 rounded-full bg-[#e6e8ec]"
           aria-label="Loading"
+          suppressHydrationWarning
         />
       </div>
     );
@@ -282,6 +306,10 @@ export default function DashboardPage() {
     viewerOpen &&
     !!activeDoc &&
     activeDoc.original_name.endsWith(".pdf");
+
+  const showInspector = !compareOpen && (notesOpen || showPdfDock);
+  const activeInspectorTab: "notes" | "pdf" =
+    showPdfDock && (!notesOpen || inspectorTab === "pdf") ? "pdf" : "notes";
 
   const readyCount = documents.filter((d) => d.status === "ready").length;
   const processingCount = documents.filter(
@@ -310,6 +338,12 @@ export default function DashboardPage() {
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         viewerOpen={viewerOpen}
         onToggleViewer={() => setViewerOpen(!viewerOpen)}
+        notesOpen={notesOpen}
+        onToggleNotes={() => {
+          const next = !notesOpen;
+          setNotesOpen(next);
+          if (next) setInspectorTab("notes");
+        }}
         compareOpen={compareOpen}
         onToggleCompare={() => setCompareOpen(!compareOpen)}
         mobileSheetContent={sidebarContent}
@@ -405,12 +439,13 @@ export default function DashboardPage() {
                   rects: target.highlightRects,
                 });
                 if (!viewerOpen) setViewerOpen(true);
+                setInspectorTab("pdf");
               }}
             />
           </div>
         </section>
 
-        {/* Region 3b — details (PDF / compare) */}
+        {/* Region 3b — details (Notes / PDF / compare) */}
         {compareOpen ? (
           <aside
             className="genova-desk-inspector is-open is-compare"
@@ -422,24 +457,60 @@ export default function DashboardPage() {
             />
           </aside>
         ) : (
-          showPdfDock && (
+          showInspector && (
             <aside
-              className="genova-desk-inspector is-open"
-              aria-label="Page inspector"
+              className={`genova-desk-inspector is-open${notesOpen ? " is-notes" : ""}`}
+              aria-label="Notes and page inspector"
             >
-              <div className="flex h-full min-h-0 flex-1 flex-col">
-                <PDFViewer
-                  documentId={activeDoc.id}
-                  currentPage={pdfPage}
-                  onPageChange={(page) => {
-                    setPdfPage(page);
-                    if (pdfHighlightTarget?.page !== page) {
-                      setPdfHighlightTarget(null);
+              {notesOpen && showPdfDock ? (
+                <div
+                  className="genova-desk-inspector-tabs"
+                  role="tablist"
+                  aria-label="Inspector panels"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeInspectorTab === "notes"}
+                    className={
+                      activeInspectorTab === "notes" ? "is-active" : undefined
                     }
-                  }}
-                  totalPages={activeDoc.page_count}
-                  highlightTarget={pdfHighlightTarget}
-                />
+                    onClick={() => setInspectorTab("notes")}
+                  >
+                    Notes
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeInspectorTab === "pdf"}
+                    className={
+                      activeInspectorTab === "pdf" ? "is-active" : undefined
+                    }
+                    onClick={() => setInspectorTab("pdf")}
+                  >
+                    PDF
+                  </button>
+                </div>
+              ) : null}
+
+              <div className="flex min-h-0 flex-1 flex-col">
+                {activeInspectorTab === "notes" && notesOpen ? (
+                  <NotesPanel />
+                ) : null}
+                {activeInspectorTab === "pdf" && showPdfDock && activeDoc ? (
+                  <PDFViewer
+                    documentId={activeDoc.id}
+                    currentPage={pdfPage}
+                    onPageChange={(page) => {
+                      setPdfPage(page);
+                      if (pdfHighlightTarget?.page !== page) {
+                        setPdfHighlightTarget(null);
+                      }
+                    }}
+                    totalPages={activeDoc.page_count}
+                    highlightTarget={pdfHighlightTarget}
+                  />
+                ) : null}
               </div>
             </aside>
           )

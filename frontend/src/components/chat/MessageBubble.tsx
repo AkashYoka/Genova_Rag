@@ -18,7 +18,9 @@ import {
   Play,
   Pause,
   GitBranch,
+  StickyNote,
 } from "lucide-react";
+import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Tooltip,
@@ -28,6 +30,11 @@ import {
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useSettingsStore } from "@/store/settings-store";
+import { useNotesStore } from "@/store/notes-store";
+import {
+  GENOVA_NOTE_MIME,
+  encodeNotePayload,
+} from "@/lib/notes-mime";
 
 const subscribe = () => () => {};
 const getSnapshot = () => true;
@@ -105,6 +112,8 @@ export default function MessageBubble({ message }: Props) {
   }, []);
 
   const setCurrentBranchId = useChatStore((s) => s.setCurrentBranchId);
+  const appendMessage = useNotesStore((s) => s.appendMessage);
+  const openNotes = useNotesStore((s) => s.openNotes);
 
   const mounted = useSyncExternalStore(
     subscribe,
@@ -192,6 +201,30 @@ export default function MessageBubble({ message }: Props) {
     console.log("Branch created from:", message.id);
   };
 
+  const notePayload = {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+  };
+
+  const handleAddToNotes = () => {
+    if (!message.content || message.isStreaming) return;
+    appendMessage(notePayload);
+    openNotes();
+    toast.success("Added to notes");
+  };
+
+  const handleDragStart = (e: React.DragEvent) => {
+    if (!message.content || message.isStreaming) {
+      e.preventDefault();
+      return;
+    }
+    const encoded = encodeNotePayload(notePayload);
+    e.dataTransfer.setData(GENOVA_NOTE_MIME, encoded);
+    e.dataTransfer.setData("text/plain", encoded);
+    e.dataTransfer.effectAllowed = "copy";
+  };
+
   return (
     <div
       className={`flex gap-3 py-3 animate-fade-in-up ${isUser ? "justify-end" : "justify-start"}`}
@@ -203,16 +236,43 @@ export default function MessageBubble({ message }: Props) {
       )}
 
       <div
-        className={`relative max-w-[80%] rounded-2xl px-4 py-3 ${
+        draggable={Boolean(message.content) && !message.isStreaming}
+        onDragStart={handleDragStart}
+        className={`group relative max-w-[80%] rounded-2xl px-4 py-3 ${
           isUser
             ? "bg-primary text-primary-foreground rounded-br-md shadow-lg shadow-primary/20"
-            : "group bg-card/80 border border-border/50 rounded-bl-md backdrop-blur-sm"
-        }`}
+            : "bg-card/80 border border-border/50 rounded-bl-md backdrop-blur-sm"
+        } ${message.content && !message.isStreaming ? "cursor-grab active:cursor-grabbing" : ""}`}
       >
         {isUser ? (
-          <p className={`leading-relaxed whitespace-pre-wrap ${fontSizeClass}`}>
-            {message.content}
-          </p>
+          <>
+            {message.content ? (
+              <div className="absolute top-2 left-2 flex opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
+                <Tooltip>
+                  <TooltipTrigger
+                    type="button"
+                    className={cn(
+                      buttonVariants({ variant: "ghost", size: "icon-xs" }),
+                      "bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25",
+                    )}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAddToNotes();
+                    }}
+                    aria-label="Add to notes"
+                  >
+                    <StickyNote className="w-3.5 h-3.5" />
+                  </TooltipTrigger>
+                  <TooltipContent>Add to notes</TooltipContent>
+                </Tooltip>
+              </div>
+            ) : null}
+            <p
+              className={`leading-relaxed whitespace-pre-wrap ${fontSizeClass} ${message.content ? "pt-5" : ""}`}
+            >
+              {message.content}
+            </p>
+          </>
         ) : (
           <>
             {message.content && (
@@ -286,6 +346,24 @@ export default function MessageBubble({ message }: Props) {
                       {copied ? "Copied" : "Copy response"}
                     </TooltipContent>
                   </Tooltip>
+
+                  {/* Add to notes */}
+                  {!message.isStreaming && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        className={cn(
+                          buttonVariants({ variant: "ghost", size: "icon-xs" }),
+                          "text-muted-foreground hover:text-foreground",
+                        )}
+                        onClick={handleAddToNotes}
+                        aria-label="Add to notes"
+                      >
+                        <StickyNote className="w-3.5 h-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent>Add to notes</TooltipContent>
+                    </Tooltip>
+                  )}
 
                   {/* Share button */}
                   {!message.isStreaming && (

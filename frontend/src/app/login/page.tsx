@@ -3,6 +3,7 @@
 import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { isDevAuthBypass } from "@/lib/dev-auth";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,12 +27,16 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (isDevAuthBypass()) {
+      router.replace("/dashboard");
+      return;
+    }
     if (initialized && user) {
       router.replace("/dashboard");
     }
   }, [user, initialized, router]);
 
-  if (!initialized || user) {
+  if (isDevAuthBypass() || !initialized || user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />

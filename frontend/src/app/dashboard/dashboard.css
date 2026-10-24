@@ -276,6 +276,63 @@
   width: min(52%, 640px);
 }
 
+.genova-desk-inspector.is-notes {
+  width: min(420px, 40vw);
+}
+
+.genova-desk-inspector-tabs {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--gd-border);
+  background: var(--gd-ground);
+}
+
+.genova-desk-inspector-tabs button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--gd-muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+}
+
+.genova-desk-inspector-tabs button.is-active {
+  background: var(--gd-surface);
+  color: var(--gd-text);
+  box-shadow: inset 0 -1px 0 var(--gd-surface);
+}
+
+.genova-notes-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.genova-notes-editor .ck.ck-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.genova-notes-editor .ck.ck-editor__main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.genova-notes-editor .ck-editor__editable {
+  min-height: 100%;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
 .genova-desk-alert {
   border-bottom: 1px solid color-mix(in oklab, var(--gd-negative) 35%, var(--gd-border));
   background: color-mix(in oklab, var(--gd-negative) 8%, var(--gd-surface));
