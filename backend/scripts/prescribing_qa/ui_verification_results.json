@@ -1,0 +1,671 @@
+{
+  "session_id": "d80d72a7-6e8a-4049-8977-bed31f3f75a3",
+  "document_id": "8c57d30c-9568-4437-b51f-b52d9ac495d1",
+  "document": "xolair_prescribing.pdf",
+  "answered": "9/14",
+  "results": [
+    {
+      "id": "UI-PV-01",
+      "channel": "dashboard_ui",
+      "question": "A 35-year-old with chronic spontaneous urticaria who remains symptomatic on an H1 antihistamine was prescribed XOLAIR 150 mg subcutaneously every 2 weeks. Does the XOLAIR prescribing information recommend every-2-week dosing for CSU? State the label frequency.",
+      "expected": "Does not match. For CSU, label recommends 150 mg or 300 mg SC every 4 weeks (not every 2 weeks).",
+      "actual": "Key finding: The XOLAIR prescribing information recommends every-2-week dosing for Chronic Spontaneous Urticaria (CSU).\n\nLabel recommendation \u2014 Dose: 150 mg or 300 mg by subcutaneous injection; Frequency: Every 4 weeks; Key limits: Dosing is not dependent on serum IgE level or body weight.\n\nBased on the information provided in the prescribing information, the prescription of XOLAIR 150 mg subcutaneously every 2 weeks does not match the label recommendation. The label recommends an every-4-week dosing schedule for CSU patients.\n\nProposed: XOLAIR 150 mg subcutaneously every 2 weeks\nLabel recommendation: XOLAIR 150 mg or 300 mg by subcutaneous injection every 4 weeks",
+      "pass": false,
+      "content_pass": true,
+      "citation_pass": false,
+      "manual_notes": "Body correct; Key finding wrong; no visible citations in UI",
+      "rendering": "Proposed/Label structure present; Key finding incorrectly says every-2-week (contradicts body)",
+      "citation_page_overlap": [],
+      "citation_accuracy": "none visible"
+    },
+    {
+      "id": "UI-PV-02",
+      "type": "indication_age",
+      "channel": "api_into_ui_session",
+      "question": "A 4-year-old with moderate persistent asthma inadequately controlled on inhaled corticosteroids was prescribed XOLAIR. Does the asthma indication in the XOLAIR label cover a 4-year-old?",
+      "expected": "Does not match. Asthma indication is for adults and pediatric patients 6 years of age and older.",
+      "actual": "Key finding: The asthma indication in the XOLAIR label covers pediatric patients as young as 6 years old.\n\n### Proposed \u2014 restate only what the user proposed\n### Label recommendation \u2014 dose, route, frequency, and key limits from the document\n\n**Proposed:** XOLAIR for moderate persistent asthma inadequately controlled on inhaled corticosteroids.\n**Label recommendation:** XOLAIR is indicated for adults and pediatric patients 6 years of age and older with moderate to severe persistent asthma who have a positive skin test or in vitro reactivity to a perennial aeroallergen and whose symptoms are inadequately controlled with inhaled corticosteroids.\n\nWarnings and administration notes supported by the context include:\n- Selection of patients for self-administration of XOLAIR should be based on criteria to mitigate risk from anaphylaxis [see Dosage and Administration (2.6), Warnings and Precautions (5.1) and Adverse Reactions (6.1, 6.2)].\n- Safety and effectiveness in pediatric patients aged 6 years and older have been established based on evidence from clinical trials.\n\nBased on the information provided in the prescribing information, XOLAIR for a 4-year-old with moderate persistent asthma inadequately controlled on inhaled corticosteroids does not match the label recommendation. The label recommends an indication for pediatric patients aged 6 years and older.",
+      "citations": {
+        "inline_citation_pages": [],
+        "source_panel_pages": [
+          3,
+          25,
+          31,
+          34,
+          38,
+          39
+        ],
+        "has_inline_citation": false,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "6 years",
+          "does not match"
+        ],
+        "must_miss": [],
+        "page_overlap": [],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 38.2,
+      "source_pages_expected": [
+        1
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": null,
+      "citation_page_overlap": [],
+      "citation_accuracy": "sources returned; page overlap none with expected; source_count=8"
+    },
+    {
+      "id": "UI-PV-03",
+      "type": "route",
+      "channel": "api_into_ui_session",
+      "question": "For IgE-mediated food allergy, a clinician plans to give XOLAIR 300 mg as a slow intravenous infusion every 4 weeks. Does that route match the prescribing information?",
+      "expected": "Does not match. XOLAIR is for subcutaneous administration only.",
+      "actual": "Key finding: The prescribing information does not specify an intravenous route for XOLAIR in IgE-mediated food allergy indication.\n\n### Proposed \u2014 restate only what the user proposed\n### Label recommendation \u2014 dose, route, frequency, and key limits from the document\n\n**Proposed:** XOLAIR 300 mg as a slow intravenous infusion every 4 weeks.\n**Label recommendation:** The recommended dosage for IgE-mediated food allergy is XOLAIR 75 mg to 600 mg by subcutaneous injection every 2 or 4 weeks based on serum total IgE level (IU/mL), measured before the start of treatment, and by body weight.\n\nWarnings and administration notes supported by the context include:\n- Safety and effectiveness in pediatric patients aged 6 years and older have been established based on evidence from clinical trials.\n- Selection of patients for self-administration of XOLAIR should be based on criteria to mitigate risk from anaphylaxis [see Dosage and Administration (2.6), Warnings and Precautions (5.1) and Adverse Reactions (6.1, 6.2)].\n\nBased on the information provided in the prescribing information, the proposed route of intravenous infusion does not match the label recommendation for XOLAIR in IgE-mediated food allergy. The label recommends a subcutaneous injection every 2 or 4 weeks based on serum total IgE level and body weight.",
+      "citations": {
+        "inline_citation_pages": [],
+        "source_panel_pages": [
+          1,
+          7,
+          8,
+          11,
+          20,
+          27,
+          34
+        ],
+        "has_inline_citation": false,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "does not match",
+          "subcutaneous"
+        ],
+        "must_miss": [],
+        "page_overlap": [
+          1
+        ],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 36.1,
+      "source_pages_expected": [
+        1
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": null,
+      "citation_page_overlap": [
+        1
+      ],
+      "citation_accuracy": "sources returned; page overlap [1]; source_count=8"
+    },
+    {
+      "id": "UI-PV-04",
+      "type": "indication_limit",
+      "channel": "api_into_ui_session",
+      "question": "A patient in status asthmaticus was prescribed XOLAIR to treat the acute episode. Is XOLAIR indicated for status asthmaticus or acute bronchospasm according to the label?",
+      "expected": "No. Limitations of Use: not indicated for acute bronchospasm or status asthmaticus.",
+      "actual": "1. Key finding \u2014 XOLAIR is not indicated for the treatment of acute bronchospasm or status asthmaticus according to the prescribing information.\n\n### Proposed \u2014 restate only what was proposed\n### Label recommendation \u2014 dose, route, frequency, and key limits from the document\n\n**Proposed:** XOLAIR 300 mg as a slow intravenous infusion every 4 weeks.\n**Label recommendation:** The recommended dosage for IgE-mediated food allergy is XOLAIR 75 mg to 600 mg by subcutaneous injection every 2 or 4 weeks based on serum total IgE level (IU/mL), measured before the start of treatment, and by body weight.\n\nWarnings and administration notes supported by the context:\n- **Anaphylaxis:** Anaphylaxis has been reported after XOLAIR administration. Signs and symptoms include bronchospasm, hypotension, syncope, urticaria, and/or angioedema of the throat or tongue.\n- **Dosage and Administration:** Initiate XOLAIR therapy in a healthcare setting and closely observe patients for an appropriate period after administration. Health care providers should be prepared to manage anaphylaxis which can be life-threatening.\n\nBased on these recommendations, it is clear that XOLAIR is not indicated for status asthmaticus or acute bronchospasm.",
+      "citations": {
+        "inline_citation_pages": [],
+        "source_panel_pages": [
+          1,
+          3,
+          13,
+          14,
+          34
+        ],
+        "has_inline_citation": false,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "not indicated",
+          "status asthmaticus"
+        ],
+        "must_miss": [],
+        "page_overlap": [
+          1
+        ],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 39.1,
+      "source_pages_expected": [
+        1
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": null,
+      "citation_page_overlap": [
+        1
+      ],
+      "citation_accuracy": "sources returned; page overlap [1]; source_count=8"
+    },
+    {
+      "id": "UI-PV-05",
+      "type": "indication",
+      "channel": "api_into_ui_session",
+      "question": "An adult with chronic rhinosinusitis with nasal polyps who had an inadequate response to nasal corticosteroids is being considered for XOLAIR as add-on maintenance. Is that use consistent with the labeled indication?",
+      "expected": "Yes. CRSwNP in adults \u226518 with inadequate response to nasal corticosteroids, as add-on maintenance treatment.",
+      "actual": "1. **Key finding**: XOLAIR is indicated as an add-on maintenance treatment for chronic rhinosinusitis with nasal polyps (CRSwNP) in adult patients 18 years of age and older with inadequate response to nasal corticosteroids, which aligns with the proposed use.\n\n2. ### Proposed \u2014 restate only what the user proposed\n   - XOLAIR is considered as add-on maintenance treatment for chronic rhinosinusitis with nasal polyps (CRSwNP) in an adult patient who had an inadequate response to nasal corticosteroids.\n   \n3. ### Label recommendation \u2014 dose, route, frequency, and key limits from the document\n   - The recommended dosage for XOLAIR is 75 mg to 600 mg by subcutaneous injection every 2 or 4 weeks based on serum total IgE level (IU/mL) measured before the start of treatment and by body weight (kg).\n   - Limitations: XOLAIR should not be used for emergency treatment of allergic reactions, including anaphylaxis.\n\n4. Warnings:\n   - Patients should have no prior history of anaphylaxis to XOLAIR or other agents.\n   - Healthcare providers should consider known risk factors for anaphylaxis to XOLAIR and mitigation strategies when selecting patients for self-administration.\n   - The safety and efficacy of XOLAIR was evaluated in two randomized, multicenter, double-blind, placebo-controlled clinical trials (CRSwNP Trial 1 [NCT03280550] and CRSwNP Trial 2 [NCT03280537]).\n   - Patients should be monitored for signs of anaphylaxis during treatment.",
+      "citations": {
+        "inline_citation_pages": [],
+        "source_panel_pages": [
+          1,
+          3,
+          6,
+          9,
+          18,
+          34
+        ],
+        "has_inline_citation": false,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "nasal polyps",
+          "18"
+        ],
+        "must_miss": [],
+        "page_overlap": [
+          1
+        ],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 43.3,
+      "source_pages_expected": [
+        1
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": null,
+      "citation_page_overlap": [
+        1
+      ],
+      "citation_accuracy": "sources returned; page overlap [1]; source_count=8"
+    },
+    {
+      "id": "UI-PV-06",
+      "type": "dosage",
+      "channel": "api_into_ui_session",
+      "question": "What is the recommended dosage range and schedule for chronic rhinosinusitis with nasal polyps (CRSwNP) in the XOLAIR prescribing information?",
+      "expected": "75 mg to 600 mg by subcutaneous injection every 2 or 4 weeks based on pretreatment serum total IgE and body weight (Table 3).",
+      "actual": "### Key finding\nThe recommended dosage range and schedule for chronic rhinosinusitis with nasal polyps (CRSwNP) in the XOLAIR prescribing information is based on body weight (kg). The treatment should be administered subcutaneously every 2 or 4 weeks according to Table 3. \n\n### Label recommendation\nFor patients with chronic rhinosinusitis with nasal polyps, XOLAIR dosage and frequency are determined by a combination of serum total IgE level measured before the start of treatment and body weight (kg). [Source: xolair_prescribing.pdf, Page 14]\n\n### Warnings or administration notes\n- Significant changes in body weight during treatment should be adjusted for.\n- Patients with significant changes in body weight should have their doses re-evaluated.",
+      "citations": {
+        "inline_citation_pages": [
+          14
+        ],
+        "source_panel_pages": [
+          2,
+          3,
+          4,
+          6,
+          18,
+          29,
+          34,
+          35
+        ],
+        "has_inline_citation": true,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": false,
+        "must_hits": [
+          "every 2 or 4"
+        ],
+        "must_miss": [
+          "75",
+          "600"
+        ],
+        "page_overlap": [
+          6
+        ],
+        "citation_ok": true,
+        "content_ok": false
+      },
+      "pass": false,
+      "elapsed_s": 33.8,
+      "source_pages_expected": [
+        6,
+        7
+      ],
+      "content_pass": false,
+      "citation_pass": true,
+      "manual_notes": "Missing explicit 75\u2013600 mg range (said body-weight based every 2 or 4 weeks only)",
+      "citation_page_overlap": [
+        6
+      ],
+      "citation_accuracy": "sources returned; page overlap [6]; source_count=8"
+    },
+    {
+      "id": "UI-PV-07",
+      "type": "warnings",
+      "channel": "api_into_ui_session",
+      "question": "According to the boxed WARNING, can anaphylaxis to XOLAIR occur only with the first dose, or can it also occur later during treatment?",
+      "expected": "Anaphylaxis has occurred after the first dose and also beyond 1 year after beginning treatment. Initiate in a healthcare setting and observe patients.",
+      "actual": "Key finding: According to the information provided in the document, anaphylaxis can occur after the first dose of XOLAIR and also beyond 1 year after beginning regularly administered treatment [Source: xolair_prescribing.pdf, Page 13].\n\n### Proposed \u2014 restate only what the user proposed\n\nThe prescription regimen for XOLAIR is not provided in the given context. Therefore, we cannot directly compare it with the information available.\n\n### Label recommendation \u2014 dose, route, frequency, and key limits from the document\n\nInitiate XOLAIR therapy in a healthcare setting prepared to manage anaphylaxis which can be life-threatening and observe patients closely for an appropriate period of time after administration of XOLAIR, taking into account the time to onset of anaphylaxis seen in premarketing clinical trials and postmarketing spontaneous reports [Source: xolair_prescribing.pdf, Page 13].\n\n### Warnings or Administration Notes supported by the context\n\n- Initiate XOLAIR therapy only in a healthcare setting equipped to manage anaphylaxis.\n- Anaphylaxis has occurred as early as after the first dose of XOLAIR and also beyond one year after beginning regularly scheduled treatment.\n- Observe patients closely for an appropriate period of time after administration of XOLAIR, taking into account the time to onset of anaphylaxis seen in premarketing clinical trials and postmarketing spontaneous reports.\n- Be alert to eosinophilia, vasculitic rash, worsening pulmonary symptoms, cardiac complications, and/or neuropathy, especially upon reduction of oral corticosteroids.\n- Stop XOLAIR if patients develop signs and symptoms similar to serum sickness.",
+      "citations": {
+        "inline_citation_pages": [
+          13
+        ],
+        "source_panel_pages": [
+          1,
+          3,
+          13,
+          15,
+          17
+        ],
+        "has_inline_citation": true,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "first dose",
+          "1 year"
+        ],
+        "must_miss": [],
+        "page_overlap": [
+          1
+        ],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 40.5,
+      "source_pages_expected": [
+        1
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": "Cited page 13; boxed warning also on page 1",
+      "citation_page_overlap": [
+        1
+      ],
+      "citation_accuracy": "sources returned; page overlap [1]; source_count=8"
+    },
+    {
+      "id": "UI-PV-08",
+      "type": "administration",
+      "channel": "api_into_ui_session",
+      "question": "Before considering patient self-administration of XOLAIR with a prefilled syringe or autoinjector, how many doses should the patient receive under healthcare-provider guidance with no hypersensitivity reactions?",
+      "expected": "At least 3 doses under healthcare-provider guidance with no hypersensitivity reactions (among other selection criteria).",
+      "actual": "Key finding: The patient should receive no more than one dose under healthcare-provider guidance before considering self-administration of XOLAIR with a prefilled syringe or autoinjector [Source: xolair_prescribing.pdf, Page 14].\n\n### Proposed \u2014 restate only what the user proposed\n\nThe proposed prescription is for patients to receive multiple doses under healthcare provider guidance.\n\n### Label recommendation \u2014 dose, route, frequency, and key limits from the document\n\n- Dose: The exact dose is not specified in the provided context.\n- Route: Subcutaneous use [Source: xolair_prescribing.pdf, Page 3].\n- Frequency: Not explicitly stated; however, it should be administered as prescribed by a healthcare provider according to the Instructions for Use.\n- Key limits:\n    - Patients under 12 years of age are not recommended to use XOLAIR autoinjectors [Source: xolair_prescribing.pdf, Page 5].\n    - The patient must receive no more than one dose under healthcare-provider guidance before considering self-administration with a prefilled syringe or autoinjector.\n    - Patients who experience severe hypersensitivity reactions should discontinue XOLAIR therapy immediately [Source: xolair_prescribing.pdf, Page 48].\n\n### Warnings or administration notes supported by the context\n\n- The patient must be closely observed for an appropriate period after XOLAIR administration and prepared to manage any life-threatening adverse events such as anaphylaxis.\n- Patients who have had a severe hypersensitivity reaction should not receive XOLAIR therapy [Source: xolair_prescribing.pdf, Page 48].\n- Healthcare providers should determine the suitability of patient self-administration based on individual risk factors and ability to recognize signs and symptoms of adverse events.",
+      "citations": {
+        "inline_citation_pages": [
+          3,
+          5,
+          14,
+          48
+        ],
+        "source_panel_pages": [
+          1,
+          9,
+          10,
+          13,
+          14,
+          48
+        ],
+        "has_inline_citation": true,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "healthcare"
+        ],
+        "must_miss": [
+          "3 doses"
+        ],
+        "page_overlap": [
+          9
+        ],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": false,
+      "elapsed_s": 41.9,
+      "source_pages_expected": [
+        9
+      ],
+      "content_pass": false,
+      "citation_pass": true,
+      "manual_notes": "WRONG: answered 'no more than one dose'; label requires at least 3 supervised doses",
+      "citation_page_overlap": [
+        9
+      ],
+      "citation_accuracy": "sources returned; page overlap [9]; source_count=8"
+    },
+    {
+      "id": "UI-PV-09",
+      "type": "dose_adjustment",
+      "channel": "api_into_ui_session",
+      "question": "For chronic spontaneous urticaria, should the XOLAIR dose be calculated from serum total IgE and body weight the same way as for asthma?",
+      "expected": "No. CSU dosing is not dependent on serum IgE (free or total) level or body weight; use 150 mg or 300 mg SC every 4 weeks.",
+      "actual": "### Key finding\nFor chronic spontaneous urticaria (CSU), the dosage of XOLAIR should not be calculated from serum total IgE and body weight in the same way as for asthma. [Source: xolair_prescribing.pdf, Page 4]\n\n### Proposed \u2014 restate only what the user proposed\n\nThe recommended dosage for CSU is XOLAIR 150 mg or 300 mg by subcutaneous injection every 4 weeks.\n\n### Label recommendation\n- **Dose**: XOLAIR 150 mg or 300 mg.\n- **Route**: Subcutaneous injection.\n- **Frequency**: Every 4 weeks.\n- **Key limits**:\n    - The dose is not dependent on serum total IgE (free or total) level or body weight.\n    - Periodically reassess the need for continued therapy.\n\n### Warnings or administration notes\n- XOLAIR treatment in CSU patients led to a dose-dependent reduction of serum free IgE and an increase of serum total IgE levels, similar to observations in asthma patients. [Source: xolair_prescribing.pdf, Page 28]\n- Total IgE levels increased after the first dose due to the formation of omalizumab-IgE complexes which have a slower elimination rate compared with free IgE. After repeat dosing once every 4 weeks at 75 mg up to 300 mg, average predose serum total IgE levels at Week 12 were two- to three-fold higher compared with pre-treatment levels and remained stable between 12 and 24 weeks of treatment. [Source: xolair_prescribing.pdf, Page 6]\n- The appropriate duration of therapy for CSU has not been evaluated. Periodically reassess the need for continued therapy. [Source: xolair_prescribing.pdf, Page 4]\n\nThese points highlight that while XOLAIR can be administered similarly to asthma in terms of frequency and route, its dosing is specific to each condition based on serum total IgE level and body weight, not just a direct application from one disease state to another.",
+      "citations": {
+        "inline_citation_pages": [
+          4,
+          6,
+          28
+        ],
+        "source_panel_pages": [
+          2,
+          4,
+          6,
+          9,
+          28
+        ],
+        "has_inline_citation": true,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "not dependent",
+          "IgE"
+        ],
+        "must_miss": [],
+        "page_overlap": [
+          4,
+          9
+        ],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 46.6,
+      "source_pages_expected": [
+        4,
+        9
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": null,
+      "citation_page_overlap": [
+        4,
+        9
+      ],
+      "citation_accuracy": "sources returned; page overlap [4, 9]; source_count=8"
+    },
+    {
+      "id": "UI-PV-10",
+      "type": "contraindications",
+      "channel": "api_into_ui_session",
+      "question": "In which patients is XOLAIR contraindicated according to the prescribing information?",
+      "expected": "Contraindicated in patients with severe hypersensitivity reaction to XOLAIR or any ingredient of XOLAIR.",
+      "actual": "According to the prescribing information provided, XOLAIR is contraindicated in patients who have had a severe anaphylactic reaction to any of the components of XOLAIR injection, including excipients (Source: xolair_prescribing.pdf, Page 37). \n\n### Key finding\nXOLAIR is not contraindicated for use in patients with a history of mild allergic reactions.\n\n### Proposed \u2014 restate only what the user proposed\nThe prescribing information does not specify any particular patient population as being contraindicated for XOLAIR treatment. \n\n### Label recommendation\nThere are no specific dose, route, frequency, or key limits provided in the document for XOLAIR. The prescribing information focuses on warnings and administration notes rather than dosing instructions.\n\n### Warnings and Administration Notes\n\n- **Anaphylaxis**: Initiate therapy in a healthcare setting and closely observe patients for an appropriate period of time after XOLAIR administration due to the risk of anaphylaxis.\n- **Malignancies**: The impact of longer exposure to XOLAIR or use in patients at higher risk for malignancy (e.g., elderly, current smokers) is not known. [Source: xolair_prescribing.pdf, Page 3]\n- **Reactions including anaphylaxis have not been established** and patients should be instructed that XOLAIR is for maintenance use to reduce allergic reactions, including anaphylaxis, while avoiding food allergens. [Source: xolair_prescribing.pdf, Page 6]\n- **Selection of Patients for Self-Administration**: Healthcare providers should consider known risk factors for anaphylaxis and mitigation strategies when selecting patients for self-administration based on criteria such as prior history of anaphylaxis to XOLAIR or other agents. [Source: xolair_prescribing.pdf, Page 9]",
+      "citations": {
+        "inline_citation_pages": [
+          3,
+          6,
+          9,
+          37
+        ],
+        "source_panel_pages": [
+          1,
+          3,
+          9,
+          14,
+          16,
+          18,
+          37
+        ],
+        "has_inline_citation": true,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "contraindicated"
+        ],
+        "must_miss": [
+          "hypersensitivity"
+        ],
+        "page_overlap": [],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 51.5,
+      "source_pages_expected": [
+        13
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": "Contains conflicting 'not contraindicated' language; check carefully",
+      "citation_page_overlap": [],
+      "citation_accuracy": "sources returned; page overlap none with expected; source_count=8"
+    },
+    {
+      "id": "UI-PV-11",
+      "type": "drug_interactions",
+      "channel": "api_into_ui_session",
+      "question": "What does the XOLAIR Drug Interactions section say about formal drug interaction studies?",
+      "expected": "No formal drug interaction studies have been performed with XOLAIR.",
+      "actual": "Key finding: No formal drug interaction studies have been performed with XOLAIR [Source: xolair_prescribing.pdf, Page 30].\n\n### Proposed \u2014 The prescription regimen is not specified in the provided information.\n### Label recommendation \u2014 No specific dose, route, frequency, or key limits are provided for XOLAIR as per the document.\n\nWarnings and administration notes supported by the context:\n- In patients with asthma, CRSwNP (Chronic Rhinosinusitis with Nasal Polyps), and IgE-mediated food allergy, the concomitant use of XOLAIR and allergen immunotherapy has not been evaluated.\n- In patients with CSU (Chronic Spontaneous Urticaria) and the combination of XOLAIR in combination with immunosuppressive therapies has not been studied.",
+      "citations": {
+        "inline_citation_pages": [
+          30
+        ],
+        "source_panel_pages": [
+          1,
+          16,
+          17,
+          21,
+          22,
+          23,
+          30
+        ],
+        "has_inline_citation": true,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "No formal",
+          "interaction"
+        ],
+        "must_miss": [],
+        "page_overlap": [
+          23
+        ],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 33.9,
+      "source_pages_expected": [
+        23
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": "Cited page 30; section text is on page 23 of PDF extract \u2014 page may be off by numbering",
+      "citation_page_overlap": [
+        23
+      ],
+      "citation_accuracy": "sources returned; page overlap [23]; source_count=8"
+    },
+    {
+      "id": "UI-PV-12",
+      "type": "indication_limit",
+      "channel": "api_into_ui_session",
+      "question": "A patient with IgE-mediated food allergy was told XOLAIR can replace strict food allergen avoidance and can be used as emergency treatment for anaphylaxis after accidental exposure. Does that advice match the label?",
+      "expected": "Does not match. Label: use in conjunction with food allergen avoidance; not indicated for emergency treatment of allergic reactions, including anaphylaxis.",
+      "actual": "1. **Key finding**: Does not match.\n2. ### Proposed \u2014 restate only what the user proposed\n   - XOLAIR can replace strict food allergen avoidance and can be used as emergency treatment for anaphylaxis after accidental exposure.\n3. ### Label recommendation \u2014 dose, route, frequency, and key limits from the document\n   - **Dose**: The injection doses are available as a prefilled syringe or as an autoinjector [Source: xolair_prescribing.pdf, Page 43].\n     - Route: Subcutaneous injection.\n     - Frequency: Follow the prescribed dosing regimen and Instructions for Use provided with the product.\n   - **Key limits**: Do not use beyond the expiration date stamped on carton. Store XOLAIR under refrigerated conditions (2\u00b0C to 8\u00b0C [36\u00b0F to 46\u00b0F]) in the original carton.\n4. Warnings or administration notes supported by the context\n   - Patients should be instructed to seek immediate medical care if signs of anaphylaxis occur.\n   - Initiate XOLAIR only in a healthcare setting by healthcare providers and observe patients closely following administration.\n   - Instruct patients on recognizing signs and symptoms of anaphylaxis and how to use the autoinjector or prefilled syringe properly.\n   - Do not decrease the dose of, or stop taking any other asthma, CRSwNP, CSU, or IgE-mediated food allergy medications unless otherwise instructed by their physician.",
+      "citations": {
+        "inline_citation_pages": [
+          43
+        ],
+        "source_panel_pages": [
+          3,
+          9,
+          16,
+          26,
+          39,
+          43,
+          63
+        ],
+        "has_inline_citation": true,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "does not match",
+          "avoidance",
+          "emergency"
+        ],
+        "must_miss": [],
+        "page_overlap": [],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": true,
+      "elapsed_s": 43.8,
+      "source_pages_expected": [
+        1
+      ],
+      "content_pass": true,
+      "citation_pass": true,
+      "manual_notes": null,
+      "citation_page_overlap": [],
+      "citation_accuracy": "sources returned; page overlap none with expected; source_count=8"
+    },
+    {
+      "id": "UI-PV-13",
+      "type": "warnings",
+      "channel": "api_into_ui_session",
+      "question": "What monitoring precaution does the label give for patients at high risk of geohelminth (parasitic) infection while on XOLAIR?",
+      "expected": "Monitor patients at high risk of geohelminth infection while on XOLAIR therapy.",
+      "actual": "### Key finding\nThe label does not give any specific monitoring precaution for patients at high risk of geohelminth (parasitic) infection while on XOLAIR. [Source: xolair_prescribing.pdf, Page 6]\n\n### Proposed\nThere is no mention in the provided information regarding a specific monitoring precaution for patients at high risk of geohelminth (parasitic) infection while using XOLAIR.\n\n### Label recommendation\nThe label does not provide any specific dose, route, frequency or key limits related to monitoring for geohelminth infections. [Source: xolair_prescribing.pdf, Page 6]\n\n### Warnings and administration notes\n- Some people who are at a high risk for parasite (worm) infections may get a parasite infection after receiving XOLAIR.\n- Your healthcare provider can test your stool to check if you have a parasite infection. [Source: xolair_prescribing.pdf, Page 7]\n- People who receive XOLAIR should be monitored for signs and symptoms of parasitic infection such as fever, rash, or gastrointestinal symptoms like diarrhea. If these occur, consult your healthcare provider immediately.\n- Some people who are at a high risk for parasite infections may get a parasite infection after receiving XOLAIR. Your healthcare provider can test your stool to check if you have a parasite infection. [Source: xolair_prescribing.pdf, Page 7]\n- Patients should be informed that they may develop a parasitic infection after starting XOLAIR and should report any symptoms like fever, rash, or gastrointestinal issues such as diarrhea to their healthcare provider.",
+      "citations": {
+        "inline_citation_pages": [
+          6,
+          7
+        ],
+        "source_panel_pages": [
+          1,
+          12,
+          14,
+          15,
+          45,
+          46
+        ],
+        "has_inline_citation": true,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": true,
+        "must_hits": [
+          "Monitor",
+          "geohelminth"
+        ],
+        "must_miss": [],
+        "page_overlap": [
+          15
+        ],
+        "citation_ok": true,
+        "content_ok": true
+      },
+      "pass": false,
+      "elapsed_s": 47.6,
+      "source_pages_expected": [
+        15
+      ],
+      "content_pass": false,
+      "citation_pass": true,
+      "manual_notes": "WRONG: label says Monitor patients at high risk of geohelminth infection",
+      "citation_page_overlap": [
+        15
+      ],
+      "citation_accuracy": "sources returned; page overlap [15]; source_count=8"
+    },
+    {
+      "id": "UI-PV-14",
+      "type": "dosage_frequency",
+      "channel": "api_into_ui_session",
+      "question": "An adult with asthma was prescribed XOLAIR 375 mg by mouth once daily. Does this regimen match the asthma dosing in the prescribing information?",
+      "expected": "Does not match. Asthma dose is 75\u2013375 mg by subcutaneous injection every 2 or 4 weeks based on IgE and weight \u2014 not oral daily.",
+      "actual": "1. **Key finding**: Does not match.\n2. ### Proposed \u2014 restate only what the user proposed:\n   The adult was prescribed XOLAIR 375 mg by mouth once daily.\n3. ### Label recommendation \u2014 dose, route, frequency, and key limits from the document:\n   - Dose: Initiate dosing according to Table 1 for adult patients (XOLAIR doses are based on body weight).\n   - Route: The prescribed regimen is not specified in the provided information; XOLAIR should be administered via a prefilled syringe or autoinjector.\n   - Frequency: For adults, the maximum dose per 4 weeks was 750 mg. However, the frequency of administration (once daily) does not align with the prescribing information which suggests dosing based on body weight and serum total IgE level over each 4-week period.\n   - Key limits:\n     - Patients must have a baseline IgE between 30 and 700 IU/mL.\n     - Body weight should not exceed 150 kg.\n     - The maximum dose per 4 weeks is 750 mg, but the proposed once daily dosing exceeds this limit.\n\n4. ### Warnings or administration notes supported by the context:\n   - Patients must be monitored for severe hypersensitivity reactions and discontinue XOLAIR if a severe reaction occurs [Contraindications (4)].\n   - The prescribing information does not support once-daily dosing, suggesting that patients should follow a dosing table based on body weight and serum total IgE level over each 4-week period.",
+      "citations": {
+        "inline_citation_pages": [],
+        "source_panel_pages": [
+          3,
+          4,
+          11,
+          14,
+          16,
+          31,
+          37
+        ],
+        "has_inline_citation": false,
+        "source_count": 8
+      },
+      "scoring": {
+        "pass": false,
+        "must_hits": [
+          "does not match"
+        ],
+        "must_miss": [
+          "subcutaneous",
+          "every 2 or 4"
+        ],
+        "page_overlap": [
+          4
+        ],
+        "citation_ok": true,
+        "content_ok": false
+      },
+      "pass": false,
+      "elapsed_s": 45.0,
+      "source_pages_expected": [
+        1,
+        4
+      ],
+      "content_pass": false,
+      "citation_pass": true,
+      "manual_notes": "Correctly rejects oral daily but incomplete label dose/route/frequency detail",
+      "citation_page_overlap": [
+        4
+      ],
+      "citation_accuracy": "sources returned; page overlap [4]; source_count=8"
+    }
+  ],
+  "summary": {
+    "pass": 9,
+    "fail": 5,
+    "total": 14,
+    "indexed_prescribing_ready": [
+      "xolair_prescribing.pdf"
+    ],
+    "indexed_prescribing_not_ready": [
+      "lucentis_prescribing.pdf",
+      "ocrevus_prescribing.pdf",
+      "rozlytrek_prescribing.pdf",
+      "avastin_prescribing.pdf"
+    ],
+    "session_id": "d80d72a7-6e8a-4049-8977-bed31f3f75a3",
+    "preserved_sessions": [
+      "calculus-volume-1_-_WEB-1-300.pdf",
+      "UPSC Prelims Complete Guide",
+      "Chemistry - Learning Resources",
+      "Math - Calculus Volume 1",
+      "Invoice Related"
+    ]
+  }
+}

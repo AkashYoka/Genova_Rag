@@ -1,5 +1,19 @@
 """
-Two-stage retrieval: Hybrid Search (Vector + BM25 via RRF) + cross-encoder reranking.
+Two-stage retrieval: hybrid (vector + BM25 via RRF) + optional cross-encoder.
+
+Verified settings (config.py):
+  TOP_K_RETRIEVAL = 20
+  TOP_K_RERANK = 8
+  USE_HYBRID_SEARCH = True
+  RRF_K = 60
+  RERANKER_ENABLED = False  (default → sort+slice, no BGE)
+
+Caller: ``agent._generate_answer_direct`` / ``_generate_answer_stream_direct``
+  retrieve(query=question, user_id=..., document_id=..., top_k=TOP_K_RERANK or None)
+
+Common example question:
+  "Does the XOLAIR prescribing label recommend every-2-week dosing for
+   chronic spontaneous urticaria (CSU)?"
 """
 import json
 import logging
@@ -16,6 +30,13 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 MAX_QUERY_VARIANTS = 4
 
+_EX_Q = (
+    "Does the XOLAIR prescribing label recommend every-2-week dosing for "
+    "chronic spontaneous urticaria (CSU)?"
+)
+_EX_USER = "f3d989fb-79af-4fe2-9360-12b06772348c"
+_EX_DOC = "8c57d30c-9568-4437-b51f-b52d9ac495d1"
+
 
 # ── RRF core ─────────────────────────────────────────────────────────────────
 
@@ -24,19 +45,24 @@ def rrf_merge(
     bm25_results: List[Dict[str, Any]],
     k: int = 60,
 ) -> List[Dict[str, Any]]:
-    """Merge vector and BM25 ranked lists using Reciprocal Rank Fusion.
+    """Fuse two ranked lists with Reciprocal Rank Fusion.
 
-    RRF formula:  score(d) = Σ  1 / (k + rank(d, list))
-    where rank is 1-based and k=60 is the standard smoothing constant.
+    Formula (exact in loop): ``rrf_scores[key] += 1.0 / (k + rank)`` with rank
+    1-based. Same chunk in both lists accumulates both terms.
 
-    Args:
-        vector_results: Chunks from ChromaDB, ordered by descending similarity.
-        bm25_results:   Chunks from BM25, ordered by descending BM25 score.
-        k:              RRF smoothing constant (default 60).
+    Dedup key order: ``id`` or ``chunk_id`` if set; else
+    ``document_id|page|text[:200]``.
 
-    Returns:
-        Deduplicated list of chunks sorted by descending RRF score, each chunk
-        carrying an ``rrf_score`` field.
+    Exact example (ILLUSTRATIVE ranks; k=60 verified default)
+    ---------------------------------------------------------
+    vector_results[0] = CSU every-4-weeks chunk (id=..._42)  # rank 1
+    bm25_results[2]   = same id                               # rank 3
+    rrf = 1/(60+1) + 1/(60+3) ≈ 0.016393 + 0.015873 ≈ 0.032266
+    OUT chunk includes ``rrf_score`` rounded to 6 decimals.
+
+    retrieve then does: ``chunk["score"] = chunk.pop("rrf_score")``.
+
+    Why RRF: vector similarity ~0–1 vs BM25 raw ~1–10 — ranks are comparable.
     """
     rrf_scores: Dict[str, float] = {}
     chunk_store: Dict[str, Dict[str, Any]] = {}
@@ -75,7 +101,27 @@ def rrf_merge(
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
 def transform_query(query: str) -> List[str]:
-    """Rewrite a user question into multiple retrieval-friendly search queries."""
+    """Expand one question into ≤ MAX_QUERY_VARIANTS (4) search strings.
+
+    Exact example
+    -------------
+    IN:  query = _EX_Q
+    Ops: generated = _generate_query_variants(_EX_Q)  # up to 3 paraphrases
+         return _dedupe_queries([_EX_Q, *generated])[:4]
+
+    ILLUSTRATIVE OUT (paraphrases depend on live LLM; shapes only):
+      [
+        _EX_Q,
+        "XOLAIR CSU dosing interval every two weeks vs label",
+        "chronic spontaneous urticaria omalizumab recommended frequency",
+        "Does prescribing information allow biweekly XOLAIR for CSU",
+      ]
+
+    Fallback: LLM exception → log warning; generated=[]; return [original] only.
+    Blank strip → ``[]``.
+
+    Next: retrieve loops ``for search_query in transform_query(query)``.
+    """
     original_query = query.strip()
     if not original_query:
         return []
@@ -90,12 +136,31 @@ def transform_query(query: str) -> List[str]:
 
 
 def _generate_query_variants(query: str) -> List[str]:
-    """Use the configured LLM to rewrite a user query into 3 semantic variations.
+    """Ask configured chat LLM for exactly 3 JSON-array paraphrases.
 
-    Each variation rephrases the original from a different angle so that
-    BM25 and ChromaDB retrieve a broader, complementary set of chunks.
-    The original query is always prepended by the caller (transform_query),
-    so we ask for exactly 3 *additional* variants here.
+    Exact client selection
+    ----------------------
+    if settings.uses_ollama_llm:
+        client = get_llm_client()  # OllamaChatClient, model settings.LLM_MODEL
+                                  # default "qwen2.5:3b"
+      except → log "Query rewrite skipped"; return []
+    else:
+        needs HF_TOKEN; else return []
+
+    Exact call
+    ----------
+    client.chat_completion(
+      messages=[system rewriter, user prompt with query],
+      model=settings.LLM_MODEL,
+      max_tokens=256,
+      temperature=0.3,
+    )
+    → _parse_query_variants(content)[:3]
+
+    ILLUSTRATIVE model output string:
+      '["XOLAIR CSU every 2 weeks dosing?", "...", "..."]'
+
+    Fallback: no choices / bad parse → fewer or empty variants (original still kept).
     """
     # HuggingFace path needs a token; Ollama path needs a reachable server.
     if settings.uses_ollama_llm:
@@ -148,7 +213,14 @@ def _generate_query_variants(query: str) -> List[str]:
 
 
 def _parse_query_variants(content: str) -> List[str]:
-    """Parse LLM output into a list even when it adds light prose around JSON."""
+    """Parse rewrite LLM output: JSON list, embedded ``[...]``, or bullet lines.
+
+    Exact example
+    -------------
+    IN:  '["alpha", "beta", "gamma"]' → ["alpha","beta","gamma"]
+    IN:  'Sure:\\n["alpha", "beta"]' → regex extract → ["alpha","beta"]
+    IN:  '- alpha\\n- beta' → ["alpha","beta"]
+    """
     content = content.strip()
     if not content:
         return []
@@ -172,6 +244,15 @@ def _parse_query_variants(content: str) -> List[str]:
 
 
 def _try_parse_query_json(content: str) -> Optional[List[str]]:
+    """json.loads helper; accepts list or ``{"queries": [...]}``.
+
+    Exact example
+    -------------
+    '["a","b"]' → ["a","b"]
+    '{"queries":["a"]}' → ["a"]
+    'not-json' → None
+    '[1,2]' → []  (non-strings dropped → empty list, not None)
+    """
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
@@ -187,6 +268,13 @@ def _try_parse_query_json(content: str) -> Optional[List[str]]:
 
 
 def _dedupe_queries(queries: List[str]) -> List[str]:
+    """Case-insensitive dedupe after collapsing internal whitespace.
+
+    Exact example
+    -------------
+    IN:  [_EX_Q, _EX_Q.upper(), "  other  q  "]
+    OUT: [_EX_Q, "other q"]  # first casing kept
+    """
     deduped = []
     seen = set()
     for query in queries:
@@ -199,7 +287,12 @@ def _dedupe_queries(queries: List[str]) -> List[str]:
 
 
 def _merge_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Deduplicate a flat candidate list, keeping the highest-scored entry per key."""
+    """Dedupe across query variants; key = document_id|page|text[:200]; keep max score.
+
+    Exact example
+    -------------
+    Variant A and B both retrieve id ..._42 → one entry with higher score kept.
+    """
     merged: Dict[str, Dict[str, Any]] = {}
     for candidate in candidates:
         candidate_copy = dict(candidate)
@@ -236,14 +329,61 @@ def retrieve(
     document_ids: Optional[List[str]] = None,
     top_k: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Two-stage retrieval pipeline:
-    1. Hybrid Search — Vector (ChromaDB) + BM25 merged via Reciprocal Rank Fusion (RRF),
-       applied across all transformed query variants.
-    2. Cross-encoder reranking — top-K refined by a cross-encoder model.
+    """Full ask-time retrieval for one question.
 
-    Falls back to vector-only when USE_HYBRID_SEARCH=False or rank_bm25 is absent.
-    Returns chunks with confidence scores.
+    Exact default call from agent (Ollama direct)
+    ---------------------------------------------
+    retrieve(
+      query=_EX_Q,
+      user_id=_EX_USER,
+      document_id=_EX_DOC,
+      document_ids=None,
+      top_k=settings.TOP_K_RERANK,  # 8 passed as retrieval width from agent
+    )
+    Note: agent passes ``top_k or settings.TOP_K_RERANK``. If top_k is 8,
+    ``effective_top_k`` for Chroma/BM25 is 8 (not 20). If caller omits top_k
+    (None), effective_top_k = TOP_K_RETRIEVAL (20).
+
+    Stage 1 per search_query in transform_query(query):
+      query_vector = embed_query(search_query)
+      vector_results = query_chunks(..., top_k=effective_top_k)
+      if USE_HYBRID_SEARCH:
+        bm25_results = query_bm25(...)  # except → [] + warning
+        merged = rrf_merge(..., k=RRF_K); score = pop rrf_score
+      else: use vector_results only
+
+    Stage 2:
+      candidates = _merge_candidates(all_candidates)
+      reranker = get_reranker()
+      if reranker: rerank(query=ORIGINAL query, ..., top_k=TOP_K_RERANK)
+      else: sort by score; [:TOP_K_RERANK]
+
+    Confidence (exact):
+      max_score = max(rerank_score or score); floor 0.001
+      confidence = round((raw/max_score)*100, 1)
+      if rerank_score present → score=round(rerank_score,4); del rerank_score
+
+    Exact OUT shape (≤8 items; contents ILLUSTRATIVE)
+    -------------------------------------------------
+    [{
+      "id": "..._42",
+      "text": "... every 4 weeks ...",
+      "filename": "xolair_prescribing.pdf",
+      "document_id": "...",
+      "page": 9,
+      "score": 0.0323,       # RRF or rerank
+      "confidence": 100.0,   # best chunk
+      ...
+    }, ...]
+
+    Fallbacks summary:
+      rewrite fail → original only
+      BM25 fail → vector-only merge for that variant
+      USE_HYBRID_SEARCH False → vector only
+      RERANKER_ENABLED False → sort+slice
+      no candidates → []
+
+    Next: agent._sources_from_chunks / _format_context.
     """
     effective_top_k = top_k if top_k is not None else settings.TOP_K_RETRIEVAL
 
@@ -331,3 +471,49 @@ def retrieve(
     )
 
     return top_chunks
+
+
+# =============================================================================
+# PIPELINE FLOW WITH EXACT EXAMPLE
+# =============================================================================
+#
+# A. Actual input
+#    query: str = _EX_Q
+#    user_id: str = _EX_USER          # ILLUSTRATIVE
+#    document_id: str = _EX_DOC       # ILLUSTRATIVE Xolair id from prior UI test
+#    top_k: Optional[int] = 8         # as passed by agent Ollama path
+#
+# B. Stage chain (default config: hybrid ON, rerank OFF)
+#
+#    transform_query(_EX_Q)
+#      → [original, ≤3 paraphrases]   # paraphrases ILLUSTRATIVE / live LLM
+#
+#    for each search_query:
+#      embed_query(search_query)           → List[float] dim 768
+#      query_chunks(..., top_k=8)          → semantic hits
+#      query_bm25(..., top_k=8)            → lexical hits
+#      rrf_merge(..., k=60)                → rrf_score → renamed score
+#
+#    _merge_candidates(all_candidates)
+#    get_reranker() → None
+#    sort by score; top_chunks = candidates[:8]
+#    confidence % relative to max score
+#
+# C. Before → after (compact)
+#    Original question
+#      → query variants (≤4 strings)
+#      → query embedding (768-d)
+#      → vector search results (list[dict] score=1-distance)
+#      → BM25 results (list[dict] raw BM25 score)
+#      → RRF merge (rrf_score / score)
+#      → deduplication (_merge_candidates)
+#      → reranking SKIPPED (RERANKER_ENABLED=False)
+#      → final chunks ≤8 with confidence
+#
+# D. Verified vs illustrative
+#    VERIFIED: TOP_K_*, RRF_K, USE_HYBRID_SEARCH, RERANKER_ENABLED=False,
+#      models nomic-embed-text / qwen2.5:3b for rewrite.
+#    ILLUSTRATIVE: chunk text, pages, numeric scores, rewrite strings, UUIDs.
+#
+# Next: agent.py formats these chunks into the LLM prompt.
+# =============================================================================

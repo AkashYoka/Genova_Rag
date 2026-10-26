@@ -1,10 +1,19 @@
 """
-Agentic RAG — intelligent routing using ReAct (Reasoning and Acting).
-Intelligently chooses between PDF search, Web Search, and Math tools.
+Agentic RAG — answer generation on top of hybrid retrieval.
 
-LLM backends:
-- ollama (default): local Ollama chat model — no HF_TOKEN required
-- huggingface: HuggingFace Inference API — requires HF_TOKEN
+LLM backends (verified defaults in config.py):
+- ollama (default): LLM_MODEL=qwen2.5:3b, LLM_TEMPERATURE=0.3, LLM_MAX_NEW_TOKENS=1024
+- huggingface: ReAct agent with PDFSearchTool / MathTool / WebSearchTool
+
+Default ask path when ``settings.uses_ollama_llm`` is True:
+  generate_answer / generate_answer_stream
+    → _generate_answer_direct / _generate_answer_stream_direct
+    → retrieve(...) → _format_context → SYSTEM_PROMPT + RAG_PROMPT_TEMPLATE
+    → OllamaChatClient.chat_completion(model=qwen2.5:3b)
+
+Common example question (all six files):
+  "Does the XOLAIR prescribing label recommend every-2-week dosing for
+   chronic spontaneous urticaria (CSU)?"
 """
 import logging
 import json
@@ -33,7 +42,15 @@ settings = get_settings()
 
 
 def persist_document_keywords(document, chunks, db) -> None:
-    """Extract TF-IDF keywords after indexing and persist on the document row."""
+    """
+    What: Compute TF-IDF keywords for a document and save them on the DB row.
+    Why:  UI / search hints can show key terms without re-scanning all chunks.
+    How:  ``extract_keywords`` on chunk texts → ``document.keywords`` JSON string.
+    In:   SQLAlchemy document, list of chunk dicts, db session
+    Out:  None (mutates document and stages it with ``db.add``)
+
+    Connects to: indexing pipeline after chunks exist (not the ask path).
+    """
     raw_texts = [c["text"] for c in chunks]
     kws = extract_keywords(raw_texts, top_n=10)
     document.keywords = json.dumps(kws)
@@ -41,10 +58,27 @@ def persist_document_keywords(document, chunks, db) -> None:
 
 
 def get_llm_client(hf_token: Optional[str] = None):
-    """Return a chat client for the configured LLM provider.
+    """Return InferenceClient-compatible chat client for the active LLM provider.
 
-    Ollama: ``OllamaChatClient`` (InferenceClient-compatible ``chat_completion``).
-    HuggingFace: ``huggingface_hub.InferenceClient`` (requires token).
+    Exact default branch
+    --------------------
+    settings.uses_ollama_llm True:
+      check_ollama_reachable("http://localhost:11434")
+      check_ollama_model(..., "qwen2.5:3b")
+      return OllamaChatClient(base_url=..., model="qwen2.5:3b")
+
+    Exact call site in direct RAG
+    -----------------------------
+    client.chat_completion(
+      messages=[{"role":"system","content": SYSTEM_PROMPT},
+                {"role":"user","content": user_prompt}],
+      model=settings.LLM_MODEL,          # "qwen2.5:3b"
+      max_tokens=settings.LLM_MAX_NEW_TOKENS,  # 1024
+      temperature=settings.LLM_TEMPERATURE,    # 0.3
+      stream=False|True,
+    )
+
+    Also used by: retriever._generate_query_variants (rewrite).
     """
     if settings.uses_ollama_llm:
         from app.rag.ollama_client import (
@@ -72,6 +106,20 @@ def get_llm_client(hf_token: Optional[str] = None):
 
 
 def _format_chat_history(messages: List[Dict[str, str]]) -> str:
+    """Serialize prior turns for the prompt.
+
+    Exact example
+    -------------
+    IN:  []  →  OUT: ""
+    IN:  [{"role":"user","content":"What about asthma?"},
+          {"role":"assistant","content":"Indicated for ages 6+."}]
+    OUT:
+      Previous conversation:
+      User: What about asthma?
+      Assistant: Indicated for ages 6+.
+
+    For the first XOLAIR CSU question in a new session, history is empty → "".
+    """
     if not messages:
         return ""
     lines = ["Previous conversation:"]
@@ -82,7 +130,14 @@ def _format_chat_history(messages: List[Dict[str, str]]) -> str:
 
 
 def _build_chat_llm(hf_token: Optional[str] = None):
-    """Build the LangChain chat model for the ReAct agent."""
+    """
+    What: Build a LangChain chat model for the ReAct agent (HF path).
+    Why:  ``create_react_agent`` needs a LangChain-compatible LLM, not raw HTTP.
+    How:  Ollama → ``build_chat_ollama``; HF → ``ChatHuggingFace`` over Endpoint.
+    Out:  LangChain chat model
+
+    Connects to: ``get_agent_executor`` only (not used on Ollama direct RAG path).
+    """
     if settings.uses_ollama_llm:
         from app.rag.ollama_client import (
             build_chat_ollama,
@@ -127,7 +182,16 @@ def get_agent_executor(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ):
-    """Initialize the LangChain ReAct agent executor."""
+    """
+    What: Wire PDF / math / web tools into a LangChain ReAct ``AgentExecutor``.
+    Why:  On HuggingFace, the model decides when to call ``pdf_search`` etc.
+    How:  Create tools → chat LLM → ReAct prompt (+ multi-doc guidance) → executor.
+    In:   user/document scope, optional history
+    Out:  ``(executor, pdf_tool, formatted_history)``
+          ``pdf_tool.last_sources`` later becomes citation chips
+
+    Connects to: ``generate_answer`` / ``generate_answer_stream`` HF branches.
+    """
 
     # Initialize tools
     pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, document_ids=document_ids, top_k=top_k)
@@ -159,7 +223,16 @@ def get_agent_executor(
     return executor, pdf_tool, formatted_history
 
 def is_greeting(question: str) -> bool:
-    """Detect if the question is a casual greeting rather than a document query."""
+    """True iff normalized question is in the fixed greetings set.
+
+    Exact example
+    -------------
+    is_greeting("Hello!") → True   # skips retrieve
+    is_greeting(
+      "Does the XOLAIR prescribing label recommend every-2-week dosing for "
+      "chronic spontaneous urticaria (CSU)?"
+    ) → False  # continues to RAG
+    """
     greetings = {
         "hi", "hello", "hey", "how are you", "what's up", "whats up",
         "good morning", "good evening", "good afternoon", "thanks", "thank you",
@@ -169,6 +242,26 @@ def is_greeting(question: str) -> bool:
 
 
 def _format_context(chunks: List[Dict[str, Any]]) -> str:
+    """Build the evidence block for ``RAG_PROMPT_TEMPLATE`` ``{context}``.
+
+    Exact format per chunk (code):
+      f"[{i}] Source: {filename}, Page {page}\\n{text}"
+      joined with "\\n\\n"
+
+    Exact example (ILLUSTRATIVE chunk text; format is exact)
+    -------------------------------------------------------
+    IN chunks[0] = {
+      "filename": "xolair_prescribing.pdf", "page": 9,
+      "text": "The recommended dose for CSU is 150 mg or 300 mg by "
+              "subcutaneous injection every 4 weeks.",
+    }
+    OUT starts with:
+      [1] Source: xolair_prescribing.pdf, Page 9
+      The recommended dose for CSU is 150 mg or 300 mg by subcutaneous
+      injection every 4 weeks.
+
+    Next: RAG_PROMPT_TEMPLATE.format(context=OUT, question=question)
+    """
     parts = []
     for i, chunk in enumerate(chunks, start=1):
         filename = chunk.get("filename", "document")
@@ -179,6 +272,19 @@ def _format_context(chunks: List[Dict[str, Any]]) -> str:
 
 
 def _sources_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Map retrieve chunks → citation payloads for the UI (text truncated to 300).
+
+    Exact OUT keys (code): text, filename, page, score, confidence, bbox.
+
+    Exact example
+    -------------
+    IN chunk text length 500 → OUT text length 303 (300 + "...")
+    OUT item ILLUSTRATIVE:
+      {"text": "The recommended dose for CSU is ...", "filename": "xolair_prescribing.pdf",
+       "page": 9, "score": 0.0323, "confidence": 100.0, "bbox": ""}
+
+    Stream path yields: data: {"type":"sources","data":[<items>]}\n\n  BEFORE tokens.
+    """
     return [
         {
             "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
@@ -200,10 +306,31 @@ def _generate_answer_direct(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
-    """Retrieve-then-generate path for local Ollama models.
+    """Ollama retrieve-then-generate (non-streaming).
 
-    Small chat models often fail ReAct tool-calling; this path preserves
-    hybrid retrieval, citations, and grounding without requiring tool use.
+    Exact call sequence for the shared XOLAIR question
+    --------------------------------------------------
+    1) chunks = retrieve(query=question, user_id=..., document_id=...,
+                         top_k=top_k or settings.TOP_K_RERANK)  # default 8
+    2) sources = _sources_from_chunks(chunks)
+    3) if not chunks → fixed insufficient-info answer, sources=[]
+    4) context = _format_context(chunks)
+       user_prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)
+       (+ history prepended if any)
+    5) messages = [
+         {"role":"system", "content": SYSTEM_PROMPT},  # from prompts.py
+         {"role":"user", "content": user_prompt},
+       ]
+       response = get_llm_client().chat_completion(
+         messages=..., model="qwen2.5:3b", max_tokens=1024, temperature=0.3)
+    6) answer = response.choices[0].message.content.strip()
+       empty → MALFORMED_OUTPUT_MESSAGE
+
+    Exact OUT: {"answer": str, "sources": list[dict]}
+
+    ILLUSTRATIVE answer (not a live model run):
+      "No. The label recommends 150 mg or 300 mg SC every 4 weeks for CSU,
+       not every 2 weeks. [Source: xolair_prescribing.pdf, Page 9]"
     """
     chunks = retrieve(
         query=question,
@@ -254,7 +381,26 @@ def _generate_answer_stream_direct(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Generator[str, None, None]:
-    """Streaming variant of the direct Ollama RAG path."""
+    """Streaming twin of ``_generate_answer_direct`` (SSE lines for WS/HTTP stream).
+
+    Exact yield order
+    -----------------
+    1) data: {"type":"sources","data": sources}\\n\\n
+    2) if no chunks: one token with insufficient-info message, then done; return
+    3) same prompt build as non-stream
+    4) chat_completion(..., stream=True) → for each delta:
+         data: {"type":"token","data": "<piece>"}\\n\\n
+       on exception: data: {"type":"error","data": "..."}\\n\\n
+    5) data: {"type":"done"}\\n\\n
+
+    Exact example first events (ILLUSTRATIVE token pieces)
+    ------------------------------------------------------
+    data: {"type":"sources","data":[{"page":9,"filename":"xolair_prescribing.pdf",...}]}
+    data: {"type":"token","data":"No"}
+    data: {"type":"token","data":". The label"}
+    ...
+    data: {"type":"done"}
+    """
     chunks = retrieve(
         query=question,
         user_id=user_id,
@@ -319,8 +465,25 @@ def generate_answer(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
-    """
-    Agentic generation: retrieve via tools → reason → generate answer.
+    """Public non-streaming entry used by ``/chat/ask``.
+
+    Exact branch order (code)
+    -------------------------
+    1) is_greeting(question) → short LLM hello, sources=[]  (no retrieve)
+    2) settings.uses_ollama_llm → return _generate_answer_direct(...)
+         on error → ExternalServiceException("Ollama", ...)
+    3) else HuggingFace ReAct:
+         get_agent_executor → executor.invoke → parse_agent_output
+         sources from pdf_tool.last_sources
+         malformed → MALFORMED_OUTPUT_MESSAGE
+
+    Exact example (default Ollama + XOLAIR question)
+    ------------------------------------------------
+    generate_answer(
+      question=<CSU every-2-week question>,
+      user_id=..., document_id=<xolair id>, chat_history=[],
+    )
+    → branch 2 → _generate_answer_direct → {"answer": "...", "sources": [...]}
     """
     # ── Handle greetings ─────────────────────────────
     if is_greeting(question):
@@ -402,8 +565,18 @@ def generate_answer_stream(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Generator[str, None, None]:
-    """
-    Streaming Agentic pipeline.
+    """Public streaming entry for WebSocket ``/chat/ws`` and ``POST /chat/ask/stream``.
+
+    Exact branch order (mirrors generate_answer)
+    --------------------------------------------
+    1) greeting → stream tokens (no sources content) → done
+    2) uses_ollama_llm → yield from _generate_answer_stream_direct(...)
+    3) else HF ReAct executor.stream → sources once from pdf_tool → token answer → done
+
+    Exact example (default Ollama dashboard ask)
+    --------------------------------------------
+    generate_answer_stream(question=<CSU question>, user_id=..., document_id=...)
+      → sources event, then token events, then done
     """
     # ── Handle greetings ─────────────────────────────
     if is_greeting(question):
@@ -470,3 +643,82 @@ def generate_answer_stream(
         yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
 
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+# =============================================================================
+# PIPELINE FLOW WITH EXACT EXAMPLE
+# =============================================================================
+#
+# Shared question Q:
+#   "Does the XOLAIR prescribing label recommend every-2-week dosing for
+#    chronic spontaneous urticaria (CSU)?"
+#
+# A. Actual input into this file (dashboard /ask or /ask/stream)
+#    question: str = Q
+#    user_id: str
+#    document_id: str | None   # selected PDF, e.g. xolair_prescribing.pdf
+#    chat_history: list[dict]  # [] on first turn
+#    top_k: Optional[int]      # usually None → agent uses TOP_K_RERANK (8)
+#
+# B. Ollama direct path (VERIFIED default: LLM_PROVIDER=ollama)
+#    is_greeting(Q) → False
+#    _generate_answer_direct / _generate_answer_stream_direct
+#      retrieve(Q, user_id, document_id, top_k=8)
+#      _sources_from_chunks(chunks)
+#      _format_context(chunks)
+#      user_prompt = RAG_PROMPT_TEMPLATE.format(context=..., question=Q)
+#      messages = [SYSTEM_PROMPT, user_prompt]
+#      get_llm_client().chat_completion(model="qwen2.5:3b", max_tokens=1024,
+#                                       temperature=0.3, stream=...)
+#    OUT non-stream: {"answer": str, "sources": list}
+#    OUT stream: SSE sources → token* → done
+#
+# C. HuggingFace ReAct path (LLM_PROVIDER=huggingface)
+#    get_agent_executor → tools [PDFSearchTool, MathTool, WebSearchTool]
+#    executor.invoke/stream → parse_agent_output → sources from pdf_tool.last_sources
+#
+# D. Representative prompt shape (exact template fields; chunk text ILLUSTRATIVE)
+#    system: SYSTEM_PROMPT (cite [Source: filename, Page X], answer only from context)
+#    user: RAG_PROMPT_TEMPLATE with
+#      ## Document Context
+#      [1] Source: xolair_prescribing.pdf, Page 9
+#      ... every 4 weeks ...
+#      ## User Question
+#      Q
+#      ## Instructions ... ## Answer
+#
+# -----------------------------------------------------------------------------
+# COMPLETE END-TO-END EXAMPLE (ALL SIX FILES) — ASK PATH
+# -----------------------------------------------------------------------------
+#
+# User question → embeddings.py → vectorstore.py + bm25.py → retriever.py
+#   → reranker.py (if enabled) → agent.py → LLM → final answer + sources
+#
+# Compact table (default config: hybrid ON, RERANKER_ENABLED=False, Ollama):
+#
+# Step | File/function | Input | Processing | Output | Next step
+# -----|---------------|-------|------------|--------|----------
+# 0 | agent.generate_answer(_stream) | Q, user_id, document_id | branch: not greeting; uses_ollama_llm | call direct helper | 1
+# 1 | agent._generate_answer_* | same | top_k = top_k or TOP_K_RERANK (8) | retrieve(...) | 2
+# 2 | retriever.transform_query | Q | LLM rewrite ≤3 + original; dedupe; cap 4 | list[str] search queries | 3
+# 3 | embeddings.embed_query | one search_query | cache → Ollama nomic (search_query: prefix) | List[float] len 768 | 4
+# 4 | vectorstore.query_chunks | embedding, user_id, document_id, top_k=8 | Chroma cosine NN; where document_id $eq; score=1-distance | list[dict] semantic hits | 5
+# 5 | bm25.query_bm25 | same search_query string, filters, top_k=8 | tokenize; BM25Okapi.get_scores; raw scores | list[dict] lexical hits | 6
+# 6 | retriever.rrf_merge | vector_results, bm25_results, k=60 | score += 1/(k+rank) per list | list with rrf_score → renamed score | 7
+# 7 | retriever._merge_candidates | all variant hits | dedupe doc|page|text[:200] | unique candidates | 8
+# 8 | reranker.get_reranker | (none) | RERANKER_ENABLED False → None | None | 9a
+# 9a | retriever sort+slice | candidates | sort by score; [:TOP_K_RERANK=8]; confidence % | ≤8 chunks | 10
+# 9b | (alt) Reranker.rerank | Q, candidates, top_k=8 | only if enabled; CrossEncoder pairs | ≤8 with rerank_score | 10
+# 10 | agent._sources_from_chunks | chunks | truncate text 300 | sources for UI | 11
+# 11 | agent._format_context | chunks | "[i] Source: file, Page N\\ntext" | context str | 12
+# 12 | prompts + get_llm_client | context + Q | SYSTEM + RAG_PROMPT; chat_completion qwen2.5:3b | answer str / token stream | UI
+#
+# Index-time (once per upload), for completeness:
+#   vectorstore.store_chunks → bm25.store_bm25_index + embed_documents + collection.add
+#
+# VERIFIED from config.py: nomic-embed-text/768, chroma_db_ollama_nomic, hybrid True,
+#   RRF_K=60, TOP_K_RETRIEVAL=20, TOP_K_RERANK=8, RERANKER_ENABLED=False,
+#   LLM qwen2.5:3b temp 0.3 max 1024.
+# ILLUSTRATIVE (not live-run): exact float vectors, BM25/RRF numeric scores,
+#   rewrite paraphrase strings, chunk page text, final model wording.
+# =============================================================================
