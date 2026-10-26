@@ -414,6 +414,29 @@
 .light .prose-chat strong { color: oklch(0.2 0.03 240); }
 .light .prose-chat blockquote { color: oklch(0.42 0.03 240); }
 
+/* KaTeX equations — keep chat-readable and responsive */
+.prose-chat .katex-display {
+  margin: 0.85em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  padding: 0.15em 0;
+}
+.prose-chat .katex {
+  font-size: 1.05em;
+  color: inherit;
+}
+.prose-chat .katex-error {
+  color: oklch(0.72 0.14 25);
+  background: oklch(0.72 0.14 25 / 10%);
+  padding: 0.05em 0.25em;
+  border-radius: 4px;
+}
+.light .prose-chat .katex-error {
+  color: oklch(0.5 0.16 25);
+  background: oklch(0.5 0.16 25 / 10%);
+}
+
 html,
 body {
   min-width: 375px;

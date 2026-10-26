@@ -2,9 +2,6 @@
 
 import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import { formatDistanceToNow } from "date-fns";
-import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
-import remarkGfm from "remark-gfm";
 import type { ChatMsg } from "@/store/chat-store";
 import { api } from "@/lib/api";
 import {
@@ -35,6 +32,7 @@ import {
   GENOVA_NOTE_MIME,
   encodeNotePayload,
 } from "@/lib/notes-mime";
+import MarkdownContent from "@/components/chat/MarkdownContent";
 
 const subscribe = () => () => {};
 const getSnapshot = () => true;
@@ -53,42 +51,6 @@ function timestampFromMessageId(id: string): Date | null {
 interface Props {
   message: ChatMsg;
 }
-
-const markdownComponents: Components = {
-  table: ({ children }) => (
-    <div className="my-3 overflow-x-auto rounded-lg border border-border/70">
-      <table className="min-w-full border-collapse text-left text-sm">
-        {children}
-      </table>
-    </div>
-  ),
-  thead: ({ children }) => (
-    <thead className="bg-muted/60 text-foreground">{children}</thead>
-  ),
-  th: ({ children }) => (
-    <th className="border-b border-border/70 px-3 py-2 font-semibold">
-      {children}
-    </th>
-  ),
-  td: ({ children }) => (
-    <td className="border-b border-border/50 px-3 py-2 align-top">
-      {children}
-    </td>
-  ),
-  pre: ({ children }) => (
-    <pre className="not-prose my-3 overflow-x-auto rounded-lg border border-border/70 bg-zinc-950 p-3 text-sm text-zinc-100">
-      {children}
-    </pre>
-  ),
-  code: ({ className, children, ...props }) => {
-    const language = /language-(\w+)/.exec(className ?? "")?.[1];
-    return (
-      <code className={className} data-language={language} {...props}>
-        {children}
-      </code>
-    );
-  },
-};
 
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
@@ -418,13 +380,10 @@ export default function MessageBubble({ message }: Props) {
               className={`prose-chat ${fontSizeClass} ${message.content ? "pr-24" : ""}`}
             >
               {message.content ? (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeHighlight]}
-                  components={markdownComponents}
-                >
-                  {message.content}
-                </ReactMarkdown>
+                <MarkdownContent
+                  content={message.content}
+                  isStreaming={Boolean(message.isStreaming)}
+                />
               ) : message.isStreaming ? (
                 <div className="flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce [animation-delay:0ms]" />

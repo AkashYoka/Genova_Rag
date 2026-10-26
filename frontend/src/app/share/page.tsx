@@ -2,11 +2,9 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import ReactMarkdown, { type Components } from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
-import remarkGfm from "remark-gfm";
 import { Brain } from "lucide-react";
 import { api } from "@/lib/api";
+import MarkdownContent from "@/components/chat/MarkdownContent";
 
 interface SharedSource {
   text: string;
@@ -22,43 +20,6 @@ interface SharedAnswer {
   created_at: string;
   sources: SharedSource[];
 }
-
-const markdownComponents: Components = {
-  table: ({ children }) => (
-    <div className="my-3 overflow-x-auto rounded-lg border border-border/70">
-      <table className="min-w-full border-collapse text-left text-sm">
-        {children}
-      </table>
-    </div>
-  ),
-  thead: ({ children }) => (
-    <thead className="bg-muted/60 text-foreground">{children}</thead>
-  ),
-  th: ({ children }) => (
-    <th className="border-b border-border/70 px-3 py-2 font-semibold">
-      {children}
-    </th>
-  ),
-  td: ({ children }) => (
-    <td className="border-b border-border/50 px-3 py-2 align-top">
-      {children}
-    </td>
-  ),
-  pre: ({ children }) => (
-    <pre className="not-prose my-3 overflow-x-auto rounded-lg border border-border/70 bg-zinc-950 p-3 text-sm text-zinc-100">
-      {children}
-    </pre>
-  ),
-  code: ({ className, children, ...props }) => {
-    const language = /language-(\w+)/.exec(className ?? "")?.[1];
-
-    return (
-      <code className={className} data-language={language} {...props}>
-        {children}
-      </code>
-    );
-  },
-};
 
 function ShareAnswerContent() {
   const searchParams = useSearchParams();
@@ -139,15 +100,10 @@ function ShareAnswerContent() {
             </div>
           </div>
 
-          <div className="prose-chat text-sm">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
-              components={markdownComponents}
-            >
-              {answer.content}
-            </ReactMarkdown>
-          </div>
+          <MarkdownContent
+            content={answer.content}
+            className="prose-chat text-sm"
+          />
 
           {answer.sources.length > 0 && (
             <div className="mt-6 border-t border-border/50 pt-4">
