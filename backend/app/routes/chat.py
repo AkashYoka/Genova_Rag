@@ -44,6 +44,43 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
+def _parse_message_sources_json(raw: Optional[str]) -> tuple[list, Optional[dict], Optional[str], Optional[int]]:
+    """Parse sources_json supporting legacy list and enriched object payloads.
+
+    Returns (sources, usage, llm_provider, response_time_ms).
+    """
+    if not raw:
+        return [], None, None, None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return [], None, None, None
+
+    usage = None
+    llm_provider = None
+    response_time_ms = None
+    chunks = parsed
+
+    if isinstance(parsed, dict):
+        chunks = parsed.get("chunks") or parsed.get("sources") or []
+        usage = parsed.get("usage")
+        llm_provider = parsed.get("llm_provider")
+        response_time_ms = parsed.get("response_time_ms")
+        if usage and isinstance(usage, dict) and not llm_provider:
+            llm_provider = usage.get("provider")
+
+    sources: list = []
+    if isinstance(chunks, list):
+        for item in chunks:
+            if not isinstance(item, dict):
+                continue
+            try:
+                sources.append(SourceChunk(**item))
+            except Exception:
+                continue
+    return sources, usage, llm_provider, response_time_ms
+
+
 @router.websocket("/ws")
 async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
     """WebSocket endpoint for streaming agentic thoughts and tokens.
@@ -120,6 +157,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         question = payload.get("question")
         document_id = payload.get("document_id")
         session_id = payload.get("session_id")
+        llm_provider = payload.get("llm_provider")
 
         from app.rag.security import validate_user_input, UnsafePromptError
 
@@ -182,26 +220,35 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
 
         # Stream answer using existing generator and forward structured events
         try:
+            last_usage = None
             for chunk in generate_answer_stream(
                 question=question,
                 user_id=user.id,
                 document_id=document_id,
                 hf_token=user.hf_token,
                 chat_history=chat_history,
+                llm_provider=llm_provider,
             ):
                 # chunk is SSE-style string like 'data: {json}\n\n' or similar
                 try:
                     if chunk.startswith("data: "):
-                        payload = json.loads(chunk[6:].strip())
-                        await websocket.send_json(payload)
+                        event_payload = json.loads(chunk[6:].strip())
+                        if event_payload.get("type") == "usage":
+                            last_usage = event_payload.get("data")
+                        if event_payload.get("type") == "done":
+                            continue
+                        await websocket.send_json(event_payload)
                     else:
                         # Fallback: send raw token
                         await websocket.send_json({"type": "token", "data": chunk})
                 except Exception:
                     await websocket.send_json({"type": "token", "data": chunk})
 
-            # Notify client
-            await websocket.send_json({"type": "done"})
+            # Notify client (include Bedrock usage when present)
+            done_event = {"type": "done"}
+            if last_usage:
+                done_event["usage"] = last_usage
+            await websocket.send_json(done_event)
 
         except WebSocketDisconnect:
             return
@@ -448,13 +495,9 @@ def get_session_history(
 
     formatted = []
     for msg in messages:
-        sources = []
-        if msg.sources_json:
-            try:
-                sources = [SourceChunk(**s) for s in json.loads(msg.sources_json)]
-            except Exception:
-                pass
-
+        sources, usage, llm_provider, response_time_ms = _parse_message_sources_json(
+            msg.sources_json
+        )
         formatted.append(
             ChatMessageResponse(
                 id=str(msg.id),
@@ -462,6 +505,9 @@ def get_session_history(
                 content=msg.content,
                 sources=sources,
                 created_at=msg.created_at,
+                usage=usage,
+                llm_provider=llm_provider,
+                response_time_ms=response_time_ms,
             )
         )
 
@@ -476,6 +522,7 @@ def generate_answer(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
+    llm_provider: Optional[str] = None,
 ):
     from app.rag.agent import generate_answer as _generate_answer
 
@@ -487,6 +534,7 @@ def generate_answer(
         hf_token=hf_token,
         top_k=top_k,
         chat_history=chat_history,
+        llm_provider=llm_provider,
     )
 
 
@@ -498,6 +546,7 @@ def generate_answer_stream(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
+    llm_provider: Optional[str] = None,
 ):
     from app.rag.agent import generate_answer_stream as _generate_answer_stream
 
@@ -509,6 +558,7 @@ def generate_answer_stream(
         hf_token=hf_token,
         top_k=top_k,
         chat_history=chat_history,
+        llm_provider=llm_provider,
     )
 
 
@@ -628,11 +678,14 @@ def ask_question(
         cache_doc_key = str(payload.document_id or "")
         if payload.document_ids:
             cache_doc_key = "multi:" + ",".join(sorted(payload.document_ids))
+        cache_question = payload.question
+        if payload.llm_provider:
+            cache_question = f"[{payload.llm_provider}] {payload.question}"
         # Cache check — return instantly if this (user, document, question) was answered before
         cached_answer = get_cached_response(
             user_id=user.id,
             document_id=cache_doc_key,
-            question=payload.question,
+            question=cache_question,
         )
         if cached_answer is not None:
             logger.debug("Returning cached response for question: %s", payload.question[:40])
@@ -650,6 +703,7 @@ def ask_question(
             hf_token=user.hf_token,
             top_k=payload.top_k,
             chat_history=chat_history,
+            llm_provider=payload.llm_provider,
         )
 
         # Bind chunks retrieved to request state and context variables
@@ -664,7 +718,7 @@ def ask_question(
         set_cached_response(
             user_id=user.id,
             document_id=cache_doc_key,
-            question=payload.question,
+            question=cache_question,
             answer=result["answer"],
         )
 
@@ -802,10 +856,13 @@ def ask_question_stream(
     _save_message(db, user.id, cache_doc_key, "user", payload.question, session_id=session_id)
 
     # Cache check before starting the stream
+    stream_cache_question = payload.question
+    if payload.llm_provider:
+        stream_cache_question = f"[{payload.llm_provider}] {payload.question}"
     cached_answer = get_cached_response(
         user_id=user.id,
         document_id=cache_doc_key,
-        question=payload.question,
+        question=stream_cache_question,
     )
     if cached_answer is not None:
         logger.debug("Returning cached stream response for question: %s", payload.question[:40])
@@ -830,6 +887,7 @@ def ask_question_stream(
     def event_stream():
         full_answer = ""
         sources = []
+        last_usage = None
 
         try:
             for chunk in generate_answer_stream(
@@ -840,12 +898,18 @@ def ask_question_stream(
                 hf_token=user.hf_token,
                 top_k=payload.top_k,
                 chat_history=chat_history,
+                llm_provider=payload.llm_provider,
             ):
                 # Parse to accumulate full answer for history
                 try:
                     if chunk.startswith("data: "):
                         data = json.loads(chunk[6:].strip())
-                        if data.get("type") == "done":
+                        if data.get("type") == "usage":
+                            last_usage = data.get("data")
+                        elif data.get("type") == "done":
+                            # Capture usage from done payload before replacing with timed done.
+                            if data.get("usage"):
+                                last_usage = data.get("usage")
                             continue  # We will yield our own done event with response time
                         if data.get("type") == "token":
                             full_answer += data.get("data", "")
@@ -856,20 +920,41 @@ def ask_question_stream(
                 yield chunk
 
             # Cache the full answer for future identical questions
+            # Include provider in cache key so Ollama/Bedrock answers stay separate.
             if full_answer:
                 set_cached_response(
                     user_id=user.id,
                     document_id=cache_doc_key,
-                    question=payload.question,
+                    question=stream_cache_question,
                     answer=full_answer,
                 )
 
-            # Save assistant response to history
+            # Save assistant response to history (include usage metadata when present)
             from app.database import get_db_session
+
+            elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+            save_sources = sources
+            if last_usage or payload.llm_provider:
+                save_sources = {
+                    "chunks": sources,
+                    "usage": last_usage,
+                    "llm_provider": payload.llm_provider
+                    or ((last_usage or {}).get("provider") if isinstance(last_usage, dict) else None),
+                    "model_id": (last_usage or {}).get("model_id")
+                    if isinstance(last_usage, dict)
+                    else None,
+                    "response_time_ms": elapsed_ms,
+                }
 
             with get_db_session() as save_db:
                 _save_message(
-                    save_db, user.id, cache_doc_key, "assistant", full_answer, sources, session_id=session_id
+                    save_db,
+                    user.id,
+                    cache_doc_key,
+                    "assistant",
+                    full_answer,
+                    save_sources,
+                    session_id=session_id,
                 )
 
             # Log streaming response RAG completion
@@ -880,8 +965,10 @@ def ask_question_stream(
             chunks_retrieved_var.set(chunks_count)
             logger.info(f"Streaming RAG chat query completed, retrieved {chunks_count} chunks")
 
-            elapsed_ms = round((time.perf_counter() - started_at) * 1000)
-            yield f"data: {json.dumps({'type': 'done', 'response_time_ms': elapsed_ms})}\n\n"
+            done_payload = {"type": "done", "response_time_ms": elapsed_ms}
+            if last_usage:
+                done_payload["usage"] = last_usage
+            yield f"data: {json.dumps(done_payload)}\n\n"
         finally:
             record_query_response_time(time.perf_counter() - started_at)
 
@@ -920,13 +1007,9 @@ def get_chat_history(
 
     formatted = []
     for msg in messages:
-        sources = []
-        if msg.sources_json:
-            try:
-                sources = [SourceChunk(**s) for s in json.loads(msg.sources_json)]
-            except Exception:
-                pass
-
+        sources, usage, llm_provider, response_time_ms = _parse_message_sources_json(
+            msg.sources_json
+        )
         formatted.append(
             ChatMessageResponse(
                 id=str(msg.id),
@@ -935,6 +1018,9 @@ def get_chat_history(
                 sources=sources,
                 feedback=msg.feedback,
                 created_at=msg.created_at,
+                usage=usage,
+                llm_provider=llm_provider,
+                response_time_ms=response_time_ms,
             )
         )
 
@@ -1102,13 +1188,17 @@ def _save_message(
             db.refresh(session)
         session_id = session.id
 
+    sources_payload = None
+    if sources is not None:
+        # Accept either a plain list of chunks or an enriched metadata dict.
+        sources_payload = json.dumps(sources)
     msg = ChatMessage(
         user_id=user_id,
         document_id=document_id,
         session_id=session_id,
         role=role,
         content=content,
-        sources_json=json.dumps(sources) if sources else None,
+        sources_json=sources_payload,
     )
     db.add(msg)
     db.commit()

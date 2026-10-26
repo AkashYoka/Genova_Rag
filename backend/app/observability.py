@@ -139,12 +139,18 @@ def json_serializer(record):
 
 def setup_logging():
     """Setup and configure Loguru logging framework."""
+    import logging as std_logging
+
     settings = get_settings()
     
     # Determine log level
     log_level = settings.LOG_LEVEL
     if not log_level:
         log_level = "DEBUG" if settings.ENVIRONMENT == "development" else "INFO"
+
+    # Never DEBUG-log AWS HTTP clients — Authorization / bearer tokens appear in request dumps.
+    for noisy in ("botocore", "boto3", "urllib3", "s3transfer"):
+        std_logging.getLogger(noisy).setLevel(std_logging.WARNING)
         
     # Remove default handlers
     logger.remove()

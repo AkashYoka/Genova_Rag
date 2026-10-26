@@ -20,6 +20,17 @@ export interface SourceChunk {
   highlightRects?: SourceBoundingBox[];
 }
 
+export interface LlmUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  estimated_cost_usd?: number;
+  pricing_note?: string;
+  cost_type?: "estimated" | "billed";
+  model_id?: string;
+  provider?: string;
+}
+
 export interface ChatMsg {
   branch_id?: string;
   parent_message_id?: string;
@@ -30,6 +41,8 @@ export interface ChatMsg {
   feedback?: "up" | "down" | null;
   isStreaming?: boolean;
   response_time_ms?: number;
+  usage?: LlmUsage;
+  llm_provider?: string;
 }
 
 export interface ChatSession {

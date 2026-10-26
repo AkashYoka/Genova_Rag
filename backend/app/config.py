@@ -122,13 +122,18 @@ class Settings(BaseSettings):
 
     # ── LLM ──────────────────────────────────────────────
     # Default: local Ollama. Set LLM_PROVIDER=huggingface (+ HF_TOKEN) for HF API.
-    LLM_PROVIDER: str = "ollama"  # ollama | huggingface
+    # Per-request ChatRequest.llm_provider can override to bedrock without changing defaults.
+    LLM_PROVIDER: str = "ollama"  # ollama | huggingface | bedrock
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     HF_TOKEN: str = ""  # Optional — only required when LLM_PROVIDER=huggingface
     LLM_MODEL: str = "qwen2.5:3b"
     LLM_MAX_NEW_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.3
     SUMMARY_MAX_TOKENS: int = 512
+
+    # Amazon Bedrock Nova 2 Lite (US inference profile). Auth: AWS_BEARER_TOKEN_BEDROCK.
+    BEDROCK_MODEL_ID: str = "us.amazon.nova-2-lite-v1:0"
+    BEDROCK_REGION: str = "us-east-1"
 
     # ── Field-level Encryption ────────────────────────
     # Dedicated key for encrypting sensitive user fields (tokens, secrets).
@@ -192,7 +197,10 @@ class Settings(BaseSettings):
     def _normalize_provider(cls, value: str) -> str:
         if value is None:
             return value
-        return str(value).strip().lower()
+        normalized = str(value).strip().lower()
+        if normalized in {"bedrock_nova", "nova", "nova2", "nova_2_lite"}:
+            return "bedrock"
+        return normalized
 
     @model_validator(mode="after")
     def validate_vision_provider_keys(self) -> "Settings":
@@ -241,12 +249,24 @@ class Settings(BaseSettings):
         elif self.LLM_PROVIDER == "huggingface":
             if "LLM_MODEL" not in os.environ and ":" in self.LLM_MODEL and "/" not in self.LLM_MODEL:
                 object.__setattr__(self, "LLM_MODEL", "Qwen/Qwen2.5-72B-Instruct")
+        elif self.LLM_PROVIDER == "bedrock":
+            if "LLM_MODEL" not in os.environ:
+                object.__setattr__(self, "LLM_MODEL", self.BEDROCK_MODEL_ID)
 
         return self
 
     @property
     def uses_ollama_llm(self) -> bool:
         return self.LLM_PROVIDER == "ollama"
+
+    @property
+    def uses_bedrock_llm(self) -> bool:
+        return self.LLM_PROVIDER == "bedrock"
+
+    @property
+    def uses_direct_rag_llm(self) -> bool:
+        """Retrieve-then-generate path (Ollama or Bedrock), not HuggingFace ReAct."""
+        return self.LLM_PROVIDER in {"ollama", "bedrock"}
 
     @property
     def uses_ollama_embeddings(self) -> bool:

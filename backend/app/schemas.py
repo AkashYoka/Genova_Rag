@@ -319,6 +319,8 @@ class ChatRequest(BaseModel):
     document_ids: Optional[List[str]] = None
     session_id: Optional[str] = None
     top_k: int = Field(default=5, ge=1, le=20)
+    # Optional per-request override: ollama | bedrock | huggingface (default = server LLM_PROVIDER)
+    llm_provider: Optional[str] = Field(default=None, max_length=32)
 
     @field_validator("question")
     @classmethod
@@ -329,6 +331,26 @@ class ChatRequest(BaseModel):
         if not stripped:
             raise ValueError("Question cannot be empty after sanitization")
         return stripped
+
+    @field_validator("llm_provider")
+    @classmethod
+    def normalize_llm_provider(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        normalized = v.strip().lower()
+        if not normalized:
+            return None
+        aliases = {
+            "bedrock_nova": "bedrock",
+            "nova": "bedrock",
+            "nova2": "bedrock",
+            "nova_2_lite": "bedrock",
+            "qwen": "ollama",
+        }
+        normalized = aliases.get(normalized, normalized)
+        if normalized not in {"ollama", "bedrock", "huggingface"}:
+            raise ValueError("llm_provider must be ollama, bedrock, or huggingface")
+        return normalized
 
 
 class SourceChunk(BaseModel):
@@ -357,6 +379,9 @@ class ChatMessageResponse(BaseModel):
     sources: List[SourceChunk] = []
     feedback: Optional[str] = None
     created_at: datetime
+    usage: Optional[dict] = None
+    llm_provider: Optional[str] = None
+    response_time_ms: Optional[int] = None
 
     class Config:
         from_attributes = True

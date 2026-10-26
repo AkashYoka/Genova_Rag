@@ -27,6 +27,9 @@ pytest
 pytest-cov
 httpx
 
+# Amazon Bedrock (Nova 2 Lite via Converse + AWS_BEARER_TOKEN_BEDROCK)
+boto3>=1.39.0
+
 # Document Processing
 PyMuPDF
 pymupdf4llm

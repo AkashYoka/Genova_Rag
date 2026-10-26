@@ -57,7 +57,28 @@ def persist_document_keywords(document, chunks, db) -> None:
     db.add(document)
 
 
-def get_llm_client(hf_token: Optional[str] = None):
+def normalize_llm_provider(provider: Optional[str] = None) -> str:
+    """Resolve per-request or configured LLM provider to a canonical id."""
+    chosen = (provider or settings.LLM_PROVIDER or "ollama").strip().lower()
+    aliases = {
+        "bedrock_nova": "bedrock",
+        "nova": "bedrock",
+        "nova2": "bedrock",
+        "nova_2_lite": "bedrock",
+        "qwen": "ollama",
+    }
+    return aliases.get(chosen, chosen)
+
+
+def llm_model_for_provider(provider: Optional[str] = None) -> str:
+    """Model id passed to chat_completion for the selected provider."""
+    chosen = normalize_llm_provider(provider)
+    if chosen == "bedrock":
+        return settings.BEDROCK_MODEL_ID
+    return settings.LLM_MODEL
+
+
+def get_llm_client(hf_token: Optional[str] = None, llm_provider: Optional[str] = None):
     """Return InferenceClient-compatible chat client for the active LLM provider.
 
     Exact default branch
@@ -66,6 +87,9 @@ def get_llm_client(hf_token: Optional[str] = None):
       check_ollama_reachable("http://localhost:11434")
       check_ollama_model(..., "qwen2.5:3b")
       return OllamaChatClient(base_url=..., model="qwen2.5:3b")
+
+    Bedrock (LLM_PROVIDER=bedrock or llm_provider=bedrock):
+      return BedrockNovaChatClient(model_id=us.amazon.nova-2-lite-v1:0)
 
     Exact call site in direct RAG
     -----------------------------
@@ -80,7 +104,17 @@ def get_llm_client(hf_token: Optional[str] = None):
 
     Also used by: retriever._generate_query_variants (rewrite).
     """
-    if settings.uses_ollama_llm:
+    provider = normalize_llm_provider(llm_provider)
+
+    if provider == "bedrock":
+        from app.rag.bedrock_client import BedrockNovaChatClient
+
+        return BedrockNovaChatClient(
+            model_id=settings.BEDROCK_MODEL_ID,
+            region=settings.BEDROCK_REGION,
+        )
+
+    if provider == "ollama" or (provider != "huggingface" and settings.uses_ollama_llm):
         from app.rag.ollama_client import (
             OllamaChatClient,
             check_ollama_model,
@@ -305,8 +339,9 @@ def _generate_answer_direct(
     document_ids: Optional[List[str]] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    llm_provider: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Ollama retrieve-then-generate (non-streaming).
+    """Retrieve-then-generate (non-streaming) for Ollama or Bedrock.
 
     Exact call sequence for the shared XOLAIR question
     --------------------------------------------------
@@ -326,7 +361,7 @@ def _generate_answer_direct(
     6) answer = response.choices[0].message.content.strip()
        empty → MALFORMED_OUTPUT_MESSAGE
 
-    Exact OUT: {"answer": str, "sources": list[dict]}
+    Exact OUT: {"answer": str, "sources": list[dict], "usage"?: dict}
 
     ILLUSTRATIVE answer (not a live model run):
       "No. The label recommends 150 mg or 300 mg SC every 4 weeks for CSU,
@@ -355,13 +390,14 @@ def _generate_answer_direct(
     if history:
         user_prompt = f"{history}\n\n{user_prompt}"
 
-    client = get_llm_client()
+    provider = normalize_llm_provider(llm_provider)
+    client = get_llm_client(llm_provider=provider)
     response = client.chat_completion(
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
-        model=settings.LLM_MODEL,
+        model=llm_model_for_provider(provider),
         max_tokens=settings.LLM_MAX_NEW_TOKENS,
         temperature=settings.LLM_TEMPERATURE,
     )
@@ -370,7 +406,11 @@ def _generate_answer_direct(
         answer = (response.choices[0].message.content or "").strip()
     if not answer:
         answer = MALFORMED_OUTPUT_MESSAGE
-    return {"answer": answer, "sources": sources}
+    result: Dict[str, Any] = {"answer": answer, "sources": sources}
+    usage = getattr(client, "last_usage", None)
+    if isinstance(usage, dict) and usage:
+        result["usage"] = usage
+    return result
 
 
 def _generate_answer_stream_direct(
@@ -380,6 +420,7 @@ def _generate_answer_stream_direct(
     document_ids: Optional[List[str]] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    llm_provider: Optional[str] = None,
 ) -> Generator[str, None, None]:
     """Streaming twin of ``_generate_answer_direct`` (SSE lines for WS/HTTP stream).
 
@@ -391,7 +432,8 @@ def _generate_answer_stream_direct(
     4) chat_completion(..., stream=True) → for each delta:
          data: {"type":"token","data": "<piece>"}\\n\\n
        on exception: data: {"type":"error","data": "..."}\\n\\n
-    5) data: {"type":"done"}\\n\\n
+    5) optional data: {"type":"usage","data": {...}}\\n\\n  (Bedrock metadata)
+    6) data: {"type":"done"}\\n\\n
 
     Exact example first events (ILLUSTRATIVE token pieces)
     ------------------------------------------------------
@@ -426,14 +468,15 @@ def _generate_answer_stream_direct(
     if history:
         user_prompt = f"{history}\n\n{user_prompt}"
 
+    provider = normalize_llm_provider(llm_provider)
     try:
-        client = get_llm_client()
+        client = get_llm_client(llm_provider=provider)
         stream = client.chat_completion(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
-            model=settings.LLM_MODEL,
+            model=llm_model_for_provider(provider),
             max_tokens=settings.LLM_MAX_NEW_TOKENS,
             temperature=settings.LLM_TEMPERATURE,
             stream=True,
@@ -441,8 +484,13 @@ def _generate_answer_stream_direct(
         for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield f"data: {json.dumps({'type': 'token', 'data': chunk.choices[0].delta.content})}\n\n"
+        usage = getattr(client, "last_usage", None)
+        if isinstance(usage, dict) and usage:
+            yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'usage': usage})}\n\n"
+            return
     except Exception as e:
-        logger.error(f"Ollama direct stream error: {e}")
+        logger.error("Direct stream error (%s): %s", provider, e)
         yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
 
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -464,14 +512,15 @@ def generate_answer(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    llm_provider: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Public non-streaming entry used by ``/chat/ask``.
 
     Exact branch order (code)
     -------------------------
     1) is_greeting(question) → short LLM hello, sources=[]  (no retrieve)
-    2) settings.uses_ollama_llm → return _generate_answer_direct(...)
-         on error → ExternalServiceException("Ollama", ...)
+    2) ollama/bedrock (direct RAG) → return _generate_answer_direct(...)
+         on error → ExternalServiceException(...)
     3) else HuggingFace ReAct:
          get_agent_executor → executor.invoke → parse_agent_output
          sources from pdf_tool.last_sources
@@ -485,9 +534,11 @@ def generate_answer(
     )
     → branch 2 → _generate_answer_direct → {"answer": "...", "sources": [...]}
     """
+    provider = normalize_llm_provider(llm_provider)
+
     # ── Handle greetings ─────────────────────────────
     if is_greeting(question):
-        client = get_llm_client(hf_token)
+        client = get_llm_client(hf_token, llm_provider=provider)
         try:
             messages = [
                 {"role": "system", "content": "You are Document AI Analyst, a friendly AI assistant."},
@@ -495,23 +546,36 @@ def generate_answer(
             ]
             response = client.chat_completion(
                 messages=messages,
-                model=settings.LLM_MODEL,
+                model=llm_model_for_provider(provider),
                 max_tokens=256,
             )
             answer = response.choices[0].message.content.strip() if response.choices else "Hello! How can I help you today?"
         except Exception:
             answer = "Hello! I'm Document AI Analyst. How can I help you with your documents?"
-        return {"answer": answer, "sources": []}
+        result = {"answer": answer, "sources": []}
+        usage = getattr(client, "last_usage", None)
+        if isinstance(usage, dict) and usage:
+            result["usage"] = usage
+        return result
 
-    # Local Ollama: direct retrieve-then-generate (more reliable than ReAct on small models)
-    if settings.uses_ollama_llm:
+    # Local Ollama / Bedrock: direct retrieve-then-generate
+    if provider in {"ollama", "bedrock"} or (
+        provider != "huggingface" and settings.uses_direct_rag_llm
+    ):
+        label = "Bedrock" if provider == "bedrock" else "Ollama"
         try:
             return _generate_answer_direct(
-                question, user_id, document_id, document_ids, top_k, chat_history
+                question,
+                user_id,
+                document_id,
+                document_ids,
+                top_k,
+                chat_history,
+                llm_provider=provider,
             )
         except Exception as e:
-            logger.error(f"Ollama direct RAG error: {e}")
-            raise ExternalServiceException("Ollama", str(e)) from e
+            logger.error("%s direct RAG error: %s", label, e)
+            raise ExternalServiceException(label, str(e)) from e
 
     # ── Run HuggingFace ReAct Agent ──────────────────
     try:
@@ -564,13 +628,14 @@ def generate_answer_stream(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    llm_provider: Optional[str] = None,
 ) -> Generator[str, None, None]:
     """Public streaming entry for WebSocket ``/chat/ws`` and ``POST /chat/ask/stream``.
 
     Exact branch order (mirrors generate_answer)
     --------------------------------------------
     1) greeting → stream tokens (no sources content) → done
-    2) uses_ollama_llm → yield from _generate_answer_stream_direct(...)
+    2) ollama/bedrock → yield from _generate_answer_stream_direct(...)
     3) else HF ReAct executor.stream → sources once from pdf_tool → token answer → done
 
     Exact example (default Ollama dashboard ask)
@@ -578,28 +643,41 @@ def generate_answer_stream(
     generate_answer_stream(question=<CSU question>, user_id=..., document_id=...)
       → sources event, then token events, then done
     """
+    provider = normalize_llm_provider(llm_provider)
+
     # ── Handle greetings ─────────────────────────────
     if is_greeting(question):
         yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
-        client = get_llm_client(hf_token)
+        client = get_llm_client(hf_token, llm_provider=provider)
         try:
             stream = client.chat_completion(
                 messages=[{"role": "user", "content": question}],
-                model=settings.LLM_MODEL,
+                model=llm_model_for_provider(provider),
                 max_tokens=256,
                 stream=True,
             )
             for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield f"data: {json.dumps({'type': 'token', 'data': chunk.choices[0].delta.content})}\n\n"
+            usage = getattr(client, "last_usage", None)
+            if isinstance(usage, dict) and usage:
+                yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
-    if settings.uses_ollama_llm:
+    if provider in {"ollama", "bedrock"} or (
+        provider != "huggingface" and settings.uses_direct_rag_llm
+    ):
         yield from _generate_answer_stream_direct(
-            question, user_id, document_id, document_ids, top_k, chat_history
+            question,
+            user_id,
+            document_id,
+            document_ids,
+            top_k,
+            chat_history,
+            llm_provider=provider,
         )
         return
 

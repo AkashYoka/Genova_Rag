@@ -8,6 +8,7 @@ import { api, API_BASE } from "@/lib/api";
 import {
   useChatStore,
   type ChatMsg,
+  type LlmUsage,
   type SourceBoundingBox,
   type SourceChunk,
 } from "@/store/chat-store";
@@ -88,7 +89,6 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   const setInput = useChatStore((state) => state.setInput);
   const setStreaming = useChatStore((state) => state.setStreaming);
   const setIsTyping = useChatStore((state) => state.setIsTyping);
-  const resetChat = useChatStore((state) => state.resetChat);
   const fetchSessionHistory = useChatStore(
     (state) => state.fetchSessionHistory,
   );
@@ -97,6 +97,29 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   const MAX_CHARACTERS = 2000;
   const [isRecording, setIsRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [llmProvider, setLlmProvider] = useState<"ollama" | "bedrock">(
+    "ollama",
+  );
+
+  const applyUsageToMessage = (
+    assistantId: string,
+    usage: LlmUsage | undefined,
+    extra: Partial<ChatMsg> = {},
+  ) => {
+    if (!usage && Object.keys(extra).length === 0) return;
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === assistantId
+          ? {
+            ...m,
+            ...extra,
+            usage: usage ?? m.usage,
+            llm_provider: usage?.provider ?? m.llm_provider ?? llmProvider,
+          }
+          : m,
+      ),
+    );
+  };
 
   const [showScrollButton, setShowScrollButton] = useState(false);
 
@@ -154,11 +177,16 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     }
   };
 
+  // Abort in-flight generation on unmount. Do not call resetChat() here —
+  // it clears the shared Zustand store (sessions + messages). React Strict Mode
+  // remounts in dev would wipe the Chat Sessions sidebar after fetchSessions.
   useEffect(() => {
     return () => {
-      resetChat();
+      abortControllerRef.current?.abort();
+      setStreaming(false);
+      setIsTyping(false);
     };
-  }, [resetChat]);
+  }, [setStreaming, setIsTyping]);
 
   // Load history on activeSessionId or fallback to activeDoc change
   useEffect(() => {
@@ -275,6 +303,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               question,
               document_id: activeDoc?.id || null,
               session_id: activeSessionId,
+              llm_provider: llmProvider,
             }),
           );
         };
@@ -304,6 +333,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   content: event.data as string,
                   sources: [],
                   isStreaming: true,
+                  llm_provider: llmProvider,
                 };
 
                 setMessages((prev) => [...prev, assistantMsg]);
@@ -334,32 +364,31 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                     : m,
                 ),
               );
+            } else if (event.type === "usage") {
+              applyUsageToMessage(assistantId, event.data as LlmUsage);
             } else if (event.type === "error") {
               setIsTyping(false);
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
                     ? {
-                        ...m,
-                        content: `Error: ${event.data}`,
-                        isStreaming: false,
-                      }
+                      ...m,
+                      content: `Error: ${event.data}`,
+                      isStreaming: false,
+                    }
                     : m,
                 ),
               );
               ws.close();
               reject(new Error(String(event.data)));
             } else if (event.type === "done") {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? {
-                        ...m,
-                        isStreaming: false,
-                        response_time_ms: event.response_time_ms,
-                      }
-                    : m,
-                ),
+              applyUsageToMessage(
+                assistantId,
+                (event as { usage?: LlmUsage }).usage,
+                {
+                  isStreaming: false,
+                  response_time_ms: event.response_time_ms,
+                },
               );
               ws.close();
               resolve();
@@ -402,6 +431,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             question,
             document_id: activeDoc?.id || null,
             session_id: activeSessionId,
+            llm_provider: llmProvider,
           },
           abortController.signal,
         );
@@ -418,6 +448,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 content: event.data as string,
                 sources: [],
                 isStreaming: true,
+                llm_provider: llmProvider,
               };
 
               setMessages((prev) => [...prev, assistantMsg]);
@@ -438,32 +469,31 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   : m,
               ),
             );
+          } else if (event.type === "usage") {
+            applyUsageToMessage(assistantId, event.data as LlmUsage);
           } else if (event.type === "error") {
             setIsTyping(false);
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId
                   ? {
-                      ...m,
-                      content: `Error: ${event.data}`,
-                      isStreaming: false,
-                    }
+                    ...m,
+                    content: `Error: ${event.data}`,
+                    isStreaming: false,
+                  }
                   : m,
               ),
             );
           } else if (event.type === "done") {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? {
-                      ...m,
-                      isStreaming: false,
-                      response_time_ms: (
-                        event as { type: string; response_time_ms?: number }
-                      ).response_time_ms,
-                    }
-                  : m,
-              ),
+            applyUsageToMessage(
+              assistantId,
+              (event as { usage?: LlmUsage }).usage,
+              {
+                isStreaming: false,
+                response_time_ms: (
+                  event as { type: string; response_time_ms?: number }
+                ).response_time_ms,
+              },
             );
           }
         }
@@ -485,13 +515,13 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
           prev.map((m) =>
             m.id === assistantId
               ? {
-                  ...m,
-                  content: t("chat.fallbackError", {
-                    message:
-                      err2 instanceof Error ? err2.message : "Unknown error",
-                  }),
-                  isStreaming: false,
-                }
+                ...m,
+                content: t("chat.fallbackError", {
+                  message:
+                    err2 instanceof Error ? err2.message : "Unknown error",
+                }),
+                isStreaming: false,
+              }
               : m,
           ),
         );
@@ -555,7 +585,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     const SpeechRecognitionAPI =
       typeof window !== "undefined"
         ? (window as unknown as WindowWithSpeech).SpeechRecognition ||
-          (window as unknown as WindowWithSpeech).webkitSpeechRecognition
+        (window as unknown as WindowWithSpeech).webkitSpeechRecognition
         : null;
 
     if (!SpeechRecognitionAPI) {
@@ -592,8 +622,8 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
         }
         setInput(
           initialInputRef.current +
-            (initialInputRef.current ? " " : "") +
-            sessionTranscript.trim(),
+          (initialInputRef.current ? " " : "") +
+          sessionTranscript.trim(),
         );
       };
 
@@ -839,6 +869,23 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
       {/* ── Input Area ─────────────────────────────── */}
       <div className="border-t border-border/40 p-4 pl-16 sm:pl-4 bg-card/45 backdrop-blur-xl relative">
         <div className="max-w-3xl mx-auto relative">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <label className="flex items-center gap-2">
+              <span className="font-medium text-foreground/80">Model</span>
+              <select
+                value={llmProvider}
+                disabled={streaming}
+                onChange={(e) =>
+                  setLlmProvider(e.target.value as "ollama" | "bedrock")
+                }
+                className="h-8 rounded-md border border-border/60 bg-background/70 px-2 text-xs text-foreground"
+                aria-label="LLM provider"
+              >
+                <option value="ollama">Ollama (local)</option>
+                <option value="bedrock">Nova 2 Lite (Bedrock)</option>
+              </select>
+            </label>
+          </div>
           {/* Status / Error Message Area */}
           {(isRecording || speechError) && (
             <div className="absolute bottom-full mb-2 left-0 right-0 flex items-center justify-between bg-card border border-border/80 shadow-md rounded-lg px-3 py-1.5 text-xs animate-in fade-in slide-in-from-bottom-1 z-40 max-w-3xl mx-auto">
@@ -892,8 +939,8 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 placeholder={
                   activeDoc
                     ? t("chat.askPlaceholder", {
-                        name: activeDoc.original_name,
-                      })
+                      name: activeDoc.original_name,
+                    })
                     : t("chat.selectPlaceholder")
                 }
                 disabled={streaming}
@@ -920,11 +967,11 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   aria-label={
                     isRecording
                       ? t("chat.stopRecording", {
-                          defaultValue: "Stop recording",
-                        })
+                        defaultValue: "Stop recording",
+                      })
                       : t("chat.startRecording", {
-                          defaultValue: "Start recording",
-                        })
+                        defaultValue: "Start recording",
+                      })
                   }
                   aria-pressed={isRecording}
                 >
@@ -937,11 +984,11 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 <TooltipContent>
                   {isRecording
                     ? t("chat.stopRecording", {
-                        defaultValue: "Stop recording",
-                      })
+                      defaultValue: "Stop recording",
+                    })
                     : t("chat.startRecording", {
-                        defaultValue: "Start recording",
-                      })}
+                      defaultValue: "Start recording",
+                    })}
                 </TooltipContent>
               </Tooltip>
             </div>

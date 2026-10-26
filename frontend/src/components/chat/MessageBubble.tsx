@@ -399,8 +399,8 @@ export default function MessageBubble({ message }: Props) {
         )}
 
         <div
-          className={`flex items-center gap-2 mt-2 text-xs text-muted-foreground ${
-            isUser ? "justify-end" : "justify-start"
+          className={`flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground ${
+            isUser ? "justify-end" : "justify-end"
           }`}
         >
           {messageTime && (
@@ -408,8 +408,40 @@ export default function MessageBubble({ message }: Props) {
               {formatDistanceToNow(messageTime, { addSuffix: true })}
             </div>
           )}
+          {!isUser && (
+            <span className="text-[10px] rounded-md border border-border/50 px-1.5 py-0.5">
+              {message.usage?.model_id ||
+                (message.llm_provider === "bedrock"
+                  ? "us.amazon.nova-2-lite-v1:0"
+                  : message.llm_provider === "ollama"
+                    ? "Ollama"
+                    : message.llm_provider || "LLM")}
+            </span>
+          )}
+          {!isUser && message.usage && (
+            <span
+              className="text-[10px] text-right"
+              title={
+                message.usage.pricing_note ||
+                "Estimated cost from provider usage metadata — not an AWS bill."
+              }
+            >
+              in {message.usage.input_tokens ?? "—"} · out{" "}
+              {message.usage.output_tokens ?? "—"} · tot{" "}
+              {message.usage.total_tokens ?? "—"}
+              {typeof message.usage.estimated_cost_usd === "number"
+                ? ` · est $${
+                    message.usage.estimated_cost_usd < 0.0001
+                      ? message.usage.estimated_cost_usd.toFixed(6)
+                      : message.usage.estimated_cost_usd < 0.01
+                        ? message.usage.estimated_cost_usd.toFixed(4)
+                        : message.usage.estimated_cost_usd.toFixed(3)
+                  } (est. ≠ billed)`
+                : ""}
+            </span>
+          )}
           {!isUser && message.response_time_ms && (
-            <span className="text-[10px] ml-auto">
+            <span className="text-[10px]">
               ⚡ {(message.response_time_ms / 1000).toFixed(1)}s
             </span>
           )}
