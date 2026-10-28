@@ -31,6 +31,39 @@ export interface LlmUsage {
   provider?: string;
 }
 
+export interface QuizOption {
+  id: string;
+  text: string;
+}
+
+export interface QuizSourceRef {
+  filename?: string | null;
+  page?: number | null;
+}
+
+export interface QuizQuestion {
+  id: string;
+  question: string;
+  options: QuizOption[];
+  correct_option_id: string;
+  explanation?: string;
+  source?: QuizSourceRef | null;
+}
+
+export interface QuizState {
+  current_index: number;
+  answers: Record<string, string>;
+  completed: boolean;
+}
+
+export interface QuizPayload {
+  id: string;
+  mode: "conversation" | "document" | "summary" | string;
+  title: string;
+  questions: QuizQuestion[];
+  state?: QuizState;
+}
+
 export interface ChatMsg {
   branch_id?: string;
   parent_message_id?: string;
@@ -43,6 +76,7 @@ export interface ChatMsg {
   response_time_ms?: number;
   usage?: LlmUsage;
   llm_provider?: string;
+  quiz?: QuizPayload | null;
 }
 
 export interface ChatSession {

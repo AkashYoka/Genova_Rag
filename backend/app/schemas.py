@@ -362,10 +362,51 @@ class SourceChunk(BaseModel):
     bbox: Optional[str] = None
 
 
+class QuizOption(BaseModel):
+    id: str
+    text: str
+
+
+class QuizSourceRef(BaseModel):
+    filename: Optional[str] = None
+    page: Optional[int] = None
+
+
+class QuizQuestion(BaseModel):
+    id: str
+    question: str
+    options: List[QuizOption]
+    correct_option_id: str
+    explanation: str = ""
+    source: Optional[QuizSourceRef] = None
+
+
+class QuizState(BaseModel):
+    current_index: int = 0
+    answers: dict[str, str] = {}
+    completed: bool = False
+
+
+class QuizPayload(BaseModel):
+    id: str
+    mode: str
+    title: str
+    questions: List[QuizQuestion]
+    state: QuizState = Field(default_factory=QuizState)
+
+
+class QuizStateUpdateRequest(BaseModel):
+    """Persist interactive quiz progress on an assistant message."""
+    current_index: Optional[int] = Field(default=None, ge=0)
+    answers: Optional[dict[str, str]] = None
+    completed: Optional[bool] = None
+
+
 class ChatResponse(BaseModel):
     answer: str
     sources: List[SourceChunk] = []
     document_id: Optional[str] = None
+    quiz: Optional[QuizPayload] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -382,6 +423,7 @@ class ChatMessageResponse(BaseModel):
     usage: Optional[dict] = None
     llm_provider: Optional[str] = None
     response_time_ms: Optional[int] = None
+    quiz: Optional[QuizPayload] = None
 
     class Config:
         from_attributes = True

@@ -52,6 +52,7 @@ Respond naturally and briefly. Let them know you can help them:
 - Answer questions about their uploaded documents
 - Extract key insights, summaries, and specific data points
 - Provide accurate citations with page numbers
+- Generate interactive quizzes from a document, conversation, or summary
 
 Keep the response concise and friendly.
 

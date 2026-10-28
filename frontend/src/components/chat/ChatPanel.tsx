@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/tooltip";
 import MessageBubble from "./MessageBubble";
 import SourceCard from "./SourceCard";
+import QuizCard from "./QuizCard";
+import type { QuizPayload } from "@/store/chat-store";
 import {
   Send,
   Loader2,
@@ -119,6 +121,31 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
           : m,
       ),
     );
+  };
+
+  const applyQuizToMessage = (assistantId: string, quiz: QuizPayload) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === assistantId ? { ...m, quiz } : m)),
+    );
+  };
+
+  const ensureAssistantPlaceholder = (
+    assistantId: string,
+    assistantCreated: boolean,
+    seedContent = "",
+  ) => {
+    if (assistantCreated) return true;
+    setIsTyping(false);
+    const assistantMsg: ChatMsg = {
+      id: assistantId,
+      role: "assistant",
+      content: seedContent,
+      sources: [],
+      isStreaming: true,
+      llm_provider: llmProvider,
+    };
+    setMessages((prev) => [...prev, assistantMsg]);
+    return true;
   };
 
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -324,19 +351,11 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             const event = JSON.parse(ev.data);
             if (event.type === "token") {
               if (!assistantCreated) {
-                assistantCreated = true;
-                setIsTyping(false);
-
-                const assistantMsg: ChatMsg = {
-                  id: assistantId,
-                  role: "assistant",
-                  content: event.data as string,
-                  sources: [],
-                  isStreaming: true,
-                  llm_provider: llmProvider,
-                };
-
-                setMessages((prev) => [...prev, assistantMsg]);
+                assistantCreated = ensureAssistantPlaceholder(
+                  assistantId,
+                  assistantCreated,
+                  event.data as string,
+                );
               } else {
                 setMessages((prev) =>
                   prev.map((m) =>
@@ -347,6 +366,12 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 );
               }
             } else if (event.type === "sources") {
+              if (!assistantCreated) {
+                assistantCreated = ensureAssistantPlaceholder(
+                  assistantId,
+                  assistantCreated,
+                );
+              }
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === assistantId
@@ -354,6 +379,14 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                     : m,
                 ),
               );
+            } else if (event.type === "quiz") {
+              if (!assistantCreated) {
+                assistantCreated = ensureAssistantPlaceholder(
+                  assistantId,
+                  assistantCreated,
+                );
+              }
+              applyQuizToMessage(assistantId, event.data as QuizPayload);
             } else if (event.type === "thought") {
               // Append thoughts as a temporary assistant note (optional UI handling)
               // For simplicity, add to assistant message content in brackets
@@ -382,12 +415,17 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               ws.close();
               reject(new Error(String(event.data)));
             } else if (event.type === "done") {
+              const persistedId =
+                typeof (event as { message_id?: string }).message_id === "string"
+                  ? (event as { message_id: string }).message_id
+                  : undefined;
               applyUsageToMessage(
                 assistantId,
                 (event as { usage?: LlmUsage }).usage,
                 {
                   isStreaming: false,
                   response_time_ms: event.response_time_ms,
+                  ...(persistedId ? { id: persistedId } : {}),
                 },
               );
               ws.close();
@@ -439,19 +477,11 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
         for await (const event of stream) {
           if (event.type === "token") {
             if (!assistantCreated) {
-              assistantCreated = true;
-              setIsTyping(false);
-
-              const assistantMsg: ChatMsg = {
-                id: assistantId,
-                role: "assistant",
-                content: event.data as string,
-                sources: [],
-                isStreaming: true,
-                llm_provider: llmProvider,
-              };
-
-              setMessages((prev) => [...prev, assistantMsg]);
+              assistantCreated = ensureAssistantPlaceholder(
+                assistantId,
+                assistantCreated,
+                event.data as string,
+              );
             } else {
               setMessages((prev) =>
                 prev.map((m) =>
@@ -462,6 +492,12 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               );
             }
           } else if (event.type === "sources") {
+            if (!assistantCreated) {
+              assistantCreated = ensureAssistantPlaceholder(
+                assistantId,
+                assistantCreated,
+              );
+            }
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId
@@ -469,6 +505,14 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   : m,
               ),
             );
+          } else if (event.type === "quiz") {
+            if (!assistantCreated) {
+              assistantCreated = ensureAssistantPlaceholder(
+                assistantId,
+                assistantCreated,
+              );
+            }
+            applyQuizToMessage(assistantId, event.data as QuizPayload);
           } else if (event.type === "usage") {
             applyUsageToMessage(assistantId, event.data as LlmUsage);
           } else if (event.type === "error") {
@@ -485,16 +529,20 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               ),
             );
           } else if (event.type === "done") {
-            applyUsageToMessage(
-              assistantId,
-              (event as { usage?: LlmUsage }).usage,
-              {
-                isStreaming: false,
-                response_time_ms: (
-                  event as { type: string; response_time_ms?: number }
-                ).response_time_ms,
-              },
-            );
+            const doneEvent = event as unknown as {
+              usage?: LlmUsage;
+              response_time_ms?: number;
+              message_id?: string;
+            };
+            const persistedId =
+              typeof doneEvent.message_id === "string"
+                ? doneEvent.message_id
+                : undefined;
+            applyUsageToMessage(assistantId, doneEvent.usage, {
+              isStreaming: false,
+              response_time_ms: doneEvent.response_time_ms,
+              ...(persistedId ? { id: persistedId } : {}),
+            });
           }
         }
       } catch (err2) {
@@ -829,7 +877,22 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             {messages.map((msg) => (
               <div key={msg.id}>
                 <MessageBubble message={msg} />
-                {msg.role === "assistant" && msg.sources.length > 0 && (
+                {msg.role === "assistant" && msg.quiz && (
+                  <div className="ml-10 mt-2 mb-3 max-w-xl">
+                    <QuizCard
+                      quiz={msg.quiz}
+                      messageId={msg.id}
+                      onQuizUpdate={(quiz) =>
+                        setMessages((prev) =>
+                          prev.map((m) =>
+                            m.id === msg.id ? { ...m, quiz } : m,
+                          ),
+                        )
+                      }
+                    />
+                  </div>
+                )}
+                {msg.role === "assistant" && (msg.sources?.length ?? 0) > 0 && (
                   <div className="ml-10 mt-1 mb-3">
                     <SourceCard
                       sources={msg.sources}

@@ -275,6 +275,16 @@ def is_greeting(question: str) -> bool:
     return question.lower().strip().rstrip("!?.") in greetings
 
 
+def _maybe_quiz_intent(question: str, document_id: Optional[str], document_ids: Optional[List[str]]):
+    """Return QuizIntent when the user asks for an interactive quiz."""
+    from app.rag.quiz import parse_quiz_intent
+
+    return parse_quiz_intent(
+        question,
+        has_document=bool(document_id or document_ids),
+    )
+
+
 def _format_context(chunks: List[Dict[str, Any]]) -> str:
     """Build the evidence block for ``RAG_PROMPT_TEMPLATE`` ``{context}``.
 
@@ -536,6 +546,26 @@ def generate_answer(
     """
     provider = normalize_llm_provider(llm_provider)
 
+    # ── Interactive quiz (conversation / document / summary) ─
+    quiz_intent = _maybe_quiz_intent(question, document_id, document_ids)
+    if quiz_intent is not None:
+        from app.rag.quiz import generate_quiz_response
+
+        try:
+            return generate_quiz_response(
+                question,
+                user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+                chat_history=chat_history,
+                top_k=top_k,
+                llm_provider=provider,
+                intent=quiz_intent,
+            )
+        except Exception as e:
+            logger.error("Quiz generation error: %s", e)
+            raise ExternalServiceException("Quiz", str(e)) from e
+
     # ── Handle greetings ─────────────────────────────
     if is_greeting(question):
         client = get_llm_client(hf_token, llm_provider=provider)
@@ -634,9 +664,10 @@ def generate_answer_stream(
 
     Exact branch order (mirrors generate_answer)
     --------------------------------------------
-    1) greeting → stream tokens (no sources content) → done
-    2) ollama/bedrock → yield from _generate_answer_stream_direct(...)
-    3) else HF ReAct executor.stream → sources once from pdf_tool → token answer → done
+    1) quiz intent → sources → tokens → quiz → done
+    2) greeting → stream tokens (no sources content) → done
+    3) ollama/bedrock → yield from _generate_answer_stream_direct(...)
+    4) else HF ReAct executor.stream → sources once from pdf_tool → token answer → done
 
     Exact example (default Ollama dashboard ask)
     --------------------------------------------
@@ -644,6 +675,28 @@ def generate_answer_stream(
       → sources event, then token events, then done
     """
     provider = normalize_llm_provider(llm_provider)
+
+    # ── Interactive quiz ─────────────────────────────
+    quiz_intent = _maybe_quiz_intent(question, document_id, document_ids)
+    if quiz_intent is not None:
+        from app.rag.quiz import generate_quiz_stream
+
+        try:
+            yield from generate_quiz_stream(
+                question,
+                user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+                chat_history=chat_history,
+                top_k=top_k,
+                llm_provider=provider,
+                intent=quiz_intent,
+            )
+        except Exception as e:
+            logger.error("Quiz stream error: %s", e)
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
 
     # ── Handle greetings ─────────────────────────────
     if is_greeting(question):

@@ -1,0 +1,124 @@
+{
+  "provider": "ollama",
+  "document_id": "8c57d30c-9568-4437-b51f-b52d9ac495d1",
+  "total": 11,
+  "passed": 11,
+  "failed": 0,
+  "failed_ids": [],
+  "results": [
+    {
+      "id": "neg_ordinary_question",
+      "pass": true,
+      "elapsed_s": 32.7,
+      "status": 200,
+      "quiz_present": false,
+      "answer_preview": "XOLAIR is indicated for the treatment of adults and adolescents 12 years of age and older with chronic spontaneous urticaria (CSU), previously referred to as chronic idiopathic urticaria (CIU) [Source: xolair_prescribing.pdf, Page 39]. \n\nThe safety and efficacy of XOLAIR in this indication was assessed in two placebo-controlled, multiple-dose clinical trials lasting 24 weeks each. Patients receive"
+    },
+    {
+      "id": "neg_simple_summary",
+      "pass": true,
+      "elapsed_s": 27.9,
+      "status": 200,
+      "quiz_present": false,
+      "answer_preview": "The key safety warnings mentioned in the provided document excerpts are:\n\n- **Anaphylaxis**: Patients should be informed of the risk of life-threatening anaphylaxis with XOLAIR [Source: xolair_prescribing.pdf, Page 43]. This includes signs and symptoms such as difficulty breathing, swelling of the face or lips, hives, and chest tightness. The patient should seek immediate medical care if these sig"
+    },
+    {
+      "id": "neg_math_no_auto_quiz",
+      "pass": true,
+      "elapsed_s": 31.6,
+      "status": 200,
+      "quiz_present": false,
+      "has_equation_markup": true,
+      "answer_preview": "To determine how many vials are required to administer 300 mg of XOLAIR, we need to use the strength and volume information provided in the document:\n\n- The vial contains **150 mg** of XOLAIR in **1.2 mL**.\n- We need a total dose of **300 mg**.\n\nGiven that each vial provides 150 mg in 1.2 mL, we can calculate the number of vials required by setting up the following equation:\n\n\\[ \\text{Number of Vi"
+    },
+    {
+      "id": "seed_dosing_interval",
+      "pass": true,
+      "elapsed_s": 28.3,
+      "quiz_present": false,
+      "answer_preview": "The label recommends a dosing interval of every 4 weeks for Chronic Spontaneous Urticaria (CSU).\n\n[Source: xolair_prescribing.pdf, Page 9]"
+    },
+    {
+      "id": "quiz_conversation",
+      "pass": true,
+      "elapsed_s": 25.5,
+      "status": 200,
+      "mode": "conversation",
+      "title": "XOLAIR Quiz",
+      "n_questions": 5,
+      "has_explanations": true,
+      "options_ok": true,
+      "correct_ids_ok": true,
+      "mathish": true,
+      "answer_preview": "Here's a 5-question interactive quiz based on our conversation. Click an option to check your answer, then continue to the next question."
+    },
+    {
+      "id": "quiz_document_count6",
+      "pass": true,
+      "elapsed_s": 55.8,
+      "status": 200,
+      "requested": 6,
+      "mode": "document",
+      "title": "XOLAIR Dosing and Indications Quiz",
+      "n_questions": 6,
+      "has_explanations": true,
+      "options_ok": true,
+      "correct_ids_ok": true,
+      "mathish": true,
+      "answer_preview": "Here's a 6-question interactive quiz based on the selected document. Click an option to check your answer, then continue to the next question."
+    },
+    {
+      "id": "quiz_summary_then_quiz",
+      "pass": true,
+      "elapsed_s": 67.5,
+      "status": 200,
+      "answer_len": 1717,
+      "mode": "summary",
+      "title": "XOLAIR Prescribing Information Quiz",
+      "n_questions": 5,
+      "has_explanations": true,
+      "options_ok": true,
+      "correct_ids_ok": true,
+      "mathish": false,
+      "answer_preview": "The prescribing information for XOLAIR emphasizes potential risks, particularly anaphylaxis, which necessitates healthcare provider supervision during administration. It is indicated for chronic spontaneous urticaria, asthma, and chronic rhinosinusitis with nasal polyps but not for acute conditions like bronchospasm or status asthmaticus.\n\nXOLAIR is available as a subcutaneous injection based on serum IgE levels and body weight at specific dosages. If more than one dose of the prescribed amount "
+    },
+    {
+      "id": "quiz_state_select_navigate",
+      "pass": true,
+      "message_id": "58293842-0bfe-4387-8689-576ab098d657",
+      "wrong_saved": true,
+      "right_saved": true,
+      "current_index": 1,
+      "status_wrong": 200,
+      "status_right": 200
+    },
+    {
+      "id": "neg_edge_1",
+      "pass": true,
+      "phrase": "What questions appear in the adverse reactions table?",
+      "elapsed_s": 27.7,
+      "quiz_present": false,
+      "answer_preview": "Based solely on the provided data and tables from the XOLAIR prescribing guide, no adverse reactions table is presented or referenced. Therefore, I cannot identify specific questions appearing in an adverse reactions table directly from the given text. However, based on the context of the informatio"
+    },
+    {
+      "id": "neg_edge_2",
+      "pass": true,
+      "phrase": "Give me the recommended dose for adolescents.",
+      "elapsed_s": 30.3,
+      "quiz_present": false,
+      "answer_preview": "The recommended dosage for adolescents 12 years of age and older is XOLAIR 75 mg to 375 mg by subcutaneous injection every 2 or 4 weeks based on serum total IgE level (IU/mL) measured before the start of treatment and by body weight (kg). [Source: xolair_prescribing.pdf, Page 4]\n\nFor administration,"
+    },
+    {
+      "id": "neg_edge_3",
+      "pass": true,
+      "phrase": "Can you summarize the boxed warning only?",
+      "elapsed_s": 34.1,
+      "quiz_present": false,
+      "answer_preview": "The boxed warning in the prescribing information for XOLAIR emphasizes the risk of anaphylaxis, which has been reported to occur after administration of XOLAIR both in premarketing clinical trials and postmarketing spontaneous reports. Anaphylaxis can present as bronchospasm, hypotension, syncope, u"
+    }
+  ],
+  "sample_quizzes": {
+    "conversation_n": 5,
+    "document_n": 6
+  }
+}

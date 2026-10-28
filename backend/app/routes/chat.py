@@ -37,6 +37,8 @@ from app.schemas import (
     ChatSessionCreate,
     ChatSessionUpdate,
     ChatSessionResponse,
+    QuizPayload,
+    QuizStateUpdateRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,21 +46,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
-def _parse_message_sources_json(raw: Optional[str]) -> tuple[list, Optional[dict], Optional[str], Optional[int]]:
+def _parse_message_sources_json(
+    raw: Optional[str],
+) -> tuple[list, Optional[dict], Optional[str], Optional[int], Optional[dict]]:
     """Parse sources_json supporting legacy list and enriched object payloads.
 
-    Returns (sources, usage, llm_provider, response_time_ms).
+    Returns (sources, usage, llm_provider, response_time_ms, quiz).
     """
     if not raw:
-        return [], None, None, None
+        return [], None, None, None, None
     try:
         parsed = json.loads(raw)
     except Exception:
-        return [], None, None, None
+        return [], None, None, None, None
 
     usage = None
     llm_provider = None
     response_time_ms = None
+    quiz = None
     chunks = parsed
 
     if isinstance(parsed, dict):
@@ -66,6 +71,7 @@ def _parse_message_sources_json(raw: Optional[str]) -> tuple[list, Optional[dict
         usage = parsed.get("usage")
         llm_provider = parsed.get("llm_provider")
         response_time_ms = parsed.get("response_time_ms")
+        quiz = parsed.get("quiz") if isinstance(parsed.get("quiz"), dict) else None
         if usage and isinstance(usage, dict) and not llm_provider:
             llm_provider = usage.get("provider")
 
@@ -78,7 +84,58 @@ def _parse_message_sources_json(raw: Optional[str]) -> tuple[list, Optional[dict
                 sources.append(SourceChunk(**item))
             except Exception:
                 continue
-    return sources, usage, llm_provider, response_time_ms
+    return sources, usage, llm_provider, response_time_ms, quiz
+
+
+def _coerce_quiz_payload(quiz: Optional[dict]) -> Optional[QuizPayload]:
+    if not quiz or not isinstance(quiz, dict):
+        return None
+    try:
+        return QuizPayload(**quiz)
+    except Exception:
+        return None
+
+
+def _message_response_from_row(msg: ChatMessage) -> ChatMessageResponse:
+    sources, usage, llm_provider, response_time_ms, quiz = _parse_message_sources_json(
+        msg.sources_json
+    )
+    return ChatMessageResponse(
+        id=str(msg.id),
+        role=msg.role,
+        content=msg.content,
+        sources=sources,
+        feedback=msg.feedback,
+        created_at=msg.created_at,
+        usage=usage,
+        llm_provider=llm_provider,
+        response_time_ms=response_time_ms,
+        quiz=_coerce_quiz_payload(quiz),
+    )
+
+
+def _enriched_sources_payload(
+    sources: list,
+    *,
+    quiz: Optional[dict] = None,
+    usage: Optional[dict] = None,
+    llm_provider: Optional[str] = None,
+    response_time_ms: Optional[int] = None,
+):
+    """Build sources_json value: plain list when no metadata, else enriched dict."""
+    if not quiz and not usage and not llm_provider and response_time_ms is None:
+        return sources
+    payload = {
+        "chunks": sources if isinstance(sources, list) else [],
+        "usage": usage,
+        "llm_provider": llm_provider
+        or ((usage or {}).get("provider") if isinstance(usage, dict) else None),
+        "model_id": (usage or {}).get("model_id") if isinstance(usage, dict) else None,
+        "response_time_ms": response_time_ms,
+    }
+    if quiz:
+        payload["quiz"] = quiz
+    return payload
 
 
 @router.websocket("/ws")
@@ -221,6 +278,9 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         # Stream answer using existing generator and forward structured events
         try:
             last_usage = None
+            full_answer = ""
+            sources: list = []
+            quiz_payload = None
             for chunk in generate_answer_stream(
                 question=question,
                 user_id=user.id,
@@ -233,9 +293,16 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 try:
                     if chunk.startswith("data: "):
                         event_payload = json.loads(chunk[6:].strip())
-                        if event_payload.get("type") == "usage":
+                        event_type = event_payload.get("type")
+                        if event_type == "usage":
                             last_usage = event_payload.get("data")
-                        if event_payload.get("type") == "done":
+                        elif event_type == "token":
+                            full_answer += event_payload.get("data") or ""
+                        elif event_type == "sources":
+                            sources = event_payload.get("data") or []
+                        elif event_type == "quiz":
+                            quiz_payload = event_payload.get("data")
+                        if event_type == "done":
                             continue
                         await websocket.send_json(event_payload)
                     else:
@@ -244,10 +311,30 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 except Exception:
                     await websocket.send_json({"type": "token", "data": chunk})
 
+            assistant_message_id = None
+            if full_answer or quiz_payload:
+                save_sources = _enriched_sources_payload(
+                    sources,
+                    quiz=quiz_payload,
+                    usage=last_usage,
+                    llm_provider=llm_provider,
+                )
+                assistant_message_id = _save_message(
+                    db,
+                    user.id,
+                    document_id,
+                    "assistant",
+                    full_answer,
+                    save_sources,
+                    session_id=session_id,
+                )
+
             # Notify client (include Bedrock usage when present)
             done_event = {"type": "done"}
             if last_usage:
                 done_event["usage"] = last_usage
+            if assistant_message_id:
+                done_event["message_id"] = str(assistant_message_id)
             await websocket.send_json(done_event)
 
         except WebSocketDisconnect:
@@ -493,24 +580,7 @@ def get_session_history(
         .all()
     )
 
-    formatted = []
-    for msg in messages:
-        sources, usage, llm_provider, response_time_ms = _parse_message_sources_json(
-            msg.sources_json
-        )
-        formatted.append(
-            ChatMessageResponse(
-                id=str(msg.id),
-                role=msg.role,
-                content=msg.content,
-                sources=sources,
-                created_at=msg.created_at,
-                usage=usage,
-                llm_provider=llm_provider,
-                response_time_ms=response_time_ms,
-            )
-        )
-
+    formatted = [_message_response_from_row(msg) for msg in messages]
     return ChatHistoryResponse(messages=formatted, document_id=None)
 
 
@@ -681,19 +751,24 @@ def ask_question(
         cache_question = payload.question
         if payload.llm_provider:
             cache_question = f"[{payload.llm_provider}] {payload.question}"
+        # Never cache quiz intents — failed/partial quiz answers must not sticky-cache.
+        from app.rag.quiz import is_quiz_request
+
+        quiz_intent_request = is_quiz_request(payload.question)
         # Cache check — return instantly if this (user, document, question) was answered before
-        cached_answer = get_cached_response(
-            user_id=user.id,
-            document_id=cache_doc_key,
-            question=cache_question,
-        )
-        if cached_answer is not None:
-            logger.debug("Returning cached response for question: %s", payload.question[:40])
-            return ChatResponse(
-                answer=cached_answer,
-                sources=[],
-                document_id=payload.document_id,
+        if not quiz_intent_request:
+            cached_answer = get_cached_response(
+                user_id=user.id,
+                document_id=cache_doc_key,
+                question=cache_question,
             )
+            if cached_answer is not None:
+                logger.debug("Returning cached response for question: %s", payload.question[:40])
+                return ChatResponse(
+                    answer=cached_answer,
+                    sources=[],
+                    document_id=payload.document_id,
+                )
 
         result = generate_answer(
             question=payload.question,
@@ -714,24 +789,46 @@ def ask_question(
         chunks_retrieved_var.set(chunks_count)
         logger.info(f"RAG chat query processed successfully, retrieved {chunks_count} chunks")
 
-        # Store result in cache for future identical questions
-        set_cached_response(
-            user_id=user.id,
-            document_id=cache_doc_key,
-            question=cache_question,
-            answer=result["answer"],
-        )
+        # Store result in cache for future identical questions (skip interactive quizzes)
+        quiz_data = result.get("quiz")
+        if not quiz_data and not quiz_intent_request:
+            set_cached_response(
+                user_id=user.id,
+                document_id=cache_doc_key,
+                question=cache_question,
+                answer=result["answer"],
+            )
 
         # Save to chat history
+        save_sources = _enriched_sources_payload(
+            result.get("sources") or [],
+            quiz=quiz_data,
+            usage=result.get("usage"),
+            llm_provider=payload.llm_provider,
+        )
         _save_message(db, user.id, cache_doc_key, "user", payload.question, session_id=session_id)
         _save_message(
-            db, user.id, cache_doc_key, "assistant", result["answer"], result["sources"], session_id=session_id
+            db,
+            user.id,
+            cache_doc_key,
+            "assistant",
+            result["answer"],
+            save_sources,
+            session_id=session_id,
         )
+
+        safe_sources = []
+        for s in result.get("sources") or []:
+            try:
+                safe_sources.append(SourceChunk(**s))
+            except Exception:
+                continue
 
         return ChatResponse(
             answer=result["answer"],
-            sources=[SourceChunk(**s) for s in result["sources"]],
+            sources=safe_sources,
             document_id=payload.document_id,
+            quiz=_coerce_quiz_payload(quiz_data),
         )
     finally:
         record_query_response_time(time.perf_counter() - started_at)
@@ -855,38 +952,43 @@ def ask_question_stream(
     # Save user message immediately
     _save_message(db, user.id, cache_doc_key, "user", payload.question, session_id=session_id)
 
-    # Cache check before starting the stream
+    # Cache check before starting the stream (skip quiz intents entirely)
+    from app.rag.quiz import is_quiz_request as _is_quiz_request
+
+    stream_quiz_intent = _is_quiz_request(payload.question)
     stream_cache_question = payload.question
     if payload.llm_provider:
         stream_cache_question = f"[{payload.llm_provider}] {payload.question}"
-    cached_answer = get_cached_response(
-        user_id=user.id,
-        document_id=cache_doc_key,
-        question=stream_cache_question,
-    )
-    if cached_answer is not None:
-        logger.debug("Returning cached stream response for question: %s", payload.question[:40])
-
-        async def cached_event_stream():
-            payload_json = json.dumps({"type": "token", "data": cached_answer})
-            yield f"data: {payload_json}\n\n"
-            done_json = json.dumps({"type": "done"})
-            yield f"data: {done_json}\n\n"
-
-        return StreamingResponse(
-            cached_event_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+    if not stream_quiz_intent:
+        cached_answer = get_cached_response(
+            user_id=user.id,
+            document_id=cache_doc_key,
+            question=stream_cache_question,
         )
+        if cached_answer is not None:
+            logger.debug("Returning cached stream response for question: %s", payload.question[:40])
+
+            async def cached_event_stream():
+                payload_json = json.dumps({"type": "token", "data": cached_answer})
+                yield f"data: {payload_json}\n\n"
+                done_json = json.dumps({"type": "done"})
+                yield f"data: {done_json}\n\n"
+
+            return StreamingResponse(
+                cached_event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
     # Stream response
     def event_stream():
         full_answer = ""
         sources = []
+        quiz_payload = None
         last_usage = None
 
         try:
@@ -915,13 +1017,16 @@ def ask_question_stream(
                             full_answer += data.get("data", "")
                         elif data.get("type") == "sources":
                             sources = data.get("data", [])
+                        elif data.get("type") == "quiz":
+                            quiz_payload = data.get("data")
                 except Exception:
                     pass
                 yield chunk
 
             # Cache the full answer for future identical questions
             # Include provider in cache key so Ollama/Bedrock answers stay separate.
-            if full_answer:
+            # Skip quiz intents entirely (success or failure) so retries stay live.
+            if full_answer and not quiz_payload and not stream_quiz_intent:
                 set_cached_response(
                     user_id=user.id,
                     document_id=cache_doc_key,
@@ -933,21 +1038,17 @@ def ask_question_stream(
             from app.database import get_db_session
 
             elapsed_ms = round((time.perf_counter() - started_at) * 1000)
-            save_sources = sources
-            if last_usage or payload.llm_provider:
-                save_sources = {
-                    "chunks": sources,
-                    "usage": last_usage,
-                    "llm_provider": payload.llm_provider
-                    or ((last_usage or {}).get("provider") if isinstance(last_usage, dict) else None),
-                    "model_id": (last_usage or {}).get("model_id")
-                    if isinstance(last_usage, dict)
-                    else None,
-                    "response_time_ms": elapsed_ms,
-                }
+            save_sources = _enriched_sources_payload(
+                sources,
+                quiz=quiz_payload,
+                usage=last_usage,
+                llm_provider=payload.llm_provider,
+                response_time_ms=elapsed_ms,
+            )
 
+            assistant_message_id = None
             with get_db_session() as save_db:
-                _save_message(
+                assistant_message_id = _save_message(
                     save_db,
                     user.id,
                     cache_doc_key,
@@ -968,6 +1069,8 @@ def ask_question_stream(
             done_payload = {"type": "done", "response_time_ms": elapsed_ms}
             if last_usage:
                 done_payload["usage"] = last_usage
+            if assistant_message_id:
+                done_payload["message_id"] = str(assistant_message_id)
             yield f"data: {json.dumps(done_payload)}\n\n"
         finally:
             record_query_response_time(time.perf_counter() - started_at)
@@ -1005,25 +1108,7 @@ def get_chat_history(
         .all()
     )
 
-    formatted = []
-    for msg in messages:
-        sources, usage, llm_provider, response_time_ms = _parse_message_sources_json(
-            msg.sources_json
-        )
-        formatted.append(
-            ChatMessageResponse(
-                id=str(msg.id),
-                role=msg.role,
-                content=msg.content,
-                sources=sources,
-                feedback=msg.feedback,
-                created_at=msg.created_at,
-                usage=usage,
-                llm_provider=llm_provider,
-                response_time_ms=response_time_ms,
-            )
-        )
-
+    formatted = [_message_response_from_row(msg) for msg in messages]
     return ChatHistoryResponse(messages=formatted, document_id=document_id)
 
 
@@ -1160,13 +1245,74 @@ def submit_feedback(
     db.commit()
     db.refresh(msg)
 
-    return ChatMessageResponse(
-        id=msg.id,
-        role=msg.role,
-        content=msg.content,
-        feedback=msg.feedback,
-        created_at=msg.created_at,
+    return _message_response_from_row(msg)
+
+
+@router.patch(
+    "/messages/{message_id}/quiz-state",
+    response_model=ChatMessageResponse,
+    summary="Update interactive quiz progress",
+    description=(
+        "Persists selected answers, current question index, and completion "
+        "for an assistant message that contains an interactive quiz."
+    ),
+)
+def update_quiz_state(
+    message_id: str,
+    payload: QuizStateUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Persist in-chat quiz progress without altering question content."""
+    msg = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.id == message_id,
+            ChatMessage.user_id == user.id,
+        )
+        .first()
     )
+    if not msg:
+        raise NotFoundException("Message")
+    if msg.role != "assistant":
+        raise ValidationException("Quiz state can only be updated on assistant messages")
+
+    sources, usage, llm_provider, response_time_ms, quiz = _parse_message_sources_json(
+        msg.sources_json
+    )
+    if not quiz:
+        raise ValidationException("Message does not contain a quiz")
+
+    state = quiz.get("state") if isinstance(quiz.get("state"), dict) else {}
+    if payload.current_index is not None:
+        state["current_index"] = payload.current_index
+    if payload.answers is not None:
+        existing = state.get("answers") if isinstance(state.get("answers"), dict) else {}
+        merged = {**existing, **payload.answers}
+        state["answers"] = {str(k): str(v) for k, v in merged.items()}
+    if payload.completed is not None:
+        state["completed"] = bool(payload.completed)
+    quiz["state"] = state
+
+    chunk_dicts = []
+    for item in sources:
+        if hasattr(item, "model_dump"):
+            chunk_dicts.append(item.model_dump())
+        elif isinstance(item, dict):
+            chunk_dicts.append(item)
+
+    msg.sources_json = json.dumps(
+        _enriched_sources_payload(
+            chunk_dicts,
+            quiz=quiz,
+            usage=usage,
+            llm_provider=llm_provider,
+            response_time_ms=response_time_ms,
+        )
+    )
+    db.commit()
+    db.refresh(msg)
+    return _message_response_from_row(msg)
 
 
 def _save_message(
@@ -1178,7 +1324,7 @@ def _save_message(
     sources: list = None,
     session_id: Optional[str] = None,
 ):
-    """Save a chat message to the database."""
+    """Save a chat message to the database. Returns the new message id."""
     if not session_id:
         session = db.query(ChatSession).filter(ChatSession.user_id == user_id).first()
         if not session:
@@ -1202,6 +1348,8 @@ def _save_message(
     )
     db.add(msg)
     db.commit()
+    db.refresh(msg)
+    return msg.id
 
 
 def _share_answer_response(message: ChatMessage) -> ShareAnswerResponse:
