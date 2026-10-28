@@ -272,16 +272,45 @@ export default function DashboardPage() {
   // Keep KnowledgeGraph in the bundle path used by the product
   void KnowledgeGraph;
 
-  if (!initialized || !user) {
+  if (!initialized) {
     return (
       <div
-        className="flex min-h-screen items-center justify-center bg-[#f2f4f7]"
+        className="flex min-h-screen items-center justify-center bg-background"
         suppressHydrationWarning
       >
         <div
-          className="h-8 w-8 rounded-full bg-[#e6e8ec]"
+          className="h-8 w-8 animate-pulse rounded-full bg-muted"
           aria-label="Loading"
           suppressHydrationWarning
+        />
+      </div>
+    );
+  }
+
+  // Dev bypass can finish auth with no user if the API is down — don't spin forever.
+  if (!user) {
+    if (isDevAuthBypass()) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center text-foreground">
+          <p className="text-sm text-muted-foreground">
+            Could not sign in to the local API. Is the backend running on port
+            7860?
+          </p>
+          <button
+            type="button"
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div
+          className="h-8 w-8 animate-pulse rounded-full bg-muted"
+          aria-label="Loading"
         />
       </div>
     );
@@ -432,6 +461,7 @@ export default function DashboardPage() {
           <div className="genova-desk-chat-body">
             <ChatPanel
               activeDoc={activeDoc}
+              documents={documents}
               onCitationClick={(target) => {
                 setPdfPage(target.page);
                 setPdfHighlightTarget({

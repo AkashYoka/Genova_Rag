@@ -14,7 +14,7 @@ import hashlib
 import json
 import logging
 import os
-from typing import Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +118,26 @@ def make_cache_key(user_id: str, document_id: str, question: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def get_cached_response(user_id: str, document_id: str, question: str) -> Optional[str]:
+def _decode_cache_payload(raw: str):
+    """Decode cache JSON. Supports legacy plain-string answers and {answer, sources}."""
+    try:
+        data = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(data, str):
+        return {"answer": data, "sources": []}
+    if isinstance(data, dict) and "answer" in data:
+        sources = data.get("sources")
+        if not isinstance(sources, list):
+            sources = []
+        return {"answer": data.get("answer") or "", "sources": sources}
+    return None
+
+
+def get_cached_payload(user_id: str, document_id: str, question: str) -> Optional[dict]:
     """
-    Look up a cached answer for a (user_id, document_id, question) triple.
-    Returns the answer string on hit, None on miss.
+    Look up a cached answer (+ sources) for a (user_id, document_id, question) triple.
+    Returns ``{"answer": str, "sources": list}`` on hit, None on miss.
     """
     key = make_cache_key(user_id, document_id, question)
     r = _get_redis()
@@ -131,27 +147,43 @@ def get_cached_response(user_id: str, document_id: str, question: str) -> Option
             value = r.get(key)
             if value:
                 logger.debug("Cache HIT (Redis) for key %s", key[:12])
-                return json.loads(value)
+                return _decode_cache_payload(value)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Redis GET failed (%s) — checking LRU.", exc)
 
     value = _lru_get(key)
     if value:
         logger.debug("Cache HIT (LRU) for key %s", key[:12])
-        return json.loads(value)
+        return _decode_cache_payload(value)
 
     logger.debug("Cache MISS for key %s", key[:12])
     return None
 
 
-
-def set_cached_response(user_id: str, document_id: str, question: str, answer: str) -> None:
+def get_cached_response(user_id: str, document_id: str, question: str) -> Optional[str]:
     """
-    Store an answer. Tries Redis first; falls back to LRU.
+    Look up a cached answer for a (user_id, document_id, question) triple.
+    Returns the answer string on hit, None on miss.
+    """
+    payload = get_cached_payload(user_id, document_id, question)
+    if payload is None:
+        return None
+    return payload.get("answer")
+
+
+def set_cached_response(
+    user_id: str,
+    document_id: str,
+    question: str,
+    answer: str,
+    sources: Optional[list] = None,
+) -> None:
+    """
+    Store an answer (and optional citation sources). Tries Redis first; falls back to LRU.
     TTL is controlled by the CACHE_TTL environment variable.
     """
     key = make_cache_key(user_id, document_id, question)
-    serialised = json.dumps(answer)
+    serialised = json.dumps({"answer": answer, "sources": sources or []})
     r = _get_redis()
 
     if r is not None:

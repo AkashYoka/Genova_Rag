@@ -385,6 +385,98 @@ def retrieve(
 
     Next: agent._sources_from_chunks / _format_context.
     """
+    # Multi-attach: retrieve per document so one dominant PDF cannot crowd out others.
+    unique_ids: List[str] = []
+    if document_ids and not document_id:
+        seen = set()
+        for raw_id in document_ids:
+            doc_id = str(raw_id) if raw_id is not None else ""
+            if doc_id and doc_id not in seen:
+                seen.add(doc_id)
+                unique_ids.append(doc_id)
+
+    if len(unique_ids) > 1:
+        final_cap = settings.TOP_K_RERANK
+        per_doc_k = max(2, (final_cap + len(unique_ids) - 1) // len(unique_ids))
+        pooled: List[Dict[str, Any]] = []
+        for doc_id in unique_ids:
+            pooled.extend(
+                retrieve(
+                    query=query,
+                    user_id=user_id,
+                    document_id=doc_id,
+                    document_ids=None,
+                    top_k=per_doc_k,
+                )
+            )
+
+        if not pooled:
+            return []
+
+        # Fair merge: keep best chunk per doc first, then fill by score.
+        by_doc: Dict[str, List[Dict[str, Any]]] = {}
+        for chunk in pooled:
+            key = str(chunk.get("document_id") or "")
+            by_doc.setdefault(key, []).append(chunk)
+        for doc_chunks in by_doc.values():
+            doc_chunks.sort(
+                key=lambda x: x.get("rerank_score", x.get("score", 0)),
+                reverse=True,
+            )
+
+        selected: List[Dict[str, Any]] = []
+        seen_ids = set()
+        for doc_id in unique_ids:
+            for chunk in by_doc.get(doc_id, []):
+                cid = chunk.get("id")
+                if cid in seen_ids:
+                    continue
+                selected.append(chunk)
+                seen_ids.add(cid)
+                break
+
+        remainder = [
+            c
+            for doc_chunks in by_doc.values()
+            for c in doc_chunks
+            if c.get("id") not in seen_ids
+        ]
+        remainder.sort(
+            key=lambda x: x.get("rerank_score", x.get("score", 0)),
+            reverse=True,
+        )
+        for chunk in remainder:
+            if len(selected) >= final_cap:
+                break
+            cid = chunk.get("id")
+            if cid in seen_ids:
+                continue
+            selected.append(chunk)
+            seen_ids.add(cid)
+
+        if selected:
+            max_score = max(
+                chunk.get("rerank_score", chunk.get("score", 0)) for chunk in selected
+            )
+            max_score = max(max_score, 0.001)
+            for chunk in selected:
+                raw = chunk.get("rerank_score", chunk.get("score", 0))
+                chunk["confidence"] = round((raw / max_score) * 100, 1)
+                if "rerank_score" in chunk:
+                    chunk["score"] = round(chunk["rerank_score"], 4)
+                    del chunk["rerank_score"]
+
+        from app.observability import chunks_retrieved_var
+
+        chunks_retrieved_var.set(len(selected))
+        logger.info(
+            "Retrieved %d chunks across %d attached docs for query: '%s'",
+            len(selected),
+            len(unique_ids),
+            query,
+        )
+        return selected
+
     effective_top_k = top_k if top_k is not None else settings.TOP_K_RETRIEVAL
 
     # ── Stage 1: Hybrid retrieval with query transformation ───────────────────
@@ -435,17 +527,18 @@ def retrieve(
     candidates = _merge_candidates(all_candidates)
 
     # ── Stage 2: Cross-encoder reranking ─────────────────────────────────────
+    final_k = top_k if top_k is not None else settings.TOP_K_RERANK
     reranker = get_reranker()
 
     if reranker is not None:
         top_chunks = reranker.rerank(
             query=query,
             documents=candidates,
-            top_k=settings.TOP_K_RERANK,
+            top_k=final_k,
         )
     else:
         candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-        top_chunks = candidates[:settings.TOP_K_RERANK]
+        top_chunks = candidates[:final_k]
 
     # ── Confidence normalisation ──────────────────────────────────────────────
     if top_chunks:

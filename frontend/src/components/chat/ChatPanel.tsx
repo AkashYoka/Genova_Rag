@@ -7,6 +7,7 @@ import type { DocInfo } from "@/app/dashboard/page";
 import { api, API_BASE } from "@/lib/api";
 import {
   useChatStore,
+  type AttachedDocument,
   type ChatMsg,
   type LlmUsage,
   type SourceBoundingBox,
@@ -33,8 +34,52 @@ import {
   Mic,
   MicOff,
   ChevronDown,
+  Paperclip,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const ATTACH_STORAGE_PREFIX = "genova-chat-attachments:";
+
+function loadSessionAttachments(sessionId: string | null): AttachedDocument[] {
+  if (!sessionId || typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(`${ATTACH_STORAGE_PREFIX}${sessionId}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const valid = parsed.filter(
+      (item): item is AttachedDocument =>
+        !!item &&
+        typeof item.id === "string" &&
+        typeof item.filename === "string",
+    );
+    // Keep one chip per filename (last wins) so restored sessions aren't duplicated.
+    const byName = new Map<string, AttachedDocument>();
+    for (const item of valid) {
+      byName.set(item.filename.toLowerCase(), item);
+    }
+    return Array.from(byName.values()).slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+function saveSessionAttachments(
+  sessionId: string | null,
+  docs: AttachedDocument[],
+) {
+  if (!sessionId || typeof window === "undefined") return;
+  try {
+    localStorage.setItem(
+      `${ATTACH_STORAGE_PREFIX}${sessionId}`,
+      JSON.stringify(docs),
+    );
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
 interface ISpeechRecognitionEvent {
   resultIndex: number;
   results: {
@@ -76,10 +121,15 @@ interface CitationTarget {
 
 interface Props {
   activeDoc: DocInfo | null;
+  documents?: DocInfo[];
   onCitationClick: (target: CitationTarget) => void;
 }
 
-export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
+export default function ChatPanel({
+  activeDoc,
+  documents = [],
+  onCitationClick,
+}: Props) {
   const { t, i18n } = useTranslation();
   const messages = useChatStore((state) => state.messages);
   const input = useChatStore((state) => state.input);
@@ -96,6 +146,9 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   );
 
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [attachedDocs, setAttachedDocs] = useState<AttachedDocument[]>([]);
+  const [attachPickerOpen, setAttachPickerOpen] = useState(false);
+  const [attachFilter, setAttachFilter] = useState("");
   const MAX_CHARACTERS = 2000;
   const [isRecording, setIsRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
@@ -215,6 +268,93 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     };
   }, [setStreaming, setIsTyping]);
 
+  const seededAttachSessionRef = useRef<string | null>(null);
+
+  // Restore session-scoped attachments when switching chats
+  useEffect(() => {
+    seededAttachSessionRef.current = null;
+    setAttachedDocs(loadSessionAttachments(activeSessionId));
+    setAttachPickerOpen(false);
+    setAttachFilter("");
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    saveSessionAttachments(activeSessionId, attachedDocs);
+  }, [activeSessionId, attachedDocs]);
+
+  // After history loads, seed attachments from the latest user message if storage empty
+  useEffect(() => {
+    if (!activeSessionId) return;
+    if (seededAttachSessionRef.current === activeSessionId) return;
+    if (attachedDocs.length > 0) {
+      seededAttachSessionRef.current = activeSessionId;
+      return;
+    }
+    if (historyLoading || messages.length === 0) return;
+    seededAttachSessionRef.current = activeSessionId;
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (msg.role === "user" && msg.attachments && msg.attachments.length > 0) {
+        setAttachedDocs(msg.attachments);
+        break;
+      }
+    }
+  }, [messages, activeSessionId, attachedDocs.length, historyLoading]);
+
+  // One ready row per filename so the attach picker can't show chemistry twice.
+  const readyDocs = (() => {
+    const byName = new Map<string, DocInfo>();
+    for (const doc of documents.filter((d) => d.status === "ready")) {
+      const key = doc.original_name.toLowerCase();
+      const existing = byName.get(key);
+      if (!existing) {
+        byName.set(key, doc);
+        continue;
+      }
+      const betterChunks =
+        (doc.chunk_count || 0) > (existing.chunk_count || 0);
+      const sameChunksNewer =
+        (doc.chunk_count || 0) === (existing.chunk_count || 0) &&
+        (doc.uploaded_at || "") > (existing.uploaded_at || "");
+      if (betterChunks || sameChunksNewer) {
+        byName.set(key, doc);
+      }
+    }
+    return Array.from(byName.values());
+  })();
+  const attachQuery = input.trim().toLowerCase();
+  const isAttachCommand =
+    attachQuery === "/attach" || attachQuery.startsWith("/attach ");
+  const attachSearch = isAttachCommand
+    ? input.trim().slice("/attach".length).trim().toLowerCase()
+    : attachFilter.trim().toLowerCase();
+  const attachCandidates = readyDocs.filter((d) =>
+    attachSearch
+      ? d.original_name.toLowerCase().includes(attachSearch)
+      : true,
+  );
+
+  const toggleAttachedDoc = (doc: DocInfo) => {
+    setAttachedDocs((prev) => {
+      const sameName = (d: AttachedDocument) =>
+        d.filename.toLowerCase() === doc.original_name.toLowerCase();
+      const existsSameId = prev.some((d) => d.id === doc.id);
+      if (existsSameId) {
+        return prev.filter((d) => d.id !== doc.id);
+      }
+      // Collapse any other chip with the same display name, then add this ID.
+      const withoutNameDupes = prev.filter((d) => !sameName(d));
+      return [
+        ...withoutNameDupes,
+        { id: doc.id, filename: doc.original_name },
+      ];
+    });
+  };
+
+  const removeAttachedDoc = (id: string) => {
+    setAttachedDocs((prev) => prev.filter((d) => d.id !== id));
+  };
+
   // Load history on activeSessionId or fallback to activeDoc change
   useEffect(() => {
     if (activeSessionId) {
@@ -276,7 +416,22 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     if (!input.trim() || streaming) return;
 
     const question = input.trim();
+    // /attach is a composer command, not a chat question
+    if (question === "/attach" || question.toLowerCase().startsWith("/attach ")) {
+      setAttachPickerOpen(true);
+      setAttachFilter(question.slice("/attach".length).trim());
+      setInput("");
+      return;
+    }
+
     setInput("");
+    setAttachPickerOpen(false);
+
+    const attachmentsSnapshot = [...attachedDocs];
+    const documentIds =
+      attachmentsSnapshot.length > 0
+        ? attachmentsSnapshot.map((d) => d.id)
+        : null;
 
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -286,6 +441,8 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
       role: "user",
       content: question,
       sources: [],
+      attachments:
+        attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
     };
     setMessages((prev) => [...prev, userMsg]);
 
@@ -364,11 +521,14 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
         abortController.signal.addEventListener("abort", onAbort);
 
         ws.onopen = () => {
-          // Send initial payload
+          // No attachments → search all indexed docs (omit document_id).
+          // Attachments → restrict retrieval to those document_ids only.
           ws.send(
             JSON.stringify({
               question,
-              document_id: activeDoc?.id || null,
+              document_id: null,
+              document_ids: documentIds,
+              attachments: attachmentsSnapshot,
               session_id: activeSessionId,
               llm_provider: llmProvider,
             }),
@@ -491,7 +651,8 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
           "/api/v1/chat/ask/stream",
           {
             question,
-            document_id: activeDoc?.id || null,
+            document_id: null,
+            document_ids: documentIds,
             session_id: activeSessionId,
             llm_provider: llmProvider,
           },
@@ -765,11 +926,24 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape" && (attachPickerOpen || isAttachCommand)) {
+      e.preventDefault();
+      setAttachPickerOpen(false);
+      if (isAttachCommand) setInput("");
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
+
+  // Open attach picker while typing /attach in the composer
+  useEffect(() => {
+    if (isAttachCommand) {
+      setAttachPickerOpen(true);
+    }
+  }, [isAttachCommand]);
 
   const handleExportMenuKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -978,7 +1152,120 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 <option value="bedrock">Nova 2 Lite (Bedrock)</option>
               </select>
             </label>
+            <button
+              type="button"
+              disabled={streaming || readyDocs.length === 0}
+              onClick={() => {
+                setAttachPickerOpen((v) => !v);
+                if (!input.trim()) setInput("/attach");
+              }}
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "sm" }),
+                "h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground",
+              )}
+              aria-label="Attach documents"
+              aria-expanded={attachPickerOpen}
+            >
+              <Paperclip className="h-3.5 w-3.5" />
+              Attach
+              {attachedDocs.length > 0 ? ` (${attachedDocs.length})` : ""}
+            </button>
+            <span className="text-[11px] text-muted-foreground/80">
+              Type{" "}
+              <kbd className="rounded border border-border/60 px-1 font-mono">
+                /attach
+              </kbd>{" "}
+              to search PDFs
+            </span>
           </div>
+
+          {attachedDocs.length > 0 && (
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              {attachedDocs.map((doc) => (
+                <span
+                  key={doc.id}
+                  className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-foreground"
+                  title={doc.filename}
+                >
+                  <span className="truncate">{doc.filename}</span>
+                  <button
+                    type="button"
+                    className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                    aria-label={`Remove ${doc.filename}`}
+                    onClick={() => removeAttachedDoc(doc.id)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setAttachedDocs([])}
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+
+          {attachPickerOpen && (
+            <div
+              className="mb-2 max-h-48 overflow-y-auto rounded-lg border border-border/60 bg-popover p-1 shadow-md"
+              role="listbox"
+              aria-label="Attach documents"
+            >
+              {attachCandidates.length === 0 ? (
+                <p className="px-3 py-2 text-xs text-muted-foreground">
+                  {readyDocs.length === 0
+                    ? "No ready documents to attach."
+                    : "No matching PDFs."}
+                </p>
+              ) : (
+                attachCandidates.map((doc) => {
+                  const selected = attachedDocs.some((d) => d.id === doc.id);
+                  return (
+                    <button
+                      key={doc.id}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => toggleAttachedDoc(doc)}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors",
+                        selected
+                          ? "bg-primary/15 text-foreground"
+                          : "hover:bg-accent text-foreground",
+                      )}
+                    >
+                      <span className="truncate font-medium">
+                        {doc.original_name}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {selected ? "Selected" : "Select"}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+              <div className="flex items-center justify-between border-t border-border/50 px-2 py-1.5">
+                <span className="text-[10px] text-muted-foreground">
+                  {attachedDocs.length === 0
+                    ? "None selected → search all indexed docs"
+                    : `Search limited to ${attachedDocs.length} PDF${attachedDocs.length === 1 ? "" : "s"}`}
+                </span>
+                <button
+                  type="button"
+                  className="text-[11px] font-medium text-primary"
+                  onClick={() => {
+                    setAttachPickerOpen(false);
+                    if (isAttachCommand) setInput("");
+                  }}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          )}
           {/* Status / Error Message Area */}
           {(isRecording || speechError) && (
             <div className="absolute bottom-full mb-2 left-0 right-0 flex items-center justify-between bg-card border border-border/80 shadow-md rounded-lg px-3 py-1.5 text-xs animate-in fade-in slide-in-from-bottom-1 z-40 max-w-3xl mx-auto">
@@ -1030,11 +1317,9 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  activeDoc
-                    ? t("chat.askPlaceholder", {
-                      name: activeDoc.original_name,
-                    })
-                    : t("chat.selectPlaceholder")
+                  attachedDocs.length > 0
+                    ? `Ask about ${attachedDocs.length} attached PDF${attachedDocs.length === 1 ? "" : "s"}…`
+                    : "Ask across all indexed documents… (/attach to scope)"
                 }
                 disabled={streaming}
                 className="min-h-[44px] max-h-32 resize-none bg-background/50 border-border/50 pr-11"

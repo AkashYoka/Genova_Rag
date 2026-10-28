@@ -16,7 +16,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
-from app.cache import get_cached_response, set_cached_response
+from app.cache import get_cached_payload, get_cached_response, set_cached_response
 from app.database import get_db
 from app.exceptions import (
     NotFoundException,
@@ -49,22 +49,23 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 
 def _parse_message_sources_json(
     raw: Optional[str],
-) -> tuple[list, Optional[dict], Optional[str], Optional[int], Optional[dict]]:
+) -> tuple[list, Optional[dict], Optional[str], Optional[int], Optional[dict], list]:
     """Parse sources_json supporting legacy list and enriched object payloads.
 
-    Returns (sources, usage, llm_provider, response_time_ms, quiz).
+    Returns (sources, usage, llm_provider, response_time_ms, quiz, attachments).
     """
     if not raw:
-        return [], None, None, None, None
+        return [], None, None, None, None, []
     try:
         parsed = json.loads(raw)
     except Exception:
-        return [], None, None, None, None
+        return [], None, None, None, None, []
 
     usage = None
     llm_provider = None
     response_time_ms = None
     quiz = None
+    attachments: list = []
     chunks = parsed
 
     if isinstance(parsed, dict):
@@ -75,6 +76,15 @@ def _parse_message_sources_json(
         quiz = parsed.get("quiz") if isinstance(parsed.get("quiz"), dict) else None
         if usage and isinstance(usage, dict) and not llm_provider:
             llm_provider = usage.get("provider")
+        raw_attachments = parsed.get("attachments")
+        if isinstance(raw_attachments, list):
+            for item in raw_attachments:
+                if not isinstance(item, dict):
+                    continue
+                doc_id = item.get("id")
+                filename = item.get("filename") or item.get("original_name")
+                if doc_id and filename:
+                    attachments.append({"id": str(doc_id), "filename": str(filename)})
 
     sources: list = []
     if isinstance(chunks, list):
@@ -85,7 +95,7 @@ def _parse_message_sources_json(
                 sources.append(SourceChunk(**item))
             except Exception:
                 continue
-    return sources, usage, llm_provider, response_time_ms, quiz
+    return sources, usage, llm_provider, response_time_ms, quiz, attachments
 
 
 def _coerce_quiz_payload(quiz: Optional[dict]) -> Optional[QuizPayload]:
@@ -98,14 +108,17 @@ def _coerce_quiz_payload(quiz: Optional[dict]) -> Optional[QuizPayload]:
 
 
 def _message_response_from_row(msg: ChatMessage) -> ChatMessageResponse:
-    sources, usage, llm_provider, response_time_ms, quiz = _parse_message_sources_json(
-        msg.sources_json
+    from app.schemas import AttachedDocument
+
+    sources, usage, llm_provider, response_time_ms, quiz, attachments = (
+        _parse_message_sources_json(msg.sources_json)
     )
     return ChatMessageResponse(
         id=str(msg.id),
         role=msg.role,
         content=msg.content,
         sources=sources,
+        attachments=[AttachedDocument(**a) for a in attachments],
         feedback=msg.feedback,
         created_at=msg.created_at,
         usage=usage,
@@ -122,9 +135,16 @@ def _enriched_sources_payload(
     usage: Optional[dict] = None,
     llm_provider: Optional[str] = None,
     response_time_ms: Optional[int] = None,
+    attachments: Optional[list] = None,
 ):
     """Build sources_json value: plain list when no metadata, else enriched dict."""
-    if not quiz and not usage and not llm_provider and response_time_ms is None:
+    if (
+        not quiz
+        and not usage
+        and not llm_provider
+        and response_time_ms is None
+        and not attachments
+    ):
         return sources
     payload = {
         "chunks": sources if isinstance(sources, list) else [],
@@ -136,6 +156,8 @@ def _enriched_sources_payload(
     }
     if quiz:
         payload["quiz"] = quiz
+    if attachments:
+        payload["attachments"] = attachments
     return payload
 
 
@@ -213,9 +235,20 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             payload = await websocket.receive_json()
 
         question = payload.get("question")
-        document_id = payload.get("document_id")
+        document_id = payload.get("document_id") or None
+        document_ids = payload.get("document_ids") or None
+        if isinstance(document_ids, list):
+            document_ids = [str(d) for d in document_ids if d]
+            if not document_ids:
+                document_ids = None
+        else:
+            document_ids = None
+        # Prefer explicit multi-attach list over a single document_id.
+        if document_ids:
+            document_id = None
         session_id = payload.get("session_id")
         llm_provider = payload.get("llm_provider")
+        attachments_meta = payload.get("attachments") if isinstance(payload.get("attachments"), list) else None
 
         from app.rag.utils.security import validate_user_input, UnsafePromptError
 
@@ -248,6 +281,36 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 await websocket.send_json({"type": "error", "data": detail})
                 await websocket.close()
                 return
+        elif document_ids:
+            docs = (
+                db.query(Document)
+                .filter(
+                    Document.id.in_(document_ids),
+                    Document.user_id == user.id,
+                    Document.is_deleted.is_(False),
+                )
+                .all()
+            )
+            found_ids = {doc.id for doc in docs}
+            missing = [doc_id for doc_id in document_ids if doc_id not in found_ids]
+            if missing:
+                await websocket.send_json({"type": "error", "data": "Document not found"})
+                await websocket.close()
+                return
+            not_ready = [doc.original_name for doc in docs if doc.status != "ready"]
+            if not_ready:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "data": f"Some documents are still processing: {', '.join(not_ready)}",
+                    }
+                )
+                await websocket.close()
+                return
+            if not attachments_meta:
+                attachments_meta = [
+                    {"id": str(doc.id), "filename": doc.original_name} for doc in docs
+                ]
 
         # Resolve or create session
         if not session_id:
@@ -273,8 +336,20 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         recent_messages.reverse()
         chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
 
-        # Save user message
-        _save_message(db, user.id, document_id, "user", question, session_id=session_id)
+        # Save user message (attachments stored in sources_json for history chips)
+        user_sources = None
+        if attachments_meta:
+            user_sources = _enriched_sources_payload([], attachments=attachments_meta)
+        save_doc_id = document_id or (document_ids[0] if document_ids else None)
+        _save_message(
+            db,
+            user.id,
+            save_doc_id,
+            "user",
+            question,
+            sources=user_sources,
+            session_id=session_id,
+        )
 
         # Stream answer using existing generator and forward structured events
         try:
@@ -286,6 +361,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 question=question,
                 user_id=user.id,
                 document_id=document_id,
+                document_ids=document_ids,
                 hf_token=user.hf_token,
                 chat_history=chat_history,
                 llm_provider=llm_provider,
@@ -758,16 +834,23 @@ def ask_question(
         quiz_intent_request = is_quiz_request(payload.question)
         # Cache check — return instantly if this (user, document, question) was answered before
         if not quiz_intent_request:
-            cached_answer = get_cached_response(
+            cached_payload = get_cached_payload(
                 user_id=user.id,
                 document_id=cache_doc_key,
                 question=cache_question,
             )
-            if cached_answer is not None:
+            if cached_payload is not None:
                 logger.debug("Returning cached response for question: %s", payload.question[:40])
+                cached_sources = []
+                for item in cached_payload.get("sources") or []:
+                    if isinstance(item, dict):
+                        try:
+                            cached_sources.append(SourceChunk(**item))
+                        except Exception:
+                            continue
                 return ChatResponse(
-                    answer=cached_answer,
-                    sources=[],
+                    answer=cached_payload.get("answer") or "",
+                    sources=cached_sources,
                     document_id=payload.document_id,
                 )
 
@@ -798,6 +881,7 @@ def ask_question(
                 document_id=cache_doc_key,
                 question=cache_question,
                 answer=result["answer"],
+                sources=result.get("sources") or [],
             )
 
         # Save to chat history
@@ -807,11 +891,39 @@ def ask_question(
             usage=result.get("usage"),
             llm_provider=payload.llm_provider,
         )
-        _save_message(db, user.id, cache_doc_key, "user", payload.question, session_id=session_id)
+        attach_meta = None
+        if payload.document_ids:
+            attach_docs = (
+                db.query(Document)
+                .filter(Document.id.in_(payload.document_ids), Document.user_id == user.id)
+                .all()
+            )
+            attach_meta = _attachments_from_docs(attach_docs)
+        elif payload.document_id:
+            one = (
+                db.query(Document)
+                .filter(Document.id == payload.document_id, Document.user_id == user.id)
+                .first()
+            )
+            if one:
+                attach_meta = _attachments_from_docs([one])
+        user_sources = (
+            _enriched_sources_payload([], attachments=attach_meta) if attach_meta else None
+        )
+        msg_doc_id = _message_document_fk(payload.document_id, payload.document_ids)
         _save_message(
             db,
             user.id,
-            cache_doc_key,
+            msg_doc_id,
+            "user",
+            payload.question,
+            sources=user_sources,
+            session_id=session_id,
+        )
+        _save_message(
+            db,
+            user.id,
+            msg_doc_id,
             "assistant",
             result["answer"],
             save_sources,
@@ -949,9 +1061,38 @@ def ask_question_stream(
     cache_doc_key = str(payload.document_id or "")
     if payload.document_ids:
         cache_doc_key = "multi:" + ",".join(sorted(payload.document_ids))
-    
+
+    attach_meta = None
+    if payload.document_ids:
+        attach_docs = (
+            db.query(Document)
+            .filter(Document.id.in_(payload.document_ids), Document.user_id == user.id)
+            .all()
+        )
+        attach_meta = _attachments_from_docs(attach_docs)
+    elif payload.document_id:
+        one = (
+            db.query(Document)
+            .filter(Document.id == payload.document_id, Document.user_id == user.id)
+            .first()
+        )
+        if one:
+            attach_meta = _attachments_from_docs([one])
+    user_sources = (
+        _enriched_sources_payload([], attachments=attach_meta) if attach_meta else None
+    )
+    msg_doc_id = _message_document_fk(payload.document_id, payload.document_ids)
+
     # Save user message immediately
-    _save_message(db, user.id, cache_doc_key, "user", payload.question, session_id=session_id)
+    _save_message(
+        db,
+        user.id,
+        msg_doc_id,
+        "user",
+        payload.question,
+        sources=user_sources,
+        session_id=session_id,
+    )
 
     # Cache check before starting the stream (skip quiz intents entirely)
     from app.rag.utils.quiz import is_quiz_request as _is_quiz_request
@@ -961,15 +1102,20 @@ def ask_question_stream(
     if payload.llm_provider:
         stream_cache_question = f"[{payload.llm_provider}] {payload.question}"
     if not stream_quiz_intent:
-        cached_answer = get_cached_response(
+        cached_payload = get_cached_payload(
             user_id=user.id,
             document_id=cache_doc_key,
             question=stream_cache_question,
         )
-        if cached_answer is not None:
+        if cached_payload is not None:
             logger.debug("Returning cached stream response for question: %s", payload.question[:40])
+            cached_answer = cached_payload.get("answer") or ""
+            cached_sources = cached_payload.get("sources") or []
 
             async def cached_event_stream():
+                # Emit sources first so citation chips work on cache hits.
+                if cached_sources:
+                    yield f"data: {json.dumps({'type': 'sources', 'data': cached_sources})}\n\n"
                 # Stream cached text in small pieces so the UI can paint
                 # progressively (ChatGPT-style) instead of dumping one blob.
                 chunk_size = 24
@@ -1001,7 +1147,7 @@ def ask_question_stream(
             for chunk in generate_answer_stream(
                 question=payload.question,
                 user_id=user.id,
-                document_id=cache_doc_key,
+                document_id=None if payload.document_ids else payload.document_id,
                 document_ids=payload.document_ids,
                 hf_token=user.hf_token,
                 top_k=payload.top_k,
@@ -1038,6 +1184,7 @@ def ask_question_stream(
                     document_id=cache_doc_key,
                     question=stream_cache_question,
                     answer=full_answer,
+                    sources=sources or [],
                 )
 
             # Save assistant response to history (include usage metadata when present)
@@ -1057,7 +1204,7 @@ def ask_question_stream(
                 assistant_message_id = _save_message(
                     save_db,
                     user.id,
-                    cache_doc_key,
+                    msg_doc_id,
                     "assistant",
                     full_answer,
                     save_sources,
@@ -1336,8 +1483,8 @@ def update_quiz_state(
     if msg.role != "assistant":
         raise ValidationException("Quiz state can only be updated on assistant messages")
 
-    sources, usage, llm_provider, response_time_ms, quiz = _parse_message_sources_json(
-        msg.sources_json
+    sources, usage, llm_provider, response_time_ms, quiz, _attachments = (
+        _parse_message_sources_json(msg.sources_json)
     )
     if not quiz:
         raise ValidationException("Message does not contain a quiz")
@@ -1372,6 +1519,22 @@ def update_quiz_state(
     db.commit()
     db.refresh(msg)
     return _message_response_from_row(msg)
+
+
+def _message_document_fk(
+    document_id: Optional[str],
+    document_ids: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Pick a real document UUID for ChatMessage.document_id (never cache keys)."""
+    if document_ids:
+        return str(document_ids[0])
+    if document_id and not str(document_id).startswith("multi:"):
+        return str(document_id)
+    return None
+
+
+def _attachments_from_docs(docs: list) -> list:
+    return [{"id": str(doc.id), "filename": doc.original_name} for doc in docs]
 
 
 def _save_message(

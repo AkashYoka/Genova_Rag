@@ -115,75 +115,40 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const { initialized, token } = get();
     if (initialized) return;
 
-    let storedToken = token ?? getStoredToken();
-
-    // 1. Try to extract tokens from URL search params (OAuth redirect)
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const urlToken = params.get("token");
-      const urlRefreshToken = params.get("refresh_token");
-      if (urlToken && urlRefreshToken) {
-        localStorage.setItem("token", urlToken);
-        localStorage.setItem("refresh_token", urlRefreshToken);
-        storedToken = urlToken;
-        // Clean URL parameters without reloading
-        const cleanUrl = window.location.origin + window.location.pathname;
-        window.history.replaceState({}, document.title, cleanUrl);
-      }
-    }
-
-    const bypassEnabled = isDevAuthBypass();
-
-    // 2. Local/dev auto sign-in — skip the login form when no token is stored
-    if (!storedToken && bypassEnabled) {
-      set({ loading: true });
-      try {
-        const data = await api.post<{
-          access_token: string;
-          refresh_token: string;
-          user: AuthUser;
-        }>("/api/v1/auth/dev-login", {});
-        localStorage.setItem("token", data.access_token);
-        localStorage.setItem("refresh_token", data.refresh_token);
-        set({
-          token: data.access_token,
-          user: data.user,
-          loading: false,
-          initialized: true,
-        });
-        return;
-      } catch {
-        // Fall through to anonymous state if backend bypass is off
-        clearStoredTokens();
-        set({ user: null, token: null, loading: false, initialized: true });
-        return;
-      }
-    }
-
-    // 3. If no token, don't request /me (prevents CORS preflight credentials error for anonymous users)
-    if (!storedToken) {
-      set({ user: null, token: null, loading: false, initialized: true });
-      return;
-    }
-
-    set({ loading: true });
+    // Never leave the dashboard on an infinite loading shell.
+    const failSafe =
+      typeof window !== "undefined"
+        ? window.setTimeout(() => {
+            if (!get().initialized) {
+              set({ loading: false, initialized: true });
+            }
+          }, 12000)
+        : null;
 
     try {
-      const user = await api.get<AuthUser>(
-        "/api/v1/auth/me",
-        { token: storedToken }
-      );
-      set({
-        user,
-        token: storedToken,
-        loading: false,
-        initialized: true,
-      });
-    } catch {
-      // Stale token: try local bypass once before giving up
-      if (bypassEnabled) {
+      let storedToken = token ?? getStoredToken();
+
+      // 1. Try to extract tokens from URL search params (OAuth redirect)
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const urlToken = params.get("token");
+        const urlRefreshToken = params.get("refresh_token");
+        if (urlToken && urlRefreshToken) {
+          localStorage.setItem("token", urlToken);
+          localStorage.setItem("refresh_token", urlRefreshToken);
+          storedToken = urlToken;
+          // Clean URL parameters without reloading
+          const cleanUrl = window.location.origin + window.location.pathname;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
+      }
+
+      const bypassEnabled = isDevAuthBypass();
+
+      // 2. Local/dev auto sign-in — skip the login form when no token is stored
+      if (!storedToken && bypassEnabled) {
+        set({ loading: true });
         try {
-          clearStoredTokens();
           const data = await api.post<{
             access_token: string;
             refresh_token: string;
@@ -199,11 +164,60 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           });
           return;
         } catch {
-          // ignore and clear below
+          // Fall through to anonymous state if backend bypass is off
+          clearStoredTokens();
+          set({ user: null, token: null, loading: false, initialized: true });
+          return;
         }
       }
-      clearStoredTokens();
-      set({ user: null, token: null, loading: false, initialized: true });
+
+      // 3. If no token, don't request /me (prevents CORS preflight credentials error for anonymous users)
+      if (!storedToken) {
+        set({ user: null, token: null, loading: false, initialized: true });
+        return;
+      }
+
+      set({ loading: true });
+
+      try {
+        const user = await api.get<AuthUser>(
+          "/api/v1/auth/me",
+          { token: storedToken }
+        );
+        set({
+          user,
+          token: storedToken,
+          loading: false,
+          initialized: true,
+        });
+      } catch {
+        // Stale token: try local bypass once before giving up
+        if (bypassEnabled) {
+          try {
+            clearStoredTokens();
+            const data = await api.post<{
+              access_token: string;
+              refresh_token: string;
+              user: AuthUser;
+            }>("/api/v1/auth/dev-login", {});
+            localStorage.setItem("token", data.access_token);
+            localStorage.setItem("refresh_token", data.refresh_token);
+            set({
+              token: data.access_token,
+              user: data.user,
+              loading: false,
+              initialized: true,
+            });
+            return;
+          } catch {
+            // ignore and clear below
+          }
+        }
+        clearStoredTokens();
+        set({ user: null, token: null, loading: false, initialized: true });
+      }
+    } finally {
+      if (failSafe != null) window.clearTimeout(failSafe);
     }
   },
 

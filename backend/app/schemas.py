@@ -413,11 +413,17 @@ class FeedbackRequest(BaseModel):
     feedback: Optional[str] = Field(None, pattern="^(up|down)?$")
 
 
+class AttachedDocument(BaseModel):
+    id: str
+    filename: str
+
+
 class ChatMessageResponse(BaseModel):
     id: str
     role: str
     content: str
     sources: List[SourceChunk] = []
+    attachments: List[AttachedDocument] = []
     feedback: Optional[str] = None
     created_at: datetime
     usage: Optional[dict] = None

@@ -17,7 +17,7 @@ Common example question (all six files):
 """
 import logging
 import json
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional, Generator, Tuple
 
 from langchain_classic.agents import create_react_agent, AgentExecutor
 from langchain_core.prompts import PromptTemplate
@@ -27,6 +27,7 @@ from app.rag.retrieval.retriever import retrieve
 from app.rag.retrieval.graph_retriever import get_entity_context
 from app.rag.prompts.prompts import (
     AGENT_SYSTEM_PROMPT,
+    GREETING_PROMPT,
     MULTI_DOC_COMPARISON_GUIDANCE,
     RAG_PROMPT_TEMPLATE,
     SYSTEM_PROMPT,
@@ -139,8 +140,8 @@ def get_llm_client(hf_token: Optional[str] = None, llm_provider: Optional[str] =
     return InferenceClient(token=token)
 
 
-def _format_chat_history(messages: List[Dict[str, str]]) -> str:
-    """Serialize prior turns for the prompt.
+def _format_chat_history(messages: List[Dict[str, str]], *, max_turns: int = 6, max_chars: int = 500) -> str:
+    """Serialize prior turns for the prompt (truncated to limit topic bleed).
 
     Exact example
     -------------
@@ -156,10 +157,18 @@ def _format_chat_history(messages: List[Dict[str, str]]) -> str:
     """
     if not messages:
         return ""
-    lines = ["Previous conversation:"]
-    for msg in messages:
-        role = "User" if msg["role"] == "user" else "Assistant"
-        lines.append(f"{role}: {msg['content']}")
+    # Keep only the most recent turns; truncate long assistant replies.
+    trimmed = list(messages[-max_turns:])
+    lines = [
+        "Previous conversation (context only — answer the CURRENT question; "
+        "do not mix in unrelated earlier topics unless asked):"
+    ]
+    for msg in trimmed:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        content = (msg.get("content") or "").strip()
+        if len(content) > max_chars:
+            content = content[: max_chars - 3].rstrip() + "..."
+        lines.append(f"{role}: {content}")
     return "\n".join(lines)
 
 
@@ -275,6 +284,52 @@ def is_greeting(question: str) -> bool:
     return question.lower().strip().rstrip("!?.") in greetings
 
 
+def is_capability_question(question: str) -> bool:
+    """True for product/capability questions that must not drift into document RAG."""
+    q = (question or "").lower().strip()
+    if not q:
+        return False
+    if is_greeting(q):
+        return True
+    markers = (
+        "what can you do",
+        "what genova can",
+        "what you can help",
+        "how can you help",
+        "list what you can do",
+        "when no pdf",
+        "when no document",
+        "no pdf is attached",
+        "no document is attached",
+        "without relying on a specific attachment",
+        "briefly say what genova",
+        "who are you",
+    )
+    return any(m in q for m in markers)
+
+
+def is_chat_memory_question(question: str) -> bool:
+    """True when the user asks to answer from chat memory / this session only."""
+    q = (question or "").lower().strip()
+    if not q:
+        return False
+    markers = (
+        "from memory of this chat",
+        "from memory of this session",
+        "from this chat session",
+        "from our conversation",
+        "from the conversation",
+        "from chat history",
+        "with no documents attached",
+        "with no document attached",
+        "no documents attached",
+        "no document attached",
+        "without any document",
+        "without a document attached",
+    )
+    return any(m in q for m in markers)
+
+
 def _maybe_quiz_intent(question: str, document_id: Optional[str], document_ids: Optional[List[str]]):
     """Return QuizIntent when the user asks for an interactive quiz."""
     from app.rag.utils.quiz import parse_quiz_intent
@@ -282,6 +337,179 @@ def _maybe_quiz_intent(question: str, document_id: Optional[str], document_ids: 
     return parse_quiz_intent(
         question,
         has_document=bool(document_id or document_ids),
+    )
+
+
+def _unique_document_ids(document_ids: Optional[List[str]]) -> List[str]:
+    """Preserve order while dropping empty / duplicate IDs."""
+    unique: List[str] = []
+    seen = set()
+    for raw in document_ids or []:
+        doc_id = str(raw) if raw is not None else ""
+        if doc_id and doc_id not in seen:
+            seen.add(doc_id)
+            unique.append(doc_id)
+    return unique
+
+
+def _is_summarize_attached_intent(question: str) -> bool:
+    """True for summarize / list / what-are-these-docs style questions."""
+    q = (question or "").lower().strip()
+    if not q:
+        return False
+    markers = (
+        "summarize",
+        "summarise",
+        "summary",
+        "overview of",
+        "what are these",
+        "what are the documents",
+        "what documents",
+        "list the documents",
+        "list attached",
+        "list the attached",
+        "documents attached",
+        "all attached",
+        "all the attached",
+        "tell me about these",
+        "tell me about the documents",
+        "what's attached",
+        "whats attached",
+        "which documents",
+        "attached pdfs",
+        "attached documents",
+    )
+    return any(marker in q for marker in markers)
+
+
+def _load_attached_document_rows(user_id: str, document_ids: List[str]) -> List[Dict[str, Any]]:
+    """Load filename + stored summary for each attached document ID."""
+    if not document_ids:
+        return []
+    try:
+        from app.database import SessionLocal
+        from app.models import Document
+
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(Document)
+                .filter(Document.user_id == user_id, Document.id.in_(document_ids))
+                .all()
+            )
+            by_id = {str(row.id): row for row in rows}
+            out: List[Dict[str, Any]] = []
+            for doc_id in document_ids:
+                row = by_id.get(doc_id)
+                if not row:
+                    continue
+                out.append(
+                    {
+                        "id": doc_id,
+                        "filename": row.original_name or "document",
+                        "summary": (row.summary or "").strip(),
+                    }
+                )
+            return out
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("Failed loading attached document summaries: %s", exc)
+        return []
+
+
+def _build_attached_summarize_context(
+    question: str,
+    user_id: str,
+    document_ids: List[str],
+) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
+    """Build per-doc summary context for summarize/list-attached intents.
+
+    Returns ``(context, sources)`` or ``None`` when intent does not apply.
+    Falls back to 1–2 retrieved chunks per doc when ``Document.summary`` is empty.
+    """
+    if len(document_ids) < 1 or not _is_summarize_attached_intent(question):
+        return None
+
+    docs = _load_attached_document_rows(user_id, document_ids)
+    if not docs:
+        return None
+
+    parts: List[str] = []
+    sources: List[Dict[str, Any]] = []
+    for i, doc in enumerate(docs, start=1):
+        filename = doc["filename"]
+        summary = doc["summary"]
+        if not summary:
+            fallback = retrieve(
+                query=question,
+                user_id=user_id,
+                document_id=doc["id"],
+                document_ids=None,
+                top_k=2,
+            )
+            if fallback:
+                summary = "\n".join(
+                    (c.get("text") or "").strip() for c in fallback if c.get("text")
+                ).strip()
+                for chunk in fallback:
+                    sources.append(
+                        {
+                            "text": chunk["text"][:300]
+                            + ("..." if len(chunk["text"]) > 300 else ""),
+                            "filename": chunk.get("filename", filename),
+                            "page": chunk.get("page", "?"),
+                            "score": chunk.get("score", 0),
+                            "confidence": chunk.get("confidence", 0),
+                            "bbox": chunk.get("bbox", ""),
+                        }
+                    )
+            else:
+                summary = "(No stored summary or retrievable chunks for this document.)"
+
+        if not any(s.get("filename") == filename for s in sources):
+            preview = summary[:300] + ("..." if len(summary) > 300 else "")
+            sources.append(
+                {
+                    "text": preview,
+                    "filename": filename,
+                    # SourceChunk.page is int — use 0 for stored-summary citations.
+                    "page": 0,
+                    "score": 1.0,
+                    "confidence": 100.0,
+                    "bbox": "",
+                }
+            )
+
+        parts.append(
+            f"[{i}] Document: {filename}\n"
+            f"Stored summary / excerpt:\n{summary}"
+        )
+
+    header = (
+        "The user asked to summarize or list the attached documents. "
+        "Produce a structured overview that covers EVERY document below by filename. "
+        "Do not omit any document.\n\n"
+    )
+    return header + "\n\n".join(parts), sources
+
+
+def _multi_doc_prompt_prefix(document_ids: Optional[List[str]], chunks: List[Dict[str, Any]]) -> str:
+    """Light nudge so multi-attach answers cover each filename."""
+    unique = _unique_document_ids(document_ids)
+    if len(unique) <= 1:
+        return ""
+    names = []
+    seen = set()
+    for chunk in chunks:
+        name = chunk.get("filename")
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    name_line = ", ".join(names) if names else f"{len(unique)} attached documents"
+    return (
+        MULTI_DOC_COMPARISON_GUIDANCE.strip()
+        + f"\nCover each attached document ({name_line}) when the question is broad.\n\n"
     )
 
 
@@ -315,6 +543,13 @@ def _format_context(chunks: List[Dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+def _coerce_source_page(page: Any) -> int:
+    try:
+        return int(page)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _sources_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Map retrieve chunks → citation payloads for the UI (text truncated to 300).
 
@@ -333,13 +568,101 @@ def _sources_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         {
             "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
             "filename": chunk["filename"],
-            "page": chunk["page"],
-            "score": chunk["score"],
-            "confidence": chunk.get("confidence", 0),
-            "bbox": chunk.get("bbox", ""),
+            "page": _coerce_source_page(chunk.get("page")),
+            "score": float(chunk.get("score") or 0),
+            "confidence": float(chunk.get("confidence") or 0),
+            "bbox": chunk.get("bbox", "") or "",
         }
         for chunk in chunks
     ]
+
+
+def _capability_answer(
+    question: str,
+    *,
+    llm_provider: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Answer product/capability questions without retrieving documents."""
+    provider = normalize_llm_provider(llm_provider)
+    client = get_llm_client(llm_provider=provider)
+    try:
+        response = client.chat_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Document AI Analyst for Genova. Answer briefly about "
+                        "product capabilities only. Do not discuss medical drugs, "
+                        "doses, invoices, or any document content."
+                    ),
+                },
+                {"role": "user", "content": GREETING_PROMPT.format(question=question)},
+            ],
+            model=llm_model_for_provider(provider),
+            max_tokens=256,
+            temperature=settings.LLM_TEMPERATURE,
+        )
+        answer = ""
+        if response and getattr(response, "choices", None):
+            answer = (response.choices[0].message.content or "").strip()
+    except Exception:
+        answer = ""
+    if not answer:
+        answer = (
+            "I can help you upload and analyze PDFs, answer questions with citations, "
+            "summarize documents, and generate interactive quizzes. Attach a PDF to "
+            "ground answers in that file."
+        )
+    result: Dict[str, Any] = {"answer": answer, "sources": []}
+    usage = getattr(client, "last_usage", None)
+    if isinstance(usage, dict) and usage:
+        result["usage"] = usage
+    return result
+
+
+def _chat_memory_answer(
+    question: str,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    *,
+    llm_provider: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Answer from chat history only — no corpus retrieval / no document sources."""
+    provider = normalize_llm_provider(llm_provider)
+    client = get_llm_client(llm_provider=provider)
+    history = _format_chat_history(chat_history) if chat_history else ""
+    user_prompt = (
+        "No PDF is attached. Answer ONLY from the conversation history below. "
+        "Do not invent document facts. If the history is insufficient, say you "
+        "cannot determine the answer from this chat alone.\n\n"
+        f"{history or '(No prior conversation.)'}\n\n"
+        f"Current question: {question}\n\nAnswer:"
+    )
+    response = client.chat_completion(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are Document AI Analyst. Use only the provided chat history. "
+                    "Never retrieve or invent document contents. Do not cite PDF filenames "
+                    "unless they appear in the chat history."
+                ),
+            },
+            {"role": "user", "content": user_prompt},
+        ],
+        model=llm_model_for_provider(provider),
+        max_tokens=settings.LLM_MAX_NEW_TOKENS,
+        temperature=settings.LLM_TEMPERATURE,
+    )
+    answer = ""
+    if response and getattr(response, "choices", None):
+        answer = (response.choices[0].message.content or "").strip()
+    if not answer:
+        answer = MALFORMED_OUTPUT_MESSAGE
+    result: Dict[str, Any] = {"answer": answer, "sources": []}
+    usage = getattr(client, "last_usage", None)
+    if isinstance(usage, dict) and usage:
+        result["usage"] = usage
+    return result
 
 
 def _generate_answer_direct(
@@ -377,24 +700,41 @@ def _generate_answer_direct(
       "No. The label recommends 150 mg or 300 mg SC every 4 weeks for CSU,
        not every 2 weeks. [Source: xolair_prescribing.pdf, Page 9]"
     """
-    chunks = retrieve(
-        query=question,
-        user_id=user_id,
-        document_id=document_id,
-        document_ids=document_ids,
-        top_k=top_k or settings.TOP_K_RERANK,
-    )
-    sources = _sources_from_chunks(chunks)
-    if not chunks:
-        return {
-            "answer": (
-                "I couldn't find sufficient information in the uploaded documents "
-                "to answer this question."
-            ),
-            "sources": [],
-        }
+    has_attach = bool(document_id or _unique_document_ids(document_ids))
+    if not has_attach and is_capability_question(question):
+        return _capability_answer(question, llm_provider=llm_provider)
+    if not has_attach and is_chat_memory_question(question):
+        return _chat_memory_answer(
+            question, chat_history, llm_provider=llm_provider
+        )
 
-    context = _format_context(chunks)
+    attach_ids = _unique_document_ids(document_ids)
+    summarize_pack = (
+        _build_attached_summarize_context(question, user_id, attach_ids)
+        if attach_ids
+        else None
+    )
+    if summarize_pack:
+        context, sources = summarize_pack
+    else:
+        chunks = retrieve(
+            query=question,
+            user_id=user_id,
+            document_id=document_id,
+            document_ids=document_ids,
+            top_k=top_k or settings.TOP_K_RERANK,
+        )
+        sources = _sources_from_chunks(chunks)
+        if not chunks:
+            return {
+                "answer": (
+                    "I couldn't find sufficient information in the uploaded documents "
+                    "to answer this question."
+                ),
+                "sources": [],
+            }
+        context = _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
+
     user_prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)
     history = _format_chat_history(chat_history) if chat_history else ""
     if history:
@@ -453,27 +793,55 @@ def _generate_answer_stream_direct(
     ...
     data: {"type":"done"}
     """
-    yield f"data: {json.dumps({'type': 'status', 'data': 'retrieving'})}\n\n"
-    chunks = retrieve(
-        query=question,
-        user_id=user_id,
-        document_id=document_id,
-        document_ids=document_ids,
-        top_k=top_k or settings.TOP_K_RERANK,
-    )
-    sources = _sources_from_chunks(chunks)
-    yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
-
-    if not chunks:
-        msg = (
-            "I couldn't find sufficient information in the uploaded documents "
-            "to answer this question."
+    has_attach = bool(document_id or _unique_document_ids(document_ids))
+    if not has_attach and (
+        is_capability_question(question) or is_chat_memory_question(question)
+    ):
+        result = (
+            _capability_answer(question, llm_provider=llm_provider)
+            if is_capability_question(question)
+            else _chat_memory_answer(
+                question, chat_history, llm_provider=llm_provider
+            )
         )
-        yield f"data: {json.dumps({'type': 'token', 'data': msg})}\n\n"
+        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
+        yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer') or ''})}\n\n"
+        usage = result.get("usage")
+        if isinstance(usage, dict) and usage:
+            yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
-    context = _format_context(chunks)
+    yield f"data: {json.dumps({'type': 'status', 'data': 'retrieving'})}\n\n"
+    attach_ids = _unique_document_ids(document_ids)
+    summarize_pack = (
+        _build_attached_summarize_context(question, user_id, attach_ids)
+        if attach_ids
+        else None
+    )
+    if summarize_pack:
+        context, sources = summarize_pack
+    else:
+        chunks = retrieve(
+            query=question,
+            user_id=user_id,
+            document_id=document_id,
+            document_ids=document_ids,
+            top_k=top_k or settings.TOP_K_RERANK,
+        )
+        sources = _sources_from_chunks(chunks)
+        if not chunks:
+            msg = (
+                "I couldn't find sufficient information in the uploaded documents "
+                "to answer this question."
+            )
+            yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'data': msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+        context = _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
+
+    yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
     user_prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)
     history = _format_chat_history(chat_history) if chat_history else ""
     if history:
@@ -568,27 +936,13 @@ def generate_answer(
             logger.error("Quiz generation error: %s", e)
             raise ExternalServiceException("Quiz", str(e)) from e
 
-    # ── Handle greetings ─────────────────────────────
-    if is_greeting(question):
-        client = get_llm_client(hf_token, llm_provider=provider)
-        try:
-            messages = [
-                {"role": "system", "content": "You are Document AI Analyst, a friendly AI assistant."},
-                {"role": "user", "content": question},
-            ]
-            response = client.chat_completion(
-                messages=messages,
-                model=llm_model_for_provider(provider),
-                max_tokens=256,
-            )
-            answer = response.choices[0].message.content.strip() if response.choices else "Hello! How can I help you today?"
-        except Exception:
-            answer = "Hello! I'm Document AI Analyst. How can I help you with your documents?"
-        result = {"answer": answer, "sources": []}
-        usage = getattr(client, "last_usage", None)
-        if isinstance(usage, dict) and usage:
-            result["usage"] = usage
-        return result
+    # ── Handle greetings / capability (no document retrieve) ─────────────────
+    if is_capability_question(question) and not (document_id or document_ids):
+        return _capability_answer(question, llm_provider=provider)
+    if is_chat_memory_question(question) and not (document_id or document_ids):
+        return _chat_memory_answer(
+            question, chat_history, llm_provider=provider
+        )
 
     # Local Ollama / Bedrock: direct retrieve-then-generate
     if provider in {"ollama", "bedrock"} or (
@@ -700,25 +1054,20 @@ def generate_answer_stream(
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
-    # ── Handle greetings ─────────────────────────────
-    if is_greeting(question):
+    # ── Handle greetings / capability / chat-memory (no document retrieve) ───
+    if not (document_id or document_ids) and (
+        is_capability_question(question) or is_chat_memory_question(question)
+    ):
+        result = (
+            _capability_answer(question, llm_provider=provider)
+            if is_capability_question(question)
+            else _chat_memory_answer(question, chat_history, llm_provider=provider)
+        )
         yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
-        client = get_llm_client(hf_token, llm_provider=provider)
-        try:
-            stream = client.chat_completion(
-                messages=[{"role": "user", "content": question}],
-                model=llm_model_for_provider(provider),
-                max_tokens=256,
-                stream=True,
-            )
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield f"data: {json.dumps({'type': 'token', 'data': chunk.choices[0].delta.content})}\n\n"
-            usage = getattr(client, "last_usage", None)
-            if isinstance(usage, dict) and usage:
-                yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer') or ''})}\n\n"
+        usage = result.get("usage")
+        if isinstance(usage, dict) and usage:
+            yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 

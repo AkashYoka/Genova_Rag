@@ -64,6 +64,11 @@ export interface QuizPayload {
   state?: QuizState;
 }
 
+export interface AttachedDocument {
+  id: string;
+  filename: string;
+}
+
 export interface ChatMsg {
   branch_id?: string;
   parent_message_id?: string;
@@ -71,6 +76,7 @@ export interface ChatMsg {
   role: "user" | "assistant";
   content: string;
   sources: SourceChunk[];
+  attachments?: AttachedDocument[];
   feedback?: "up" | "down" | null;
   isStreaming?: boolean;
   response_time_ms?: number;

@@ -408,11 +408,22 @@ export default function MessageBubble({ message }: Props) {
           </>
         )}
 
-        <div
-          className={`flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground ${
-            isUser ? "justify-end" : "justify-end"
-          }`}
-        >
+        <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground justify-end">
+          {isUser &&
+            message.attachments &&
+            message.attachments.length > 0 &&
+            message.attachments.map((doc) => (
+              <span
+                key={doc.id}
+                className={cn(
+                  "inline-flex max-w-[10rem] truncate rounded-md border px-1.5 py-0.5 text-[10px]",
+                  "border-primary-foreground/25 bg-primary-foreground/10 text-primary-foreground/90",
+                )}
+                title={doc.filename}
+              >
+                {doc.filename}
+              </span>
+            ))}
           {messageTime && (
             <div title={messageTime.toLocaleString()}>
               {formatDistanceToNow(messageTime, { addSuffix: true })}

@@ -108,3 +108,42 @@ def test_documentless_query_cache_is_isolated_per_user():
 
     # The original user still gets their own cached answer back.
     assert cache_module.get_cached_response("user-a", "", "summarize the key points") == "User A's private summary"
+
+
+def test_cached_sources_roundtrip():
+    """Cached responses keep citation sources alongside the answer text."""
+    import json
+
+    sources = [
+        {
+            "text": "dose 150 mg",
+            "filename": "xolair_prescribing.pdf",
+            "page": 20,
+            "score": 0.9,
+            "confidence": 100.0,
+            "bbox": "",
+        }
+    ]
+    cache_module.set_cached_response(
+        "user1",
+        "doc1",
+        "What dose?",
+        "150 mg every 4 weeks",
+        sources=sources,
+    )
+    assert cache_module.get_cached_response("user1", "doc1", "What dose?") == "150 mg every 4 weeks"
+    payload = cache_module.get_cached_payload("user1", "doc1", "What dose?")
+    assert payload is not None
+    assert payload["sources"][0]["filename"] == "xolair_prescribing.pdf"
+    assert payload["sources"][0]["page"] == 20
+
+
+def test_legacy_string_cache_still_decodes():
+    """Old cache entries that stored a bare JSON string remain readable."""
+    import json
+
+    key = cache_module.make_cache_key("user1", "doc1", "legacy?")
+    cache_module._lru_set(key, json.dumps("legacy answer only"))
+    assert cache_module.get_cached_response("user1", "doc1", "legacy?") == "legacy answer only"
+    payload = cache_module.get_cached_payload("user1", "doc1", "legacy?")
+    assert payload == {"answer": "legacy answer only", "sources": []}

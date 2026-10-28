@@ -37,6 +37,8 @@ def test_parse_question_count_defaults_and_custom():
     assert parse_question_count("quiz me") == DEFAULT_QUESTION_COUNT
     assert parse_question_count("quiz me with 8 questions") == 8
     assert parse_question_count("give me 10 mcqs") == 10
+    assert parse_question_count("Make a 3-question interactive quiz") == 3
+    assert parse_question_count("Create an interactive quiz with 4 questions") == 4
     assert clamp_question_count(100) == 15
     assert clamp_question_count(0) == 1
 

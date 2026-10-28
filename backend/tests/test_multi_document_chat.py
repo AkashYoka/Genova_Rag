@@ -16,7 +16,8 @@ def _mock_db(monkeypatch, doc_rows):
 
 
 def test_retrieve_forwards_document_ids_to_vector_and_bm25(monkeypatch):
-    _mock_db(monkeypatch, [("doc-a",), ("doc-b",)])
+    """Single document_ids list (len==1) still forwards as a filter list."""
+    _mock_db(monkeypatch, [("doc-a",)])
 
     seen = {"vector": "unset", "bm25": "unset"}
 
@@ -35,12 +36,48 @@ def test_retrieve_forwards_document_ids_to_vector_and_bm25(monkeypatch):
     monkeypatch.setattr(retriever, "query_chunks", fake_query_chunks)
     monkeypatch.setattr("app.rag.retrieval.bm25.query_bm25", fake_query_bm25)
 
-    retriever.retrieve("question", user_id="user-1", document_ids=["doc-a", "doc-b"])
+    retriever.retrieve("question", user_id="user-1", document_ids=["doc-a"])
 
-    assert seen["vector"] == ["doc-a", "doc-b"]
-    # bm25 only runs when hybrid search is enabled; if it ran, it must have received the ids
+    assert seen["vector"] == ["doc-a"]
     if seen["bm25"] != "unset":
-        assert seen["bm25"] == ["doc-a", "doc-b"]
+        assert seen["bm25"] == ["doc-a"]
+
+
+def test_retrieve_multi_doc_fetches_per_document(monkeypatch):
+    """2+ document_ids → per-doc retrieve so each PDF can contribute."""
+    _mock_db(monkeypatch, [("doc-a",), ("doc-b",)])
+
+    seen_ids = []
+
+    monkeypatch.setattr(retriever, "transform_query", lambda _q: ["q"])
+    monkeypatch.setattr(retriever, "embed_query", lambda q: f"embedding:{q}")
+    monkeypatch.setattr(retriever, "get_reranker", lambda: None)
+
+    def fake_query_chunks(query_embedding, user_id, document_id=None, document_ids=None, top_k=10):
+        seen_ids.append(document_id)
+        return [
+            {
+                "id": f"chunk-{document_id}",
+                "text": f"text for {document_id}",
+                "filename": f"{document_id}.pdf",
+                "page": 1,
+                "score": 0.9 if document_id == "doc-a" else 0.1,
+                "document_id": document_id,
+            }
+        ]
+
+    monkeypatch.setattr(retriever, "query_chunks", fake_query_chunks)
+    monkeypatch.setattr(retriever.settings, "USE_HYBRID_SEARCH", False)
+
+    results = retriever.retrieve(
+        "summarize",
+        user_id="user-1",
+        document_ids=["doc-a", "doc-b"],
+    )
+
+    assert seen_ids == ["doc-a", "doc-b"]
+    result_docs = {c.get("document_id") for c in results}
+    assert result_docs == {"doc-a", "doc-b"}
 
 
 def test_retrieve_single_document_leaves_document_ids_none(monkeypatch):
@@ -63,6 +100,72 @@ def test_retrieve_single_document_leaves_document_ids_none(monkeypatch):
 
     assert seen["vector_id"] == "doc-a"
     assert seen["vector_ids"] is None
+
+
+# ── Summarize-attached intent uses Document.summary ──
+
+def test_summarize_attached_uses_document_summaries(monkeypatch):
+    from app.rag.llm import agent
+
+    docs = [
+        {"id": "inv", "filename": "invoice.pdf", "summary": "Invoice for $42 from Acme."},
+        {"id": "chem", "filename": "chemistry-text.pdf", "summary": "OpenStax chemistry overview."},
+        {"id": "math", "filename": "math-calculus.pdf", "summary": "Calculus textbook front matter."},
+    ]
+    monkeypatch.setattr(agent, "_load_attached_document_rows", lambda user_id, ids: docs)
+
+    called_retrieve = {"n": 0}
+
+    def boom(*a, **k):
+        called_retrieve["n"] += 1
+        raise AssertionError("retrieve should not run when summaries exist")
+
+    monkeypatch.setattr(agent, "retrieve", boom)
+
+    class FakeChoice:
+        def __init__(self, content):
+            self.message = MagicMock(content=content)
+
+    class FakeResp:
+        choices = [FakeChoice(
+            "1. invoice.pdf — Invoice for $42 from Acme.\n"
+            "2. chemistry-text.pdf — OpenStax chemistry overview.\n"
+            "3. math-calculus.pdf — Calculus textbook front matter."
+        )]
+
+    class FakeClient:
+        last_usage = None
+
+        def chat_completion(self, **kwargs):
+            prompt = kwargs["messages"][1]["content"]
+            assert "invoice.pdf" in prompt
+            assert "chemistry-text.pdf" in prompt
+            assert "math-calculus.pdf" in prompt
+            assert "Invoice for $42" in prompt
+            return FakeResp()
+
+    monkeypatch.setattr(agent, "get_llm_client", lambda llm_provider=None: FakeClient())
+
+    result = agent._generate_answer_direct(
+        question="summarize all attached",
+        user_id="user-1",
+        document_ids=["inv", "chem", "math"],
+    )
+
+    assert called_retrieve["n"] == 0
+    assert "invoice.pdf" in result["answer"]
+    assert "chemistry-text.pdf" in result["answer"]
+    assert "math-calculus.pdf" in result["answer"]
+    filenames = {s["filename"] for s in result["sources"]}
+    assert filenames == {"invoice.pdf", "chemistry-text.pdf", "math-calculus.pdf"}
+
+
+def test_is_summarize_attached_intent_markers():
+    from app.rag.llm.agent import _is_summarize_attached_intent
+
+    assert _is_summarize_attached_intent("Please summarize all attached documents")
+    assert _is_summarize_attached_intent("what are these documents?")
+    assert not _is_summarize_attached_intent("What dose does the invoice list?")
 
 
 # ── Prompt: comparison guidance only when more than one document ──
