@@ -1,6 +1,6 @@
 import pytest
 import os
-from app.rag import bm25
+from app.rag.retrieval import bm25
 
 def test_tokenize():
     # Test that punctuation is stripped and tokens are lowercased

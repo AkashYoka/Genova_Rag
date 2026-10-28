@@ -27,7 +27,7 @@ def _hard_delete_document(db, doc):
     name = doc.original_name
 
     try:
-        from app.rag.vectorstore import delete_document_chunks
+        from app.rag.vectordb.vectorstore import delete_document_chunks
         delete_document_chunks(document_id=doc_id, user_id=user_id)
     except Exception as e:
         logger.warning("Cleanup: error deleting vectors for %s: %s", doc_id, e)

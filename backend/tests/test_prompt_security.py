@@ -1,6 +1,6 @@
 import pytest
 
-from app.rag.security import (
+from app.rag.utils.security import (
     OutputParserError,
     UnsafePromptError,
     classify_user_input,

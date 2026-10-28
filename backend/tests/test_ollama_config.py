@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.config import Settings, get_settings
-from app.rag.ollama_client import (
+from app.rag.llm.ollama_client import (
     OllamaChatClient,
     OllamaEmbeddings,
     check_ollama_model,
@@ -48,7 +48,7 @@ def test_huggingface_provider_still_requires_token_semantics(monkeypatch):
     monkeypatch.setenv("HF_TOKEN", "")
     get_settings.cache_clear()
     try:
-        from app.rag import agent as agent_mod
+        from app.rag.llm import agent as agent_mod
 
         # Reload settings on the module
         agent_mod.settings = Settings()
@@ -56,12 +56,12 @@ def test_huggingface_provider_still_requires_token_semantics(monkeypatch):
             agent_mod.get_llm_client()
     finally:
         get_settings.cache_clear()
-        from app.rag import agent as agent_mod
+        from app.rag.llm import agent as agent_mod
         agent_mod.settings = get_settings()
 
 
 def test_check_ollama_reachable_error_message():
-    with patch("app.rag.ollama_client.httpx.Client") as mock_client_cls:
+    with patch("app.rag.llm.ollama_client.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
         mock_client.__exit__.return_value = None
@@ -79,7 +79,7 @@ def test_check_ollama_reachable_error_message():
 def test_check_ollama_model_missing():
     import httpx
 
-    with patch("app.rag.ollama_client.httpx.Client") as mock_client_cls:
+    with patch("app.rag.llm.ollama_client.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
         mock_client.__exit__.return_value = None
@@ -105,7 +105,7 @@ def test_ollama_embeddings_calls_api():
     emb = OllamaEmbeddings(model="nomic-embed-text", base_url="http://localhost:11434")
     fake_vector = [0.1] * 768
 
-    with patch("app.rag.ollama_client.httpx.Client") as mock_client_cls:
+    with patch("app.rag.llm.ollama_client.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
         mock_client.__exit__.return_value = None
@@ -130,7 +130,7 @@ def test_ollama_embeddings_calls_api():
 def test_ollama_chat_client_non_stream():
     client = OllamaChatClient(base_url="http://localhost:11434", model="qwen2.5:3b")
 
-    with patch("app.rag.ollama_client.httpx.Client") as mock_client_cls:
+    with patch("app.rag.llm.ollama_client.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
         mock_client.__exit__.return_value = None
@@ -152,7 +152,7 @@ def test_ollama_chat_client_non_stream():
 
 def test_ollama_direct_rag_uses_retrieve_and_sources(monkeypatch):
     """Ollama path should retrieve first (not ReAct) and return citations."""
-    from app.rag import agent as agent_mod
+    from app.rag.llm import agent as agent_mod
 
     monkeypatch.setattr(agent_mod.settings, "LLM_PROVIDER", "ollama")
     monkeypatch.setattr(agent_mod.settings, "LLM_MODEL", "qwen2.5:3b")
@@ -174,7 +174,7 @@ def test_ollama_direct_rag_uses_retrieve_and_sources(monkeypatch):
             )
 
     monkeypatch.setattr(agent_mod, "retrieve", lambda **kwargs: fake_chunks)
-    monkeypatch.setattr(agent_mod, "get_llm_client", lambda hf_token=None: FakeClient())
+    monkeypatch.setattr(agent_mod, "get_llm_client", lambda hf_token=None, llm_provider=None: FakeClient())
     monkeypatch.setattr(agent_mod, "get_agent_executor", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ReAct should not run")))
 
     result = agent_mod.generate_answer("What is the capital of Averia?", "user1", "doc1")

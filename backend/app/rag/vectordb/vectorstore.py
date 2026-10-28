@@ -124,7 +124,7 @@ def store_chunks(
     delete_document_chunks(document_id, user_id)
 
     # Build and store BM25 index
-    from app.rag.bm25 import store_bm25_index
+    from app.rag.retrieval.bm25 import store_bm25_index
     try:
         store_bm25_index(chunks, document_id, filename, user_id)
     except Exception as e:
@@ -132,14 +132,14 @@ def store_chunks(
 
     # Generate captions for any extracted images before embedding
     try:
-        from app.rag.vision import generate_captions_for_chunks
+        from app.rag.ingestion.vision import generate_captions_for_chunks
 
         generate_captions_for_chunks(chunks)
     except Exception as e:
         logger.warning(f"Could not generate image captions: {e}")
 
     client = get_chroma_client()
-    from app.rag.embeddings import get_embedding_model
+    from app.rag.embeddings.embeddings import get_embedding_model
 
     embedding_model = get_embedding_model()
 
@@ -308,7 +308,7 @@ def delete_document_chunks(document_id: str, user_id: str):
     collection_name = get_collection_name(user_id)
 
     try:
-        from app.rag.bm25 import delete_bm25_index
+        from app.rag.retrieval.bm25 import delete_bm25_index
         delete_bm25_index(document_id, user_id)
     except Exception as e:
         logger.warning(f"Error deleting BM25 index: {e}")
@@ -333,7 +333,7 @@ def delete_user_collection(user_id: str):
     collection_name = get_collection_name(user_id)
 
     try:
-        from app.rag.bm25 import delete_user_bm25_indexes
+        from app.rag.retrieval.bm25 import delete_user_bm25_indexes
         delete_user_bm25_indexes(user_id)
     except Exception as e:
         logger.warning(f"Error deleting user BM25 indexes: {e}")

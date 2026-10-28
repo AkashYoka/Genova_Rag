@@ -1,7 +1,7 @@
 import pytest
 
-from app.rag import tools
-from app.rag.tools import (
+from app.rag.utils import tools
+from app.rag.utils.tools import (
     CALCULATOR_TOOL,
     TOOLS,
     WEB_SEARCH_TOOL,

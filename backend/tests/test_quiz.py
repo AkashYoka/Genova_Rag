@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.rag.quiz import (
+from app.rag.utils.quiz import (
     DEFAULT_QUESTION_COUNT,
     _normalize_quiz_payload,
     clamp_question_count,
@@ -94,6 +94,70 @@ def test_normalize_quiz_payload_filters_invalid():
     assert quiz["state"]["completed"] is False
 
 
+def _fake_mcq(n: int, prefix: str = "Q") -> dict:
+    return {
+        "title": "Batch",
+        "questions": [
+            {
+                "question": f"{prefix}{i} about limits?",
+                "options": [
+                    {"id": "a", "text": "A"},
+                    {"id": "b", "text": "B"},
+                    {"id": "c", "text": "C"},
+                    {"id": "d", "text": "D"},
+                ],
+                "correct_option_id": "a",
+                "explanation": "From the text.",
+                "source": {"filename": "math.pdf", "page": i},
+            }
+            for i in range(1, n + 1)
+        ],
+    }
+
+
+def test_generate_quiz_response_batches_to_requested_count(monkeypatch):
+    """Asking for 6 must not stop at the old hard-coded retry of 3."""
+    from app.rag.utils import quiz as quiz_mod
+
+    calls: list[int] = []
+
+    def fake_llm_json(*, system, user, llm_provider, max_tokens=3072):
+        # Read requested count from the prompt template line.
+        import re as _re
+
+        m = _re.search(r"Requested question count:\s*(\d+)", user)
+        n = int(m.group(1)) if m else 3
+        calls.append(n)
+        # Return exactly the asked batch size with unique stems.
+        stem = f"batch{len(calls)}"
+        return _fake_mcq(n, prefix=stem)
+
+    monkeypatch.setattr(quiz_mod, "_llm_json", fake_llm_json)
+    monkeypatch.setattr(
+        quiz_mod,
+        "_build_source_material",
+        lambda *a, **k: (
+            "Limits and derivatives appear throughout the chapter. " * 20,
+            [{"filename": "math.pdf", "page": 1}],
+            "",
+        ),
+    )
+
+    result = quiz_mod.generate_quiz_response(
+        "Quiz me on this PDF with 6 questions about limits, derivatives, and integrals",
+        "user-1",
+        document_id="doc-1",
+        llm_provider="ollama",
+    )
+    quiz = result["quiz"]
+    assert quiz is not None
+    assert len(quiz["questions"]) == 6
+    assert "6-question" in result["answer"]
+    # First batch of 3, then a fill batch of 3.
+    assert calls[0] == 3
+    assert sum(calls) >= 6
+
+
 def test_generate_quiz_stream_emits_quiz_event():
     fake_quiz = {
         "id": "quiz-1",
@@ -118,7 +182,7 @@ def test_generate_quiz_stream_emits_quiz_event():
     }
 
     with patch(
-        "app.rag.quiz.generate_quiz_response",
+        "app.rag.utils.quiz.generate_quiz_response",
         return_value={
             "answer": "Here's a quiz.",
             "sources": [],
@@ -140,7 +204,7 @@ def test_generate_quiz_stream_emits_quiz_event():
 
 
 def test_agent_routes_quiz_before_rag(monkeypatch):
-    from app.rag import agent
+    from app.rag.llm import agent
 
     called = {"quiz": False, "direct": False}
 
@@ -152,7 +216,7 @@ def test_agent_routes_quiz_before_rag(monkeypatch):
         called["direct"] = True
         return {"answer": "rag", "sources": []}
 
-    monkeypatch.setattr("app.rag.quiz.generate_quiz_response", fake_quiz_response)
+    monkeypatch.setattr("app.rag.utils.quiz.generate_quiz_response", fake_quiz_response)
     monkeypatch.setattr(agent, "_generate_answer_direct", fake_direct)
 
     result = agent.generate_answer(

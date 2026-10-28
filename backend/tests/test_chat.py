@@ -99,8 +99,8 @@ def test_chat_stream_blocks_prompt_injection_before_generation(client, auth_head
 
 
 def test_agent_dynamic_token(monkeypatch):
-    from app.rag.agent import generate_answer
-    import app.rag.agent
+    from app.rag.llm.agent import generate_answer
+    import app.rag.llm.agent
 
     called_with_token = None
 
@@ -114,10 +114,10 @@ def test_agent_dynamic_token(monkeypatch):
                 choices = []
             return MockResponse()
 
-    # Mock the InferenceClient in app.rag.agent
-    monkeypatch.setattr(app.rag.agent, "InferenceClient", MockInferenceClient)
+    # InferenceClient is imported inside get_llm_client; patch the source module.
+    monkeypatch.setattr("huggingface_hub.InferenceClient", MockInferenceClient)
     # Mock retrieval to return empty chunks
-    monkeypatch.setattr("app.rag.agent.retrieve", lambda **kwargs: [])
+    monkeypatch.setattr("app.rag.llm.agent.retrieve", lambda **kwargs: [])
 
     # Test with custom token
     generate_answer(question="hello?", user_id="some-user", hf_token="my-custom-hf-token")

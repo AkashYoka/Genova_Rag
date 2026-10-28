@@ -28,7 +28,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.database import SessionLocal  # noqa: E402
 from app.models import Document  # noqa: E402
-from app.rag.vectorstore import delete_document_chunks  # noqa: E402
+from app.rag.vectordb.vectorstore import delete_document_chunks  # noqa: E402
 from app.config import get_settings  # noqa: E402
 
 logger = logging.getLogger("document_cleanup")

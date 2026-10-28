@@ -110,6 +110,7 @@ describe("MessageBubble", () => {
       />,
     );
 
+    // Streaming uses plain text (progressive paint); incomplete math is held back.
     expect(container.querySelector(".katex")).toBeNull();
     expect(container.textContent).toContain("Partial");
     expect(container.textContent).not.toContain("E = mc");
@@ -123,8 +124,20 @@ describe("MessageBubble", () => {
       />,
     );
 
-    expect(container.querySelector(".katex")).not.toBeNull();
+    // Still plain text while streaming — KaTeX runs after isStreaming=false.
+    expect(container.querySelector(".katex")).toBeNull();
     expect(container.textContent).toContain("done.");
+    expect(container.textContent).toContain("E = mc^2");
+
+    rerender(
+      <MessageBubble
+        message={makeMessage({
+          content: "Partial \\(E = mc^2\\) done.",
+          isStreaming: false,
+        })}
+      />,
+    );
+    expect(container.querySelector(".katex")).not.toBeNull();
   });
 
   it("handles malformed LaTeX without crashing the chat", () => {

@@ -29,7 +29,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.database import SessionLocal  # noqa: E402
 from app.models import User  # noqa: E402
-from app.rag.vectorstore import delete_user_collection  # noqa: E402
+from app.rag.vectordb.vectorstore import delete_user_collection  # noqa: E402
 
 logger = logging.getLogger("vector_cleanup")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

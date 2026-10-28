@@ -8,7 +8,7 @@ import builtins
 import importlib
 import inspect
 
-from app.rag import vision
+from app.rag.ingestion import vision
 
 
 class _Boom:

@@ -296,7 +296,8 @@ def run_for_doc(client: httpx.Client, headers: dict, doc: dict) -> dict:
         body.get("_status") == 200
         and has_quiz(body)
         and meta.get("mode") == "document"
-        and 1 <= meta.get("n_questions", 0) <= 6
+        # Batched generation should honor the requested count (allow 1 short).
+        and meta.get("n_questions", 0) >= 5
         and meta.get("options_ok")
         and meta.get("correct_ids_ok"),
         {

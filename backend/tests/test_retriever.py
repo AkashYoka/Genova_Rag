@@ -1,4 +1,4 @@
-from app.rag import retriever
+from app.rag.retrieval import retriever
 
 
 def test_transform_query_includes_original_and_dedupes(monkeypatch):

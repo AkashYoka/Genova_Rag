@@ -16,8 +16,8 @@ from huggingface_hub.inference._generated.types.chat_completion import (
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from app.rag.graph_retriever import get_entity_context
-from app.rag.retriever import retrieve
+from app.rag.retrieval.graph_retriever import get_entity_context
+from app.rag.retrieval.retriever import retrieve
 
 logger = logging.getLogger(__name__)
 

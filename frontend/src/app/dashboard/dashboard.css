@@ -37,20 +37,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Night Ledger — cool steel desk; muted teal data (brand), no brown mud / neon cyan */
 .dark .genova-desk,
 .genova-desk.theme-dark {
-  --gd-ground: #0e1116;
-  --gd-surface: #151920;
-  --gd-raised: #1c222b;
-  --gd-active: #242b35;
-  --gd-border: #232a33;
-  --gd-rule: #1c222b;
-  --gd-text: #f2f4f7;
-  --gd-muted: #a7b0bb;
-  --gd-faint: #88919c;
-  --gd-primary: #f2f4f7;
-  --gd-primary-ink: #0e1116;
-  --gd-data: #3dd6e0;
+  --gd-ground: #0e1218;
+  --gd-surface: #151a22;
+  --gd-raised: #1c2330;
+  --gd-active: #263041;
+  --gd-border: #2a3342;
+  --gd-rule: #1a2029;
+  --gd-text: #e7ecf3;
+  --gd-muted: #8b95a5;
+  --gd-faint: #6a7484;
+  --gd-primary: #e7ecf3;
+  --gd-primary-ink: #0e1218;
+  --gd-data: #4aa8b5;
+  --gd-positive: #5bb87a;
+  --gd-negative: #e07868;
+  --gd-warning: #c9a04a;
 }
 
 .genova-desk .num {

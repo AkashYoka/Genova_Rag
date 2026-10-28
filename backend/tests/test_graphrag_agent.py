@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from app.rag import agent
+from app.rag.llm import agent
 
 
 def test_generate_answer_appends_graph_context_without_changing_sources(monkeypatch):

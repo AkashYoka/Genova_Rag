@@ -20,8 +20,8 @@ load_dotenv(BACKEND_ROOT / ".env")
 
 from app.database import SessionLocal
 from app.models import Document, User, ChatSession, ChatMessage
-from app.rag.agent import generate_answer
-from app.rag.bedrock_client import (
+from app.rag.llm.agent import generate_answer
+from app.rag.llm.bedrock_client import (
     DEFAULT_NOVA_2_LITE_PROFILE,
     NOVA_2_LITE_INPUT_USD_PER_1M,
     NOVA_2_LITE_OUTPUT_USD_PER_1M,

@@ -1,23 +1,23 @@
 import json
 from unittest.mock import MagicMock, patch
 import pytest
-from app.rag.agent import generate_answer, generate_answer_stream
+from app.rag.llm.agent import generate_answer, generate_answer_stream
 
 @pytest.fixture
 def mock_llm_client():
-    with patch("app.rag.agent.get_llm_client") as mock_get:
+    with patch("app.rag.llm.agent.get_llm_client") as mock_get:
         client = MagicMock()
         mock_get.return_value = client
         yield client
 
 @pytest.fixture
 def mock_retriever():
-    with patch("app.rag.agent.retrieve") as mock_retrieve:
+    with patch("app.rag.llm.agent.retrieve") as mock_retrieve:
         yield mock_retrieve
 
 @pytest.fixture
 def mock_agent_executor():
-    with patch("app.rag.agent.get_agent_executor") as mock_get:
+    with patch("app.rag.llm.agent.get_agent_executor") as mock_get:
         executor = MagicMock()
         pdf_tool = MagicMock()
         mock_get.return_value = (executor, pdf_tool, "")

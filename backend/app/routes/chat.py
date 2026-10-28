@@ -2,6 +2,7 @@
 Chat routes — ask questions with RAG, stream responses via SSE, manage history.
 """
 
+import asyncio
 import html
 import json
 import time
@@ -24,7 +25,7 @@ from app.exceptions import (
 from app.metrics import record_query_response_time
 from app.models import User, ChatMessage, Document, SharedMessage, ChatSession
 from app.rate_limit import CHAT_QUERY_RATE_LIMIT, check_chat_ws_rate_limit, limiter
-from app.rag.security import UnsafePromptError, validate_user_input
+from app.rag.utils.security import UnsafePromptError, validate_user_input
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -216,7 +217,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         session_id = payload.get("session_id")
         llm_provider = payload.get("llm_provider")
 
-        from app.rag.security import validate_user_input, UnsafePromptError
+        from app.rag.utils.security import validate_user_input, UnsafePromptError
 
         try:
             validate_user_input(question)
@@ -594,7 +595,7 @@ def generate_answer(
     chat_history: Optional[list] = None,
     llm_provider: Optional[str] = None,
 ):
-    from app.rag.agent import generate_answer as _generate_answer
+    from app.rag.llm.agent import generate_answer as _generate_answer
 
     return _generate_answer(
         question=question,
@@ -618,7 +619,7 @@ def generate_answer_stream(
     chat_history: Optional[list] = None,
     llm_provider: Optional[str] = None,
 ):
-    from app.rag.agent import generate_answer_stream as _generate_answer_stream
+    from app.rag.llm.agent import generate_answer_stream as _generate_answer_stream
 
     return _generate_answer_stream(
         question=question,
@@ -752,7 +753,7 @@ def ask_question(
         if payload.llm_provider:
             cache_question = f"[{payload.llm_provider}] {payload.question}"
         # Never cache quiz intents — failed/partial quiz answers must not sticky-cache.
-        from app.rag.quiz import is_quiz_request
+        from app.rag.utils.quiz import is_quiz_request
 
         quiz_intent_request = is_quiz_request(payload.question)
         # Cache check — return instantly if this (user, document, question) was answered before
@@ -953,7 +954,7 @@ def ask_question_stream(
     _save_message(db, user.id, cache_doc_key, "user", payload.question, session_id=session_id)
 
     # Cache check before starting the stream (skip quiz intents entirely)
-    from app.rag.quiz import is_quiz_request as _is_quiz_request
+    from app.rag.utils.quiz import is_quiz_request as _is_quiz_request
 
     stream_quiz_intent = _is_quiz_request(payload.question)
     stream_cache_question = payload.question
@@ -969,10 +970,15 @@ def ask_question_stream(
             logger.debug("Returning cached stream response for question: %s", payload.question[:40])
 
             async def cached_event_stream():
-                payload_json = json.dumps({"type": "token", "data": cached_answer})
-                yield f"data: {payload_json}\n\n"
-                done_json = json.dumps({"type": "done"})
-                yield f"data: {done_json}\n\n"
+                # Stream cached text in small pieces so the UI can paint
+                # progressively (ChatGPT-style) instead of dumping one blob.
+                chunk_size = 24
+                for i in range(0, len(cached_answer), chunk_size):
+                    piece = cached_answer[i : i + chunk_size]
+                    if piece:
+                        yield f"data: {json.dumps({'type': 'token', 'data': piece})}\n\n"
+                        await asyncio.sleep(0.012)
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
             return StreamingResponse(
                 cached_event_stream(),
@@ -1112,6 +1118,98 @@ def get_chat_history(
     return ChatHistoryResponse(messages=formatted, document_id=document_id)
 
 
+def _resolve_export_user(token: Optional[str], db: Session) -> User:
+    """Resolve the user for browser download links that pass ?token=."""
+    from app.auth import decode_token as _decode
+
+    if token:
+        user_id = _decode(token)
+        if user_id:
+            resolved = db.query(User).filter(User.id == user_id).first()
+            if resolved:
+                return resolved
+    raise UnauthorizedException("Authentication required")
+
+
+def _export_response(title: str, messages, format: str) -> Response:
+    """Build a downloadable chat export Response for md/txt/pdf."""
+    from types import SimpleNamespace
+
+    if format not in ("md", "txt", "pdf"):
+        raise ValidationException("Format must be 'md', 'txt', or 'pdf'")
+    if not messages:
+        raise NotFoundException("Chat history")
+
+    title_doc = SimpleNamespace(original_name=title)
+    if format == "md":
+        content = _format_markdown(title_doc, messages)
+        media_type = "text/markdown"
+        extension = "md"
+    elif format == "txt":
+        content = _format_plaintext(title_doc, messages)
+        media_type = "text/plain"
+        extension = "txt"
+    else:
+        from app.routes.chat_export import format_pdf as _format_pdf
+
+        content = _format_pdf(title_doc, messages)
+        media_type = "application/pdf"
+        extension = "pdf"
+
+    safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title).strip() or "chat"
+    safe_name = safe_name.replace(" ", "_")[:80]
+    filename = f"{safe_name}_chat_history.{extension}"
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.get(
+    "/export/session/{session_id}",
+    summary="Export session chat history",
+    description=(
+        "Downloads one chat session as Markdown, plain text, or PDF. "
+        "The browser download flow authenticates with a query token."
+    ),
+)
+def export_session_chat_history(
+    session_id: str,
+    format: str = "md",
+    token: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Export chat history for a session as a downloadable file."""
+    resolved_user = _resolve_export_user(token, db)
+
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == resolved_user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise NotFoundException("Chat session")
+
+    messages = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.user_id == resolved_user.id,
+            ChatMessage.session_id == session_id,
+        )
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+
+    return _export_response(session.title or "Chat", messages, format)
+
+
 @router.get(
     "/export/{document_id}",
     summary="Export document chat history",
@@ -1127,19 +1225,7 @@ def export_chat_history(
     db: Session = Depends(get_db),
 ):
     """Export the chat history for a document as a downloadable file."""
-    from app.auth import decode_token as _decode
-
-    resolved_user = None
-    if token:
-        user_id = _decode(token)
-        if user_id:
-            resolved_user = db.query(User).filter(User.id == user_id).first()
-
-    if resolved_user is None:
-        raise UnauthorizedException("Authentication required")
-
-    if format not in ("md", "txt", "pdf"):
-        raise ValidationException("Format must be 'md', 'txt', or 'pdf'")
+    resolved_user = _resolve_export_user(token, db)
 
     # Verify document exists and belongs to user
     doc = db.query(Document).filter(
@@ -1161,34 +1247,7 @@ def export_chat_history(
         .all()
     )
 
-    if not messages:
-        raise NotFoundException("Chat history")
-
-    if format == "md":
-        content = _format_markdown(doc, messages)
-        media_type = "text/markdown"
-        extension = "md"
-    elif format == "txt":
-        content = _format_plaintext(doc, messages)
-        media_type = "text/plain"
-        extension = "txt"
-    else:
-        from app.routes.chat_export import format_pdf as _format_pdf
-
-        content = _format_pdf(doc, messages)
-        media_type = "application/pdf"
-        extension = "pdf"
-
-    safe_name = doc.original_name.rsplit(".", 1)[0]
-    filename = f"{safe_name}_chat_history.{extension}"
-
-    return Response(
-        content=content,
-        media_type=media_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-        },
-    )
+    return _export_response(doc.original_name, messages, format)
 
 
 @router.delete(

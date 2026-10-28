@@ -10,9 +10,9 @@ from typing import Any, Callable, Iterable, Optional
 from huggingface_hub import InferenceClient
 
 from app.config import get_settings
-from app.rag.embeddings import embed_query
-from app.rag.graph_retriever import get_entity_context
-from app.rag.vectorstore import query_chunks
+from app.rag.embeddings.embeddings import embed_query
+from app.rag.retrieval.graph_retriever import get_entity_context
+from app.rag.vectordb.vectorstore import query_chunks
 
 settings = get_settings()
 

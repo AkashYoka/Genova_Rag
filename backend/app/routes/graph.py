@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import Document, User
-from app.rag.graph_builder import load_graph
+from app.rag.utils.graph_builder import load_graph
 
 router = APIRouter(prefix="/graph", tags=["Knowledge Graph"])
 logger = logging.getLogger(__name__)

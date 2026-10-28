@@ -92,7 +92,7 @@ def _check_chromadb() -> Dict[str, Any]:
     """Ping the ChromaDB vector store."""
     start = time.perf_counter()
     try:
-        from app.rag.vectorstore import get_chroma_client
+        from app.rag.vectordb.vectorstore import get_chroma_client
         client = get_chroma_client()
         client.heartbeat()
         latency_ms = round((time.perf_counter() - start) * 1000, 2)

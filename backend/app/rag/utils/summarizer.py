@@ -2,7 +2,7 @@ import logging
 from app.config import get_settings
 import os
 
-from app.rag.agent import get_llm_client
+from app.rag.llm.agent import get_llm_client
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -27,7 +27,7 @@ def generate_document_summary(
         - This function is designed to be called after a document is uploaded and processed.
         - It uses the first few chunks of the document to generate a summary, which is then stored in the database.        
     """
-    from app.rag.chunker import chunk_document
+    from app.rag.chunking.chunker import chunk_document
 
     try:
         # Fall back to file parsing only if chunks are not pre-extracted

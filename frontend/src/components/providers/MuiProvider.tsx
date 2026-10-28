@@ -22,14 +22,14 @@ export default function MuiProvider({ children }: { children: ReactNode }) {
         palette: {
           mode,
           primary: {
-            main: mode === "light" ? "#0F7C86" : "#3DD6E0",
+            main: mode === "light" ? "#0F7C86" : "#4AA8B5",
           },
           secondary: {
-            main: mode === "light" ? "#6B8F3C" : "#B6F05C",
+            main: mode === "light" ? "#6B8F3C" : "#8B95A5",
           },
           background: {
             default: "transparent",
-            paper: mode === "light" ? "#F3F6FA" : "#12181F",
+            paper: mode === "light" ? "#F3F6FA" : "#151A22",
           },
         },
         typography: {

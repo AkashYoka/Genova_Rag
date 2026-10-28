@@ -23,19 +23,19 @@ from langchain_classic.agents import create_react_agent, AgentExecutor
 from langchain_core.prompts import PromptTemplate
 
 from app.config import get_settings
-from app.rag.retriever import retrieve
-from app.rag.graph_retriever import get_entity_context
-from app.rag.prompts import (
+from app.rag.retrieval.retriever import retrieve
+from app.rag.retrieval.graph_retriever import get_entity_context
+from app.rag.prompts.prompts import (
     AGENT_SYSTEM_PROMPT,
     MULTI_DOC_COMPARISON_GUIDANCE,
     RAG_PROMPT_TEMPLATE,
     SYSTEM_PROMPT,
 )
 from app.exceptions import ExternalServiceException
-from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
-from app.rag.tools import PDFSearchTool, MathTool, WebSearchTool
-from app.rag.tracing import trace_function
-from app.rag.keywords import extract_keywords
+from app.rag.utils.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
+from app.rag.utils.tools import PDFSearchTool, MathTool, WebSearchTool
+from app.rag.utils.tracing import trace_function
+from app.rag.utils.keywords import extract_keywords
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -107,7 +107,7 @@ def get_llm_client(hf_token: Optional[str] = None, llm_provider: Optional[str] =
     provider = normalize_llm_provider(llm_provider)
 
     if provider == "bedrock":
-        from app.rag.bedrock_client import BedrockNovaChatClient
+        from app.rag.llm.bedrock_client import BedrockNovaChatClient
 
         return BedrockNovaChatClient(
             model_id=settings.BEDROCK_MODEL_ID,
@@ -115,7 +115,7 @@ def get_llm_client(hf_token: Optional[str] = None, llm_provider: Optional[str] =
         )
 
     if provider == "ollama" or (provider != "huggingface" and settings.uses_ollama_llm):
-        from app.rag.ollama_client import (
+        from app.rag.llm.ollama_client import (
             OllamaChatClient,
             check_ollama_model,
             check_ollama_reachable,
@@ -173,7 +173,7 @@ def _build_chat_llm(hf_token: Optional[str] = None):
     Connects to: ``get_agent_executor`` only (not used on Ollama direct RAG path).
     """
     if settings.uses_ollama_llm:
-        from app.rag.ollama_client import (
+        from app.rag.llm.ollama_client import (
             build_chat_ollama,
             check_ollama_model,
             check_ollama_reachable,
@@ -277,7 +277,7 @@ def is_greeting(question: str) -> bool:
 
 def _maybe_quiz_intent(question: str, document_id: Optional[str], document_ids: Optional[List[str]]):
     """Return QuizIntent when the user asks for an interactive quiz."""
-    from app.rag.quiz import parse_quiz_intent
+    from app.rag.utils.quiz import parse_quiz_intent
 
     return parse_quiz_intent(
         question,
@@ -453,6 +453,7 @@ def _generate_answer_stream_direct(
     ...
     data: {"type":"done"}
     """
+    yield f"data: {json.dumps({'type': 'status', 'data': 'retrieving'})}\n\n"
     chunks = retrieve(
         query=question,
         user_id=user_id,
@@ -480,6 +481,7 @@ def _generate_answer_stream_direct(
 
     provider = normalize_llm_provider(llm_provider)
     try:
+        yield f"data: {json.dumps({'type': 'status', 'data': 'generating'})}\n\n"
         client = get_llm_client(llm_provider=provider)
         stream = client.chat_completion(
             messages=[
@@ -549,7 +551,7 @@ def generate_answer(
     # ── Interactive quiz (conversation / document / summary) ─
     quiz_intent = _maybe_quiz_intent(question, document_id, document_ids)
     if quiz_intent is not None:
-        from app.rag.quiz import generate_quiz_response
+        from app.rag.utils.quiz import generate_quiz_response
 
         try:
             return generate_quiz_response(
@@ -679,7 +681,7 @@ def generate_answer_stream(
     # ── Interactive quiz ─────────────────────────────
     quiz_intent = _maybe_quiz_intent(question, document_id, document_ids)
     if quiz_intent is not None:
-        from app.rag.quiz import generate_quiz_stream
+        from app.rag.utils.quiz import generate_quiz_stream
 
         try:
             yield from generate_quiz_stream(

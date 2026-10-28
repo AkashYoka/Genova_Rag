@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Generator, List, Optional
@@ -204,13 +205,16 @@ class BedrockNovaChatClient:
         content = ""
         if response and getattr(response, "choices", None):
             content = response.choices[0].message.content or ""
-        chunk_size = 48
+        # Pace faux-stream chunks so the UI can paint progressively instead of
+        # receiving the whole answer in one event-loop burst.
+        chunk_size = 24
         for i in range(0, len(content), chunk_size):
             piece = content[i : i + chunk_size]
             if piece:
                 yield SimpleNamespace(
                     choices=[SimpleNamespace(delta=SimpleNamespace(content=piece))]
                 )
+                time.sleep(0.012)
 
     def _map_error(self, exc: Exception) -> Exception:
         name = type(exc).__name__

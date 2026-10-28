@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from app.rag import retriever
+from app.rag.retrieval import retriever
 from app.models import Document
 
 
@@ -33,7 +33,7 @@ def test_retrieve_forwards_document_ids_to_vector_and_bm25(monkeypatch):
         return [{"id": "b1", "text": "bm", "filename": "b.pdf", "page": 1, "score": 0.5}]
 
     monkeypatch.setattr(retriever, "query_chunks", fake_query_chunks)
-    monkeypatch.setattr("app.rag.bm25.query_bm25", fake_query_bm25)
+    monkeypatch.setattr("app.rag.retrieval.bm25.query_bm25", fake_query_bm25)
 
     retriever.retrieve("question", user_id="user-1", document_ids=["doc-a", "doc-b"])
 
@@ -68,8 +68,8 @@ def test_retrieve_single_document_leaves_document_ids_none(monkeypatch):
 # ── Prompt: comparison guidance only when more than one document ──
 
 def test_comparison_guidance_present_only_for_multiple_documents(monkeypatch):
-    from app.rag import agent
-    from app.rag.prompts import MULTI_DOC_COMPARISON_GUIDANCE
+    from app.rag.llm import agent
+    from app.rag.prompts.prompts import MULTI_DOC_COMPARISON_GUIDANCE
 
     captured = {}
 

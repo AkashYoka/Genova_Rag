@@ -4,8 +4,8 @@ import types
 
 import pytest
 
-from app.rag import chunker
-from app.rag.chunker import _table_to_markdown, chunk_document, get_page_count
+from app.rag.chunking import chunker
+from app.rag.chunking.chunker import _table_to_markdown, chunk_document, get_page_count
 
 
 def test_txt_extraction_and_chunking(tmp_path):
@@ -441,7 +441,7 @@ def test_pdf_image_captioning_on_the_fly(monkeypatch):
     monkeypatch.setattr(chunker, "extract_pdf_images", fake_extract_images)
 
     # Mock caption_image to return a custom caption
-    from app.rag import vision
+    from app.rag.ingestion import vision
     monkeypatch.setattr(vision, "caption_image", lambda img_bytes, page=None: f"Captured image on page {page}")
 
     # Mock extract_pdf to return a text page

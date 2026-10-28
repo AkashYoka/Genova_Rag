@@ -225,16 +225,16 @@ def test_ingest_document_builds_and_saves_graph(db_session, monkeypatch, tmp_pat
     monkeypatch.setattr("app.services.document_ingestion.store_chunks", lambda **kwargs: len(chunks))
     monkeypatch.setattr("app.database.SessionLocal", lambda: db_session)
 
-    fake_summary = types.ModuleType("app.rag.summarizer")
+    fake_summary = types.ModuleType("app.rag.utils.summarizer")
     fake_summary.generate_document_summary = lambda filepath, max_sentences=2: "Summary"
-    monkeypatch.setitem(__import__("sys").modules, "app.rag.summarizer", fake_summary)
+    monkeypatch.setitem(__import__("sys").modules, "app.rag.utils.summarizer", fake_summary)
 
     monkeypatch.setattr(
-        "app.rag.graph_builder.build_graph",
+        "app.rag.utils.graph_builder.build_graph",
         lambda received_chunks: {"chunks": received_chunks},
     )
     monkeypatch.setattr(
-        "app.rag.graph_builder.save_graph",
+        "app.rag.utils.graph_builder.save_graph",
         lambda graph, user_id, document_id: saved.update(
             {"graph": graph, "user_id": user_id, "document_id": document_id}
         ),
@@ -262,7 +262,7 @@ def test_delete_document_soft_deletes_and_hides_document(client, auth_headers, r
     doc_id = ready_document.id
 
     monkeypatch.setattr(
-        "app.rag.graph_builder.delete_graph",
+        "app.rag.utils.graph_builder.delete_graph",
         lambda user_id, document_id: deletion_calls.append(
             {"user_id": user_id, "document_id": document_id}
         ),

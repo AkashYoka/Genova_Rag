@@ -19,7 +19,7 @@ import os
 from typing import List, Optional, Protocol, runtime_checkable
 
 from app.config import get_settings
-from app.rag.tracing import trace_call
+from app.rag.utils.tracing import trace_call
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -247,7 +247,7 @@ def get_embedding_model() -> _Embedder:
             settings.EMBEDDING_MODEL,
         )
         if provider == "ollama":
-            from app.rag.ollama_client import (
+            from app.rag.llm.ollama_client import (
                 OllamaEmbeddings,
                 check_ollama_model,
                 check_ollama_reachable,

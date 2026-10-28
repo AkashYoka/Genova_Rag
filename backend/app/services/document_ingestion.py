@@ -4,9 +4,9 @@ import logging
 from datetime import datetime, timezone
 
 from app.models import Document
-from app.rag.agent import persist_document_keywords
-from app.rag.chunker import chunk_document, get_page_count
-from app.rag.vectorstore import store_chunks
+from app.rag.llm.agent import persist_document_keywords
+from app.rag.chunking.chunker import chunk_document, get_page_count
+from app.rag.vectordb.vectorstore import store_chunks
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         ext = filepath.rsplit(".", 1)[-1].lower()
         if ext == "pdf":
             try:
-                from app.rag.vision import extract_captions_from_pdf
+                from app.rag.ingestion.vision import extract_captions_from_pdf
 
                 pdf_captions = extract_captions_from_pdf(filepath)
                 # Build lookup: page -> [captions in figure_index order]
@@ -118,7 +118,7 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         db.commit()
 
         try:
-            from app.rag.graph_builder import build_graph, save_graph
+            from app.rag.utils.graph_builder import build_graph, save_graph
 
             graph = build_graph(chunks)
             save_graph(graph, user_id=user_id, document_id=document_id)
@@ -142,7 +142,7 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         db.commit()
 
         try:
-            from app.rag.summarizer import generate_document_summary
+            from app.rag.utils.summarizer import generate_document_summary
 
             summary = generate_document_summary(filepath, max_sentences=2)
             if summary:
@@ -156,7 +156,7 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         ext = filepath.rsplit(".", 1)[-1].lower()
         if ext == "pdf":
             try:
-                from app.rag.url_extractor import extract_urls_from_pdf
+                from app.rag.ingestion.url_extractor import extract_urls_from_pdf
                 import json
 
                 urls = extract_urls_from_pdf(filepath)

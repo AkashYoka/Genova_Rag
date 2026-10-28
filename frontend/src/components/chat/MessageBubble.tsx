@@ -33,6 +33,7 @@ import {
   encodeNotePayload,
 } from "@/lib/notes-mime";
 import MarkdownContent from "@/components/chat/MarkdownContent";
+import { prepareMarkdownForMath } from "@/lib/math-markdown";
 
 const subscribe = () => () => {};
 const getSnapshot = () => true;
@@ -380,10 +381,19 @@ export default function MessageBubble({ message }: Props) {
               className={`prose-chat ${fontSizeClass} ${message.content ? "pr-24" : ""}`}
             >
               {message.content ? (
-                <MarkdownContent
-                  content={message.content}
-                  isStreaming={Boolean(message.isStreaming)}
-                />
+                // While tokens arrive, render plain text so the UI paints every
+                // chunk like ChatGPT. Full markdown/KaTeX runs only when done —
+                // re-parsing on every token freezes the main thread and looks
+                // like the answer appeared all at once.
+                message.isStreaming ? (
+                  <div className="whitespace-pre-wrap break-words">
+                    {prepareMarkdownForMath(message.content, {
+                      isStreaming: true,
+                    })}
+                  </div>
+                ) : (
+                  <MarkdownContent content={message.content} />
+                )
               ) : message.isStreaming ? (
                 <div className="flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce [animation-delay:0ms]" />

@@ -30,11 +30,15 @@ os.environ["UPLOAD_DIR"] = str(ROOT / "backend" / "test_uploads")
 os.environ["CHROMA_PERSIST_DIR"] = str(ROOT / "backend" / "test_chroma")
 
 
-fake_embeddings = types.ModuleType("app.rag.embeddings")
+# Load real parent packages before installing leaf fakes under the new rag layout.
+import app.rag.embeddings  # noqa: E402
+import app.rag.vectordb  # noqa: E402
+
+fake_embeddings = types.ModuleType("app.rag.embeddings.embeddings")
 fake_embeddings.get_embedding_model = lambda: object()
 fake_embeddings.embed_query = lambda query: [0.0]
 fake_embeddings.embed_texts = lambda texts: [[0.0] for _ in texts]
-sys.modules.setdefault("app.rag.embeddings", fake_embeddings)
+sys.modules["app.rag.embeddings.embeddings"] = fake_embeddings
 
 
 class _FakeChromaClient:
@@ -42,7 +46,7 @@ class _FakeChromaClient:
         return "ok"
 
 
-fake_vectorstore = types.ModuleType("app.rag.vectorstore")
+fake_vectorstore = types.ModuleType("app.rag.vectordb.vectorstore")
 fake_vectorstore.get_chroma_client = lambda: _FakeChromaClient()
 fake_vectorstore.store_chunks = lambda chunks, document_id, filename, user_id: len(chunks)
 fake_vectorstore.delete_document_chunks = lambda document_id, user_id: None
@@ -52,8 +56,8 @@ if "sentence_transformers" not in sys.modules:
     fake_sentence_transformers = types.ModuleType("sentence_transformers")
     fake_sentence_transformers.CrossEncoder = lambda *args, **kwargs: None
     sys.modules["sentence_transformers"] = fake_sentence_transformers
-    
-sys.modules.setdefault("app.rag.vectorstore", fake_vectorstore)
+
+sys.modules["app.rag.vectordb.vectorstore"] = fake_vectorstore
 
 slowapi_module = types.ModuleType("slowapi")
 slowapi_errors = types.ModuleType("slowapi.errors")

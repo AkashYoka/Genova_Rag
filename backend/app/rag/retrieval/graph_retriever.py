@@ -7,7 +7,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 import networkx as nx
 
 from app.config import get_settings
-from app.rag.graph_builder import (
+from app.rag.utils.graph_builder import (
     extract_entities,
     iter_graph_paths,
     load_graph,

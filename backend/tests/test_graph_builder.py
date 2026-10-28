@@ -1,6 +1,6 @@
 import json
 
-from app.rag import graph_builder
+from app.rag.utils import graph_builder
 
 
 class FakeEntity:

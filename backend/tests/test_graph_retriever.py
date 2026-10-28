@@ -1,4 +1,5 @@
-from app.rag import graph_builder, graph_retriever
+from app.rag.utils import graph_builder
+from app.rag.retrieval import graph_retriever
 
 
 class FakeEntity:

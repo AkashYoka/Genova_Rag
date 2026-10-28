@@ -37,27 +37,27 @@ def _make_fitz_doc(pages_text: list[str]):
 
 class TestPageIsImageOnly:
     def test_empty_page_is_image_only(self):
-        from app.rag.ocr import _page_is_image_only
+        from app.rag.ingestion.ocr import _page_is_image_only
         page = _make_fitz_page("")
         assert _page_is_image_only(page) is True
 
     def test_sparse_page_is_image_only(self):
-        from app.rag.ocr import _page_is_image_only
+        from app.rag.ingestion.ocr import _page_is_image_only
         page = _make_fitz_page("hi")
         assert _page_is_image_only(page) is True
 
     def test_page_with_enough_text_is_not_image_only(self):
-        from app.rag.ocr import _page_is_image_only
+        from app.rag.ingestion.ocr import _page_is_image_only
         page = _make_fitz_page("A" * 50)
         assert _page_is_image_only(page) is False
 
     def test_boundary_exactly_at_min_chars(self):
-        from app.rag.ocr import _page_is_image_only, MIN_TEXT_CHARS
+        from app.rag.ingestion.ocr import _page_is_image_only, MIN_TEXT_CHARS
         page = _make_fitz_page("A" * MIN_TEXT_CHARS)
         assert _page_is_image_only(page) is False
 
     def test_one_below_boundary_is_image_only(self):
-        from app.rag.ocr import _page_is_image_only, MIN_TEXT_CHARS
+        from app.rag.ingestion.ocr import _page_is_image_only, MIN_TEXT_CHARS
         page = _make_fitz_page("A" * (MIN_TEXT_CHARS - 1))
         assert _page_is_image_only(page) is True
 
@@ -66,7 +66,7 @@ class TestPageIsImageOnly:
 
 class TestRenderPageToImage:
     def test_returns_png_bytes(self):
-        from app.rag.ocr import _render_page_to_image
+        from app.rag.ingestion.ocr import _render_page_to_image
         page = _make_fitz_page()
         result = _render_page_to_image(page, dpi=72)
         assert result == b"PNG_BYTES"
@@ -77,7 +77,7 @@ class TestRenderPageToImage:
 
 class TestOcrWithTesseract:
     def test_returns_extracted_text(self):
-        from app.rag.ocr import _ocr_with_tesseract
+        from app.rag.ingestion.ocr import _ocr_with_tesseract
 
         mock_pytesseract = types.ModuleType("pytesseract")
         mock_pytesseract.image_to_string = MagicMock(return_value="  Hello OCR  ")
@@ -97,7 +97,7 @@ class TestOcrWithTesseract:
         assert result == "Hello OCR"
 
     def test_raises_import_error_when_tesseract_missing(self):
-        from app.rag.ocr import _ocr_with_tesseract
+        from app.rag.ingestion.ocr import _ocr_with_tesseract
         with patch.dict("sys.modules", {"pytesseract": None, "PIL": None, "PIL.Image": None}):
             with pytest.raises(ImportError, match="pytesseract"):
                 _ocr_with_tesseract(b"PNG_BYTES")
@@ -107,7 +107,7 @@ class TestOcrWithTesseract:
 
 class TestOcrPage:
     def test_uses_tesseract_by_default(self, monkeypatch):
-        import app.rag.ocr as ocr_module
+        import app.rag.ingestion.ocr as ocr_module
         monkeypatch.setattr(ocr_module, "OCR_BACKEND", "tesseract")
         monkeypatch.setattr(ocr_module, "_render_page_to_image", lambda page, dpi: b"PNG")
         monkeypatch.setattr(ocr_module, "_ocr_with_tesseract", lambda b: "tesseract text")
@@ -117,7 +117,7 @@ class TestOcrPage:
         assert result == "tesseract text"
 
     def test_uses_easyocr_when_configured(self, monkeypatch):
-        import app.rag.ocr as ocr_module
+        import app.rag.ingestion.ocr as ocr_module
         monkeypatch.setattr(ocr_module, "OCR_BACKEND", "easyocr")
         monkeypatch.setattr(ocr_module, "_render_page_to_image", lambda page, dpi: b"PNG")
         monkeypatch.setattr(ocr_module, "_ocr_with_easyocr", lambda b: "easyocr text")
@@ -131,7 +131,7 @@ class TestOcrPage:
 
 class TestExtractPdfWithOcr:
     def test_native_text_pages_skip_ocr(self, monkeypatch, tmp_path):
-        import app.rag.ocr as ocr_module
+        import app.rag.ingestion.ocr as ocr_module
 
         rich_text = "A" * 100
         doc, pages = _make_fitz_doc([rich_text])
@@ -148,7 +148,7 @@ class TestExtractPdfWithOcr:
         assert ocr_called == []
 
     def test_image_only_pages_trigger_ocr(self, monkeypatch, tmp_path):
-        import app.rag.ocr as ocr_module
+        import app.rag.ingestion.ocr as ocr_module
 
         doc, _ = _make_fitz_doc([""])  # empty page
         monkeypatch.setattr("fitz.open", lambda path: doc)
@@ -162,7 +162,7 @@ class TestExtractPdfWithOcr:
         assert result[0]["page"] == 1
 
     def test_mixed_pages_handled_correctly(self, monkeypatch, tmp_path):
-        import app.rag.ocr as ocr_module
+        import app.rag.ingestion.ocr as ocr_module
 
         rich = "B" * 100
         doc, _ = _make_fitz_doc([rich, ""])
@@ -178,7 +178,7 @@ class TestExtractPdfWithOcr:
         assert result[1]["page"] == 2
 
     def test_ocr_returning_empty_skips_page(self, monkeypatch, tmp_path):
-        import app.rag.ocr as ocr_module
+        import app.rag.ingestion.ocr as ocr_module
 
         doc, _ = _make_fitz_doc([""])
         monkeypatch.setattr("fitz.open", lambda path: doc)
@@ -188,7 +188,7 @@ class TestExtractPdfWithOcr:
         assert result == []
 
     def test_ocr_import_error_skips_page_gracefully(self, monkeypatch, tmp_path):
-        import app.rag.ocr as ocr_module
+        import app.rag.ingestion.ocr as ocr_module
 
         doc, _ = _make_fitz_doc([""])
         monkeypatch.setattr("fitz.open", lambda path: doc)
@@ -200,7 +200,7 @@ class TestExtractPdfWithOcr:
         assert result == []
 
     def test_ocr_exception_skips_page_gracefully(self, monkeypatch, tmp_path):
-        import app.rag.ocr as ocr_module
+        import app.rag.ingestion.ocr as ocr_module
 
         doc, _ = _make_fitz_doc([""])
         monkeypatch.setattr("fitz.open", lambda path: doc)
@@ -216,8 +216,8 @@ class TestExtractPdfWithOcr:
 
 class TestExtractPdfOcrFallback:
     def test_ocr_called_when_all_extractors_return_empty(self, monkeypatch):
-        import app.rag.chunker as chunker_module
-        import app.rag.ocr as ocr_module
+        import app.rag.chunking.chunker as chunker_module
+        import app.rag.ingestion.ocr as ocr_module
 
         monkeypatch.setattr(
             chunker_module, "extract_pdf_with_unstructured",
@@ -243,8 +243,8 @@ class TestExtractPdfOcrFallback:
         assert result[0]["text"] == "OCR text"
 
     def test_ocr_not_called_when_extractor_succeeds(self, monkeypatch):
-        import app.rag.chunker as chunker_module
-        import app.rag.ocr as ocr_module
+        import app.rag.chunking.chunker as chunker_module
+        import app.rag.ingestion.ocr as ocr_module
 
         monkeypatch.setattr(
             chunker_module, "extract_pdf_with_unstructured",

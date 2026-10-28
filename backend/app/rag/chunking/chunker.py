@@ -226,7 +226,7 @@ def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
             filepath,
         )
         try:
-            from app.rag.ocr import extract_pdf_with_ocr
+            from app.rag.ingestion.ocr import extract_pdf_with_ocr
             pages = extract_pdf_with_ocr(filepath)
         except Exception as exc:
             logger.warning("OCR pass failed for '%s': %s", filepath, exc)
@@ -240,7 +240,7 @@ def extract_pdf_with_pymupdf(filepath: str) -> List[Dict[str, Any]]:
     For pages with no selectable text (scanned/image-only pages) OCR is
     attempted automatically using the configured OCR backend.
     """
-    from app.rag.ocr import MIN_TEXT_CHARS, OCR_BACKEND, ocr_page
+    from app.rag.ingestion.ocr import MIN_TEXT_CHARS, OCR_BACKEND, ocr_page
 
     doc = fitz.open(filepath)
     pages = []
@@ -622,7 +622,7 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
             while next_image and next_image["page"] == page_num:
                 img_bytes = next_image["image_bytes"]
                 try:
-                    from app.rag.vision import caption_image
+                    from app.rag.ingestion.vision import caption_image
                     caption = caption_image(img_bytes, page=page_num)
 
                     if caption:

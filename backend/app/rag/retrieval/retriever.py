@@ -21,10 +21,10 @@ import re
 from typing import List, Dict, Any, Optional
 
 from app.config import get_settings
-from app.rag.embeddings import embed_query
-from app.rag.tracing import trace_function
-from app.rag.vectorstore import query_chunks
-from app.rag.reranker import get_reranker
+from app.rag.embeddings.embeddings import embed_query
+from app.rag.utils.tracing import trace_function
+from app.rag.vectordb.vectorstore import query_chunks
+from app.rag.retrieval.reranker import get_reranker
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -165,7 +165,7 @@ def _generate_query_variants(query: str) -> List[str]:
     # HuggingFace path needs a token; Ollama path needs a reachable server.
     if settings.uses_ollama_llm:
         try:
-            from app.rag.agent import get_llm_client
+            from app.rag.llm.agent import get_llm_client
             client = get_llm_client()
         except Exception as exc:
             logger.warning("Query rewrite skipped (Ollama unavailable): %s", exc)
@@ -404,7 +404,7 @@ def retrieve(
 
         if settings.USE_HYBRID_SEARCH:
             try:
-                from app.rag.bm25 import query_bm25
+                from app.rag.retrieval.bm25 import query_bm25
                 bm25_results = query_bm25(
                     query=search_query,
                     user_id=user_id,

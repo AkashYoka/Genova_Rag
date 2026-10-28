@@ -8,15 +8,15 @@ def test_store_chunks_deletes_old_chunks(monkeypatch):
     before embedding and saving the new chunks.
     """
     # Keep track of fake module from sys.modules
-    fake_module = sys.modules.get("app.rag.vectorstore")
+    fake_module = sys.modules.get("app.rag.vectordb.vectorstore")
 
     # Temporarily remove fake_module to import the real module
     if fake_module:
-        del sys.modules["app.rag.vectorstore"]
+        del sys.modules["app.rag.vectordb.vectorstore"]
 
     try:
         # Import the real module
-        import app.rag.vectorstore as real_vectorstore
+        import app.rag.vectordb.vectorstore as real_vectorstore
 
         # Mock the ChromaDB client and collection
         mock_client = MagicMock()
@@ -29,8 +29,8 @@ def test_store_chunks_deletes_old_chunks(monkeypatch):
 
         monkeypatch.setattr(real_vectorstore, "get_chroma_client", lambda: mock_client)
 
-        # Mock embedding model on the app.rag.embeddings module directly
-        import app.rag.embeddings as embeddings_module
+        # Mock embedding model on the app.rag.embeddings.embeddings module directly
+        import app.rag.embeddings.embeddings as embeddings_module
         mock_embeddings = MagicMock()
         mock_embeddings.embed_documents.return_value = [[0.1] * 384]
         monkeypatch.setattr(
@@ -40,8 +40,8 @@ def test_store_chunks_deletes_old_chunks(monkeypatch):
         )
 
         # Mock BM25 actions to avoid I/O or extra imports
-        monkeypatch.setattr("app.rag.bm25.store_bm25_index", lambda *args, **kwargs: None)
-        monkeypatch.setattr("app.rag.bm25.delete_bm25_index", lambda *args, **kwargs: None)
+        monkeypatch.setattr("app.rag.retrieval.bm25.store_bm25_index", lambda *args, **kwargs: None)
+        monkeypatch.setattr("app.rag.retrieval.bm25.delete_bm25_index", lambda *args, **kwargs: None)
 
         # Execute store_chunks
         chunks = [{"text": "Hello world", "page": 1, "chunk_index": 0}]
@@ -66,4 +66,4 @@ def test_store_chunks_deletes_old_chunks(monkeypatch):
     finally:
         # Restore the fake module
         if fake_module:
-            sys.modules["app.rag.vectorstore"] = fake_module
+            sys.modules["app.rag.vectordb.vectorstore"] = fake_module

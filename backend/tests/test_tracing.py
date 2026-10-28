@@ -1,6 +1,6 @@
 import logging
 
-from app.rag import tracing
+from app.rag.utils import tracing
 
 
 def test_trace_function_uses_metadata_factory(monkeypatch):

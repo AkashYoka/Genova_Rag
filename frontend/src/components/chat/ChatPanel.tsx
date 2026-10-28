@@ -290,10 +290,50 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     setMessages((prev) => [...prev, userMsg]);
 
     const assistantId = `assistant-${Date.now()}`;
-    let assistantCreated = false;
+    // Create the assistant bubble immediately so tokens paint progressively
+    // (ChatGPT-style) instead of waiting for the first SSE/WS event.
+    let assistantCreated = ensureAssistantPlaceholder(assistantId, false);
 
     setStreaming(true);
-    setIsTyping(true);
+    setIsTyping(false);
+
+    // Coalesce rapid token events into one React update per animation frame
+    // so the UI stays responsive while still streaming live.
+    let pendingTokens = "";
+    let rafHandle: number | null = null;
+    const flushPendingTokens = () => {
+      rafHandle = null;
+      if (!pendingTokens) return;
+      const chunk = pendingTokens;
+      pendingTokens = "";
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId ? { ...m, content: m.content + chunk } : m,
+        ),
+      );
+    };
+    const appendToken = (piece: string) => {
+      if (!piece) return;
+      if (!assistantCreated) {
+        assistantCreated = ensureAssistantPlaceholder(
+          assistantId,
+          assistantCreated,
+          piece,
+        );
+        return;
+      }
+      pendingTokens += piece;
+      if (rafHandle == null) {
+        rafHandle = window.requestAnimationFrame(flushPendingTokens);
+      }
+    };
+    const flushTokensNow = () => {
+      if (rafHandle != null) {
+        window.cancelAnimationFrame(rafHandle);
+        rafHandle = null;
+      }
+      flushPendingTokens();
+    };
 
     try {
       // Try WebSocket first for real-time agentic thought streaming
@@ -350,21 +390,10 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
           try {
             const event = JSON.parse(ev.data);
             if (event.type === "token") {
-              if (!assistantCreated) {
-                assistantCreated = ensureAssistantPlaceholder(
-                  assistantId,
-                  assistantCreated,
-                  event.data as string,
-                );
-              } else {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantId
-                      ? { ...m, content: m.content + (event.data as string) }
-                      : m,
-                  ),
-                );
-              }
+              appendToken(event.data as string);
+            } else if (event.type === "status") {
+              // Retrieving / generating — keep the streaming bubble visible.
+              setIsTyping(false);
             } else if (event.type === "sources") {
               if (!assistantCreated) {
                 assistantCreated = ensureAssistantPlaceholder(
@@ -380,6 +409,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 ),
               );
             } else if (event.type === "quiz") {
+              flushTokensNow();
               if (!assistantCreated) {
                 assistantCreated = ensureAssistantPlaceholder(
                   assistantId,
@@ -388,18 +418,11 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               }
               applyQuizToMessage(assistantId, event.data as QuizPayload);
             } else if (event.type === "thought") {
-              // Append thoughts as a temporary assistant note (optional UI handling)
-              // For simplicity, add to assistant message content in brackets
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content + `\n[thought] ${event.data}` }
-                    : m,
-                ),
-              );
+              appendToken(`\n[thought] ${event.data}`);
             } else if (event.type === "usage") {
               applyUsageToMessage(assistantId, event.data as LlmUsage);
             } else if (event.type === "error") {
+              flushTokensNow();
               setIsTyping(false);
               setMessages((prev) =>
                 prev.map((m) =>
@@ -415,6 +438,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               ws.close();
               reject(new Error(String(event.data)));
             } else if (event.type === "done") {
+              flushTokensNow();
               const persistedId =
                 typeof (event as { message_id?: string }).message_id === "string"
                   ? (event as { message_id: string }).message_id
@@ -476,21 +500,9 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
         for await (const event of stream) {
           if (event.type === "token") {
-            if (!assistantCreated) {
-              assistantCreated = ensureAssistantPlaceholder(
-                assistantId,
-                assistantCreated,
-                event.data as string,
-              );
-            } else {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, content: m.content + (event.data as string) }
-                    : m,
-                ),
-              );
-            }
+            appendToken(event.data as string);
+          } else if (event.type === "status") {
+            setIsTyping(false);
           } else if (event.type === "sources") {
             if (!assistantCreated) {
               assistantCreated = ensureAssistantPlaceholder(
@@ -506,6 +518,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               ),
             );
           } else if (event.type === "quiz") {
+            flushTokensNow();
             if (!assistantCreated) {
               assistantCreated = ensureAssistantPlaceholder(
                 assistantId,
@@ -516,6 +529,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
           } else if (event.type === "usage") {
             applyUsageToMessage(assistantId, event.data as LlmUsage);
           } else if (event.type === "error") {
+            flushTokensNow();
             setIsTyping(false);
             setMessages((prev) =>
               prev.map((m) =>
@@ -529,6 +543,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               ),
             );
           } else if (event.type === "done") {
+            flushTokensNow();
             const doneEvent = event as unknown as {
               usage?: LlmUsage;
               response_time_ms?: number;
@@ -575,6 +590,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
         );
       }
     } finally {
+      flushTokensNow();
       setStreaming(false);
       setIsTyping(false);
     }
@@ -592,14 +608,28 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   };
 
   const handleExport = (format: "md" | "txt" | "pdf") => {
-    if (!activeDoc) return;
     setShowExportMenu(false);
     const token = localStorage.getItem("token");
-    const url = `${API_BASE}/api/v1/chat/export/${activeDoc.id}?format=${format}&token=${token}`;
-    // Trigger download via a temporary anchor
+    if (!token || token === "cookie") {
+      toast.error("Sign in required to export chat");
+      return;
+    }
+
+    // Chat is session-scoped; document export is only a fallback.
+    const base = API_BASE || window.location.origin;
+    let url: string | null = null;
+    if (activeSessionId) {
+      url = `${base}/api/v1/chat/export/session/${activeSessionId}?format=${encodeURIComponent(format)}&token=${encodeURIComponent(token)}`;
+    } else if (activeDoc) {
+      url = `${base}/api/v1/chat/export/${activeDoc.id}?format=${encodeURIComponent(format)}&token=${encodeURIComponent(token)}`;
+    } else {
+      toast.error("Select a chat session to export");
+      return;
+    }
+
     const a = document.createElement("a");
     a.href = url;
-    a.download = "";
+    a.rel = "noopener";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1007,13 +1037,13 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                     : t("chat.selectPlaceholder")
                 }
                 disabled={streaming}
-                className="min-h-[44px] max-h-32 resize-none bg-background/50 border-border/50 pr-16"
+                className="min-h-[44px] max-h-32 resize-none bg-background/50 border-border/50 pr-11"
                 rows={1}
                 aria-label="Chat message"
                 aria-describedby="chat-input-hint"
               />
 
-              {/* Mic Button */}
+              {/* Mic — inner-right of composer, vertically centered */}
               <Tooltip>
                 <TooltipTrigger
                   id="mic-btn"
@@ -1022,7 +1052,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   onClick={toggleRecording}
                   className={cn(
                     buttonVariants({ variant: "ghost", size: "icon" }),
-                    "absolute right-10 bottom-1.5 h-7 w-7 rounded-md text-muted-foreground transition-all duration-200",
+                    "absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md text-muted-foreground transition-all duration-200",
                     isRecording
                       ? "bg-red-500/20 text-red-500 hover:bg-red-500/30 hover:text-red-600 animate-pulse"
                       : "hover:text-primary hover:bg-accent",

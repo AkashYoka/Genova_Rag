@@ -26,7 +26,7 @@ from app.exceptions import AppException
 from app.rate_limit import limiter
 from app.database import init_db, get_db
 from app.observability import setup_prometheus_metrics, setup_logging, StructuredLoggingMiddleware
-from app.rag.vectorstore import get_chroma_client
+from app.rag.vectordb.vectorstore import get_chroma_client
 from app.scheduler import start_scheduler, stop_scheduler
 from app.routes.profile import router as profile_router
 from app.routes.health import router as health_router
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
 
     # Pre-load embedding model (warm up)
     try:
-        from app.rag.embeddings import get_embedding_model
+        from app.rag.embeddings.embeddings import get_embedding_model
         get_embedding_model()
         logger.info("Embedding model pre-loaded")
     except Exception as e:
