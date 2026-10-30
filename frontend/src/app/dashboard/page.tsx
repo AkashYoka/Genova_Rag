@@ -62,22 +62,9 @@ const KnowledgeGraph = dynamic(
   { ssr: false },
 );
 
-export interface DocInfo {
-  chunk_size?: number;
-  chunk_overlap?: number;
-  summary: string;
-  id: string;
-  original_name: string;
-  file_size: number;
-  page_count: number;
-  chunk_count: number;
-  status: string;
-  error_message: string | null;
-  uploaded_at: string;
-  keywords?: string[];
-  processing_progress?: number | null;
-  processing_stage?: string | null;
-}
+import type { DocInfo } from "@/types/document";
+import { normalizeDocInfo, type DocumentListApiResponse } from "@/types/document";
+export type { DocInfo };
 
 function formatBytes(n: number): string {
   if (!n || n < 0) return "—";
@@ -111,7 +98,7 @@ export default function DashboardPage() {
       unit?: "percent" | "pixels" | "pdf";
     }[];
   } | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(true);
   const [graphOpen, setGraphOpen] = useState(false);
   const [connectionError, setConnectionError] = useState("");
@@ -154,13 +141,24 @@ export default function DashboardPage() {
     // Polling must stay silent — toggling loading remounts the list (blink).
     if (!opts?.silent) setDocumentsLoading(true);
     try {
-      const data = await api.get<{ documents?: DocInfo[]; items?: DocInfo[] }>(
+      const data = await api.get<DocumentListApiResponse>(
         "/api/v1/documents/",
       );
-      const next = data?.documents ?? data?.items ?? [];
+      const rawList = data?.items ?? data?.documents ?? [];
+      const next = rawList.map(normalizeDocInfo);
       setDocuments(next);
       setActiveDoc((current) => {
-        if (!current) return current;
+        if (!current) {
+          if (typeof window !== "undefined") {
+            const params = new URLSearchParams(window.location.search);
+            const targetId = params.get("docId");
+            if (targetId) {
+              const matched = next.find((d) => d.id === targetId);
+              if (matched) return matched;
+            }
+          }
+          return current;
+        }
         const updated = next.find((d) => d.id === current.id);
         if (!updated) return current;
         if (
@@ -377,7 +375,6 @@ export default function DashboardPage() {
         }}
         compareOpen={compareOpen}
         onToggleCompare={() => setCompareOpen(!compareOpen)}
-        mobileSheetContent={sidebarContent}
       />
 
       {connectionError ? (
@@ -388,12 +385,16 @@ export default function DashboardPage() {
 
       <div className="genova-desk-stage">
         {/* Region 1 — document library (nav) */}
-        <aside
-          className={`genova-desk-docs${sidebarOpen ? " is-open" : ""}`}
-          aria-label="Document library"
-        >
-          {sidebarContent}
-        </aside>
+        {sidebarOpen && (
+          <aside
+            className={`genova-desk-docs${sidebarOpen ? " is-open" : ""}`}
+            aria-label="Document library"
+          >
+            {sidebarContent}
+          </aside>
+        )}
+
+        {/* Document library is intentionally hidden on the dashboard */}
 
         {/* Region 2 — chat sessions (list) */}
         <aside className="genova-desk-sessions" aria-label="Chat sessions">

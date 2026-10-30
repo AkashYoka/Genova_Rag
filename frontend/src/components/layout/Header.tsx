@@ -3,7 +3,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
+import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -22,8 +23,6 @@ import {
   LogOut,
   Menu,
   X,
-  Briefcase,
-  ChevronDown,
   Sun,
   Moon,
   Settings,
@@ -31,8 +30,8 @@ import {
   EyeOff,
   Columns2,
   StickyNote,
+  KeyRound,
 } from "lucide-react";
-import { KeyRound } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
   Dialog,
@@ -40,25 +39,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  useWorkspaceStore,
-  WORKSPACES,
-  type WorkspaceId,
-} from "@/store/workspace-store";
-import { api } from "@/lib/api";
 
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import Logo from "./Logo";
 
 interface HeaderProps {
-  sidebarOpen: boolean;
-  onToggleSidebar: () => void;
-  viewerOpen: boolean;
-  onToggleViewer: () => void;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+  viewerOpen?: boolean;
+  onToggleViewer?: () => void;
   notesOpen?: boolean;
   onToggleNotes?: () => void;
-  compareOpen: boolean;
-  onToggleCompare: () => void;
+  compareOpen?: boolean;
+  onToggleCompare?: () => void;
   /** Pass DocumentSidebar JSX so the mobile sheet can render it */
   mobileSheetContent?: React.ReactNode;
 }
@@ -68,18 +61,19 @@ const getSnapshot = () => true;
 const getServerSnapshot = () => false;
 
 export default function Header({
-  sidebarOpen,
+  sidebarOpen = false,
   onToggleSidebar,
-  viewerOpen,
+  viewerOpen = false,
   onToggleViewer,
   notesOpen = false,
   onToggleNotes,
-  compareOpen,
+  compareOpen = false,
   onToggleCompare,
   mobileSheetContent,
 }: HeaderProps) {
   const { user, logout } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const mounted = useSyncExternalStore(
     subscribe,
@@ -105,12 +99,6 @@ export default function Header({
     localStorage.setItem("temperature", temperature.toString());
   }, [temperature]);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [workspaceLoading, setWorkspaceLoading] = useState(false);
-  const workspace = useWorkspaceStore((s) => s.workspace);
-  const setWorkspace = useWorkspaceStore((s) => s.setWorkspace);
-
-  const currentWorkspaceLabel =
-    WORKSPACES.find((w) => w.id === workspace)?.label ?? workspace;
   const isDark = theme === "dark";
   const toggleTheme = () => setTheme(isDark ? "light" : "dark");
 
@@ -119,19 +107,6 @@ export default function Header({
     router.replace("/login");
   };
 
-  const fetchDocumentsForWorkspace = async (id: string) => {
-    setWorkspaceLoading(true);
-    try {
-      const res = await api
-        .get(`/api/v1/documents?workspace=${encodeURIComponent(id)}`)
-        .catch(() => null);
-      console.log("workspace change, fetched documents:", res);
-    } catch (err) {
-      console.warn("Failed to fetch documents for workspace", id, err);
-    } finally {
-      setWorkspaceLoading(false);
-    }
-  };
 
   const toolBtn =
     "h-8 w-8 text-[var(--gd-muted,#5c636c)] hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]";
@@ -153,23 +128,25 @@ export default function Header({
             <Menu className="h-4 w-4" />
           </Button>
 
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`${toolBtn} hidden md:inline-flex`}
-            onClick={onToggleSidebar}
-            title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-            aria-label={
-              sidebarOpen ? "Close document sidebar" : "Open document sidebar"
-            }
-            aria-pressed={sidebarOpen}
-          >
-            {sidebarOpen ? (
-              <PanelLeftClose className="h-4 w-4" />
-            ) : (
-              <PanelLeftOpen className="h-4 w-4" />
-            )}
-          </Button>
+          {onToggleSidebar ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`${toolBtn} hidden md:inline-flex`}
+              onClick={onToggleSidebar}
+              title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+              aria-label={
+                sidebarOpen ? "Close document sidebar" : "Open document sidebar"
+              }
+              aria-pressed={sidebarOpen}
+            >
+              {sidebarOpen ? (
+                <PanelLeftClose className="h-4 w-4" />
+              ) : (
+                <PanelLeftOpen className="h-4 w-4" />
+              )}
+            </Button>
+          ) : null}
 
           <Link
             href="/dashboard"
@@ -182,24 +159,49 @@ export default function Header({
               <span className="brand-sub">by Yoka</span>
             </span>
           </Link>
+
+          <nav className="ml-3 hidden items-center gap-1 sm:flex" aria-label="Main Navigation">
+            <Link
+              href="/dashboard"
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                pathname === "/dashboard"
+                  ? "bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)] font-semibold"
+                  : "text-[var(--gd-muted,#5c636c)] hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]"
+              }`}
+            >
+              Workspace
+            </Link>
+            <Link
+              href="/documents"
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                pathname === "/documents"
+                  ? "bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)] font-semibold"
+                  : "text-[var(--gd-muted,#5c636c)] hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]"
+              }`}
+            >
+              Document Library
+            </Link>
+          </nav>
         </div>
 
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className={toolBtn}
-            onClick={onToggleViewer}
-            title={viewerOpen ? "Close viewer" : "Open viewer"}
-            aria-label={viewerOpen ? "Close PDF viewer" : "Open PDF viewer"}
-            aria-pressed={viewerOpen}
-          >
-            {viewerOpen ? (
-              <PanelRightClose className="h-4 w-4" />
-            ) : (
-              <PanelRightOpen className="h-4 w-4" />
-            )}
-          </Button>
+          {onToggleViewer ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={toolBtn}
+              onClick={onToggleViewer}
+              title={viewerOpen ? "Close viewer" : "Open viewer"}
+              aria-label={viewerOpen ? "Close PDF viewer" : "Open PDF viewer"}
+              aria-pressed={viewerOpen}
+            >
+              {viewerOpen ? (
+                <PanelRightClose className="h-4 w-4" />
+              ) : (
+                <PanelRightOpen className="h-4 w-4" />
+              )}
+            </Button>
+          ) : null}
           {onToggleNotes ? (
             <Button
               variant={notesOpen ? "secondary" : "ghost"}
@@ -217,27 +219,29 @@ export default function Header({
               <StickyNote className="h-4 w-4" />
             </Button>
           ) : null}
-          <Button
-            variant={compareOpen ? "secondary" : "ghost"}
-            size="icon"
-            className={
-              compareOpen
-                ? "h-8 w-8 bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)]"
-                : toolBtn
-            }
-            onClick={onToggleCompare}
-            title={
-              compareOpen
-                ? "Close compare view"
-                : "Compare two PDFs side-by-side"
-            }
-            aria-label={
-              compareOpen ? "Close compare view" : "Open compare view"
-            }
-            aria-pressed={compareOpen}
-          >
-            <Columns2 className="h-4 w-4" />
-          </Button>
+          {onToggleCompare ? (
+            <Button
+              variant={compareOpen ? "secondary" : "ghost"}
+              size="icon"
+              className={
+                compareOpen
+                  ? "h-8 w-8 bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)]"
+                  : toolBtn
+              }
+              onClick={onToggleCompare}
+              title={
+                compareOpen
+                  ? "Close compare view"
+                  : "Compare two PDFs side-by-side"
+              }
+              aria-label={
+                compareOpen ? "Close compare view" : "Open compare view"
+              }
+              aria-pressed={compareOpen}
+            >
+              <Columns2 className="h-4 w-4" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
@@ -267,41 +271,6 @@ export default function Header({
           <KeyboardShortcutsModal />
 
           <span className="mx-1 hidden h-5 w-px bg-[var(--gd-border,#e2e5ea)] sm:block" aria-hidden />
-
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[13px] text-[var(--gd-muted,#5c636c)] transition-colors hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]"
-              aria-label={`Select workspace. Current workspace: ${currentWorkspaceLabel}`}
-              aria-busy={workspaceLoading}
-            >
-              {workspaceLoading ? (
-                <>
-                  <Skeleton className="h-4 w-4 rounded-sm" />
-                  <Skeleton className="hidden h-4 w-16 sm:block" />
-                </>
-              ) : (
-                <>
-                  <Briefcase className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">{currentWorkspaceLabel}</span>
-                  <ChevronDown className="h-3 w-3" />
-                </>
-              )}
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              {WORKSPACES.map((w) => (
-                <DropdownMenuItem
-                  key={w.id}
-                  className={`cursor-pointer ${w.id === workspace ? "font-medium" : ""}`}
-                  onClick={async () => {
-                    setWorkspace(w.id as WorkspaceId);
-                    await fetchDocumentsForWorkspace(w.id);
-                  }}
-                >
-                  {w.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
 
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -388,6 +357,31 @@ export default function Header({
           >
             <X className="w-4 h-4" />
           </Button>
+        </div>
+
+        <div className="flex border-b border-sidebar-border p-2 gap-1 bg-sidebar-accent/30">
+          <Link
+            href="/dashboard"
+            onClick={() => setSheetOpen(false)}
+            className={`flex-1 text-center py-1.5 px-2 rounded-md text-xs font-medium transition-colors ${
+              pathname === "/dashboard"
+                ? "bg-primary text-primary-foreground font-semibold"
+                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+            }`}
+          >
+            Workspace
+          </Link>
+          <Link
+            href="/documents"
+            onClick={() => setSheetOpen(false)}
+            className={`flex-1 text-center py-1.5 px-2 rounded-md text-xs font-medium transition-colors ${
+              pathname === "/documents"
+                ? "bg-primary text-primary-foreground font-semibold"
+                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+            }`}
+          >
+            Document Library
+          </Link>
         </div>
 
         <div className="flex-1 overflow-hidden">

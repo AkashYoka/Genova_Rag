@@ -1,0 +1,182 @@
+/* Genova RAG — Dashboard Functionality Documentation CSS */
+
+/* 
+  Professional technical-documentation stylesheet for Markdown-to-PDF conversion.
+  Optimized for use with markdown-to-pdf tools that support custom CSS.
+  Uses a clean, readable palette inspired by the dashboard's --gd-design-tokens.
+*/
+
+/* @page - Page setup */
+@page {
+  size: A4;
+  margin: 2cm;
+  font-family: "Georgia", "Baskerville", serif;
+  @top-center {
+    content: counter(page) " of " counter(pages);
+    font-size: 10pt;
+    color: #5c636c;
+  }
+  @bottom-center {
+    content: "Genova RAG — Dashboard Functionality";
+    font-size: 9pt;
+    color: #5c636c;
+    border-top: 1px solid #e2e5ea;
+    padding-top: 4pt;
+  }
+  @top-left {
+    content: "Genova RAG — Dashboard";
+    font-size: 9pt;
+    color: #5c636c;
+    border-bottom: 1px solid #e2e5ea;
+    padding-bottom: 4pt;
+  }
+}
+
+/* Print media */
+@media print {
+  body * {
+    visibility: visible;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .no-print, .none-print {
+    display: none !important;
+  }
+  a[href]:after {
+    content: " (" attr(href) ")";
+    font-size: 0.8em;
+  }
+}
+
+/* Typography */
+body {
+  margin: 0;
+  padding: 0 2cm 2cm 2cm;
+  line-height: 1.6;
+  color: #14171c;
+  background: #f2f4f7;
+  font-size: 10pt;
+}
+@media print {
+  body {
+    background: none;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+/* Headings */
+h1, h2, h3, h4, h5, h6 {
+  color: #1a1d21;
+  margin-top: 1.5em;
+  margin-bottom: 0.8em;
+  font-weight: 600;
+}
+h1 { font-size: 1.8em; page-break-after: avoid; border-bottom: 2px solid #e2e5ea; padding-bottom: 0.3em; }
+h2 { font-size: 1.4em; page-break-after: avoid; border-bottom: 1px solid #e2e5ea; padding-bottom: 0.2em; }
+h3 { font-size: 1.2em; }
+h4, h5, h6 { font-size: 1em; font-style: italic; }
+@media print {
+  h1 { font-size: 1.6em; }
+  h2 { font-size: 1.3em; }
+}
+
+/* Markdown tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5em 0;
+  font-size: 9pt;
+}
+table th, table td {
+  border: 1px solid #e2e5ea;
+  padding: 6px 10px;
+  vertical-align: top;
+}
+table th {
+  background: #f2f4f7;
+  font-weight: 600;
+  color: #14171c;
+}
+table tr:nth-child(even) {
+  background: #eceef2;
+}
+@media print {
+  table { page-break-inside: avoid; }
+  table th, table td { padding: 5px; }
+}
+
+/* Code blocks */
+pre {
+  background: #1a1d21;
+  color: #d0d0d0;
+  padding: 1em;
+  overflow-x: auto;
+  font-size: 0.85em;
+  margin: 1.5em 0;
+  border-radius: 6px;
+  page-break-inside: avoid;
+}
+pre code {
+  color: #d0d0d0;
+  font-family: "Fira Mono", "Consolas", "Monaco", monospace;
+}
+code {
+  color: #f47067;
+  background: #1e2127;
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+
+/* Blockquotes */
+blockquote {
+  margins: 1.5em 0;
+  padding: 0.8em 1em;
+  border-left: 4px solid #1a1d21;
+  color: #5c636c;
+  background: #f8f9fa;
+  font-size: 0.9em;
+  page-break-inside: avoid;
+}
+
+/* Horizontal rule */
+hr {
+  border: 0;
+  border-top: 1px solid #e2e5ea;
+  margin: 2em 0;
+}
+
+/* Links */
+a {
+  color: #1a1d21;
+  text-decoration: underline;
+}
+a:hover {
+  color: #0d1117;
+}
+@media print {
+  a { text-decoration: none; }
+  a[href]:after { content: none; }
+}
+
+/* Images - ensure they don't exceed page width */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0.5em 0;
+}
+
+/* Tables for function docs (the ones in the doc) */
+.function-table th, .function-table td {
+  padding: 6px 8px;
+  border: 1px solid #e2e5ea;
+  font-size: 8.5pt;
+}
+.function-table th { background: #f2f4f7; }
+
+/* Mermaid - simple flow chart overrides */
+mermaid {
+  font-family: inherit;
+}

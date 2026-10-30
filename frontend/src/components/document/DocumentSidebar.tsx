@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import type { DocInfo } from "@/app/dashboard/page";
+import type { DocInfo } from "@/types/document";
+import { normalizeDocInfo, type DocumentListApiResponse } from "@/types/document";
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -285,10 +286,11 @@ export default function DocumentSidebar({
   const fetchTrash = useCallback(async () => {
     setLoadingTrash(true);
     try {
-      const res = await api.get<{ items: DocInfo[] }>(
+      const res = await api.get<DocumentListApiResponse>(
         "/api/v1/documents/trash",
       );
-      setTrashDocuments(res.items || []);
+      const rawItems = res?.items ?? res?.documents ?? [];
+      setTrashDocuments(rawItems.map(normalizeDocInfo));
     } catch (err) {
       console.error("Failed to fetch trash:", err);
     } finally {

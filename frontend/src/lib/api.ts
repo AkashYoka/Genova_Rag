@@ -50,7 +50,8 @@ class ApiClient {
 
   private async fetchWithConnectionError(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     try {
-      const isCrossOrigin = typeof window !== "undefined" && this.baseUrl.startsWith("http") && !this.baseUrl.includes(window.location.host);
+      const host = typeof window !== "undefined" && window.location ? window.location.host : "";
+      const isCrossOrigin = typeof window !== "undefined" && Boolean(host) && this.baseUrl.startsWith("http") && !this.baseUrl.includes(host);
       const mergedInit = {
         credentials: isCrossOrigin ? "same-origin" as const : "include" as const,
         ...init,
