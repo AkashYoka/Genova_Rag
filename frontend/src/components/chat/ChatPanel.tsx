@@ -35,6 +35,9 @@ import {
   MicOff,
   ChevronDown,
   Paperclip,
+  Cpu,
+  FileText,
+  Check,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -1133,182 +1136,312 @@ export default function ChatPanel({
         <ChevronDown className="h-5 w-5" />
       </button>
 
-      {/* ── Input Area ─────────────────────────────── */}
-      <div className="border-t border-border/40 p-4 pl-16 sm:pl-4 bg-card/45 backdrop-blur-xl relative">
-        <div className="max-w-3xl mx-auto relative">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <label className="flex items-center gap-2">
-              <span className="font-medium text-foreground/80">Model</span>
-              <select
-                value={llmProvider}
-                disabled={streaming}
-                onChange={(e) =>
-                  setLlmProvider(e.target.value as "ollama" | "bedrock")
-                }
-                className="h-8 rounded-md border border-border/60 bg-background/70 px-2 text-xs text-foreground"
-                aria-label="LLM provider"
-              >
-                <option value="ollama">Ollama (local)</option>
-                <option value="bedrock">Nova 2 Lite (Bedrock)</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              disabled={streaming || readyDocs.length === 0}
-              onClick={() => {
-                setAttachPickerOpen((v) => !v);
-                if (!input.trim()) setInput("/attach");
-              }}
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "sm" }),
-                "h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground",
-              )}
-              aria-label="Attach documents"
-              aria-expanded={attachPickerOpen}
-            >
-              <Paperclip className="h-3.5 w-3.5" />
-              Attach
-              {attachedDocs.length > 0 ? ` (${attachedDocs.length})` : ""}
-            </button>
-            <span className="text-[11px] text-muted-foreground/80">
-              Type{" "}
-              <kbd className="rounded border border-border/60 px-1 font-mono">
-                /attach
-              </kbd>{" "}
-              to search PDFs
-            </span>
-          </div>
-
-          {attachedDocs.length > 0 && (
-            <div className="mb-2 flex flex-wrap items-center gap-1.5">
-              {attachedDocs.map((doc) => (
-                <span
-                  key={doc.id}
-                  className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-foreground"
-                  title={doc.filename}
-                >
-                  <span className="truncate">{doc.filename}</span>
-                  <button
-                    type="button"
-                    className="rounded p-0.5 text-muted-foreground hover:text-foreground"
-                    aria-label={`Remove ${doc.filename}`}
-                    onClick={() => removeAttachedDoc(doc.id)}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
-              ))}
-              <button
-                type="button"
-                className="text-[11px] text-muted-foreground underline-offset-2 hover:underline"
-                onClick={() => setAttachedDocs([])}
-              >
-                Clear all
-              </button>
-            </div>
-          )}
-
-          {attachPickerOpen && (
-            <div
-              className="mb-2 max-h-48 overflow-y-auto rounded-lg border border-border/60 bg-popover p-1 shadow-md"
-              role="listbox"
-              aria-label="Attach documents"
-            >
-              {attachCandidates.length === 0 ? (
-                <p className="px-3 py-2 text-xs text-muted-foreground">
-                  {readyDocs.length === 0
-                    ? "No ready documents to attach."
-                    : "No matching PDFs."}
-                </p>
-              ) : (
-                attachCandidates.map((doc) => {
-                  const selected = attachedDocs.some((d) => d.id === doc.id);
-                  return (
-                    <button
-                      key={doc.id}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      onClick={() => toggleAttachedDoc(doc)}
-                      className={cn(
-                        "flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-xs transition-colors",
-                        selected
-                          ? "bg-primary/15 text-foreground"
-                          : "hover:bg-accent text-foreground",
-                      )}
-                    >
-                      <span className="truncate font-medium">
-                        {doc.original_name}
+      {/* ── Composer ───────────────────────────────── */}
+      <div className="relative border-t border-border/40 bg-card/45 p-3 pl-16 backdrop-blur-xl sm:p-4 sm:pl-4">
+        <div className="mx-auto max-w-3xl">
+          <div className="overflow-hidden rounded-2xl border border-border/60 bg-background/70 shadow-sm transition-[border-color,box-shadow] duration-200 focus-within:border-primary/35 focus-within:shadow-md">
+            {/* Speech status strip */}
+            {(isRecording || speechError) && (
+              <div className="flex items-center justify-between gap-2 border-b border-border/40 bg-muted/40 px-3 py-1.5 text-xs">
+                <div className="flex min-w-0 items-center gap-2">
+                  {isRecording ? (
+                    <>
+                      <span className="relative flex h-2 w-2 shrink-0">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
                       </span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {selected ? "Selected" : "Select"}
+                      <span className="truncate font-medium text-foreground/80">
+                        {t("chat.listening", {
+                          defaultValue: "Listening… speak now.",
+                        })}
                       </span>
-                    </button>
-                  );
-                })
-              )}
-              <div className="flex items-center justify-between border-t border-border/50 px-2 py-1.5">
-                <span className="text-[10px] text-muted-foreground">
-                  {attachedDocs.length === 0
-                    ? "None selected → search all indexed docs"
-                    : `Search limited to ${attachedDocs.length} PDF${attachedDocs.length === 1 ? "" : "s"}`}
-                </span>
+                    </>
+                  ) : (
+                    <span className="truncate font-medium text-destructive">
+                      {speechError}
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
-                  className="text-[11px] font-medium text-primary"
                   onClick={() => {
-                    setAttachPickerOpen(false);
-                    if (isAttachCommand) setInput("");
+                    if (isRecording) {
+                      stopRecording();
+                    } else {
+                      setSpeechError(null);
+                    }
                   }}
+                  className="shrink-0 rounded px-1.5 py-0.5 font-semibold text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+                  aria-label={
+                    isRecording
+                      ? "Stop speech recording"
+                      : "Dismiss speech error"
+                  }
                 >
-                  Done
+                  {isRecording ? (
+                    t("chat.stop", { defaultValue: "Stop" })
+                  ) : (
+                    <X className="h-3 w-3" />
+                  )}
                 </button>
               </div>
-            </div>
-          )}
-          {/* Status / Error Message Area */}
-          {(isRecording || speechError) && (
-            <div className="absolute bottom-full mb-2 left-0 right-0 flex items-center justify-between bg-card border border-border/80 shadow-md rounded-lg px-3 py-1.5 text-xs animate-in fade-in slide-in-from-bottom-1 z-40 max-w-3xl mx-auto">
-              <div className="flex items-center gap-2">
-                {isRecording ? (
-                  <>
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                    </span>
-                    <span className="font-medium text-muted-foreground">
-                      {t("chat.listening", {
-                        defaultValue: "Listening... Speak now.",
-                      })}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-destructive font-medium">
-                    {speechError}
-                  </span>
-                )}
-              </div>
+            )}
+
+            {/* Control rail — model, scope, utilities */}
+            <div className="flex items-center gap-1 px-2 py-1.5">
+              <label className="relative flex items-center">
+                <Cpu
+                  className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <select
+                  value={llmProvider}
+                  disabled={streaming}
+                  onChange={(e) =>
+                    setLlmProvider(e.target.value as "ollama" | "bedrock")
+                  }
+                  className="h-7 cursor-pointer appearance-none rounded-lg bg-muted/40 py-0 pr-6 pl-7 text-xs font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="LLM provider"
+                >
+                  <option value="ollama">Ollama (local)</option>
+                  <option value="bedrock">Nova 2 Lite (Bedrock)</option>
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </label>
+
+              <span
+                className="mx-1 h-4 w-px shrink-0 bg-border/60"
+                aria-hidden="true"
+              />
+
               <button
                 type="button"
-                onClick={() => {
-                  if (isRecording) {
-                    stopRecording();
-                  } else {
-                    setSpeechError(null);
-                  }
-                }}
-                className="text-muted-foreground hover:text-foreground font-semibold px-1.5 py-0.5 rounded hover:bg-muted transition-colors"
-                aria-label={
-                  isRecording ? "Stop speech recording" : "Dismiss speech error"
-                }
+                disabled={streaming || readyDocs.length === 0}
+                onClick={() => setAttachPickerOpen((v) => !v)}
+                className={cn(
+                  "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:pointer-events-none disabled:opacity-50",
+                  attachPickerOpen
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+                aria-label="Attach documents"
+                aria-expanded={attachPickerOpen}
               >
-                {isRecording ? t("chat.stop", { defaultValue: "Stop" }) : "✕"}
+                <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Attach</span>
+                {attachedDocs.length > 0 && (
+                  <span
+                    className={cn(
+                      "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold tabular-nums",
+                      attachPickerOpen
+                        ? "bg-primary/20 text-primary"
+                        : "bg-muted text-foreground",
+                    )}
+                  >
+                    {attachedDocs.length}
+                  </span>
+                )}
               </button>
-            </div>
-          )}
 
-          <div className="flex gap-2 items-end">
-            <div className="relative flex-1 flex items-center">
+              {messages.length > 0 && (
+                <div className="ml-auto flex items-center gap-0.5">
+                  {/* Export history */}
+                  <div className="relative" ref={exportMenuRef}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        id="export-chat-btn"
+                        type="button"
+                        onClick={() => setShowExportMenu((v) => !v)}
+                        className={cn(
+                          buttonVariants({ variant: "ghost", size: "icon" }),
+                          "h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground",
+                        )}
+                        aria-label={t("chat.exportTitle")}
+                        aria-expanded={showExportMenu}
+                        aria-controls="chat-export-menu"
+                        aria-haspopup="menu"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent>{t("chat.exportTitle")}</TooltipContent>
+                    </Tooltip>
+                    {showExportMenu && (
+                      <div
+                        id="chat-export-menu"
+                        role="menu"
+                        aria-label="Export chat"
+                        onKeyDown={handleExportMenuKeyDown}
+                        className="absolute bottom-full right-0 z-50 mb-2 min-w-[160px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-bottom-2"
+                      >
+                        <button
+                          id="export-md-btn"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleExport("md")}
+                          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+                        >
+                          <span className="text-base">📝</span>
+                          {t("chat.markdown")}
+                        </button>
+                        <button
+                          id="export-txt-btn"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleExport("txt")}
+                          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+                        >
+                          <span className="text-base">📄</span>
+                          {t("chat.plainText")}
+                        </button>
+                        <button
+                          id="export-pdf-btn"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => handleExport("pdf")}
+                          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
+                        >
+                          <span className="text-base">📕</span>
+                          {t("chat.pdf")}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {/* Clear history */}
+                  <Tooltip>
+                    <TooltipTrigger
+                      type="button"
+                      onClick={handleClear}
+                      className={cn(
+                        buttonVariants({ variant: "ghost", size: "icon" }),
+                        "h-7 w-7 rounded-lg text-muted-foreground hover:text-destructive",
+                      )}
+                      aria-label="Clear chat history"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </TooltipTrigger>
+                    <TooltipContent>Clear chat history</TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
+            </div>
+
+            {/* Attached document chips */}
+            {attachedDocs.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 border-t border-border/40 px-2.5 py-2">
+                {attachedDocs.map((doc) => (
+                  <span
+                    key={doc.id}
+                    className="inline-flex max-w-[15rem] items-center gap-1.5 rounded-lg border border-border/60 bg-muted/40 py-1 pr-1 pl-2 text-[11px] font-medium text-foreground"
+                    title={doc.filename}
+                  >
+                    <FileText
+                      className="h-3 w-3 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{doc.filename}</span>
+                    <button
+                      type="button"
+                      className="rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-background hover:text-destructive"
+                      aria-label={`Remove ${doc.filename}`}
+                      onClick={() => removeAttachedDoc(doc.id)}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+                <button
+                  type="button"
+                  className="rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-destructive"
+                  onClick={() => setAttachedDocs([])}
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
+
+            {/* Attach picker */}
+            {attachPickerOpen && (
+              <div className="border-t border-border/40">
+                <div className="flex items-center justify-between px-3 py-1.5">
+                  <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                    Attach PDFs
+                  </span>
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    {attachedDocs.length} selected
+                  </span>
+                </div>
+                <div
+                  className="max-h-48 overflow-y-auto px-1 pb-1"
+                  role="listbox"
+                  aria-label="Attach documents"
+                >
+                  {attachCandidates.length === 0 ? (
+                    <p className="px-3 py-3 text-xs text-muted-foreground">
+                      {readyDocs.length === 0
+                        ? "No ready documents to attach."
+                        : "No matching PDFs."}
+                    </p>
+                  ) : (
+                    attachCandidates.map((doc) => {
+                      const selected = attachedDocs.some((d) => d.id === doc.id);
+                      return (
+                        <button
+                          key={doc.id}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => toggleAttachedDoc(doc)}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                            selected
+                              ? "bg-primary/10 font-medium text-foreground"
+                              : "text-foreground hover:bg-accent",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+                              selected
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "border-border/70 bg-background/60",
+                            )}
+                            aria-hidden="true"
+                          >
+                            {selected && <Check className="h-3 w-3" />}
+                          </span>
+                          <span className="flex-1 truncate">
+                            {doc.original_name}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-border/40 px-3 py-1.5">
+                  <span className="text-[10px] text-muted-foreground">
+                    {attachedDocs.length === 0
+                      ? "None selected → search all indexed docs"
+                      : `Search limited to ${attachedDocs.length} PDF${attachedDocs.length === 1 ? "" : "s"}`}
+                  </span>
+                  <button
+                    type="button"
+                    className="h-6 shrink-0 rounded-md bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
+                    onClick={() => {
+                      setAttachPickerOpen(false);
+                      if (isAttachCommand) setInput("");
+                    }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Writing area */}
+            <div className="flex items-end gap-1.5 px-2 pb-2">
               <Textarea
                 ref={textareaRef}
                 id="chat-input"
@@ -1319,16 +1452,15 @@ export default function ChatPanel({
                 placeholder={
                   attachedDocs.length > 0
                     ? `Ask about ${attachedDocs.length} attached PDF${attachedDocs.length === 1 ? "" : "s"}…`
-                    : "Ask across all indexed documents… (/attach to scope)"
+                    : "Ask across all indexed documents…"
                 }
                 disabled={streaming}
-                className="min-h-[44px] max-h-32 resize-none bg-background/50 border-border/50 pr-11"
+                className="min-h-[40px] max-h-32 flex-1 resize-none border-0 bg-transparent px-1.5 py-2 shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
                 rows={1}
                 aria-label="Chat message"
                 aria-describedby="chat-input-hint"
               />
 
-              {/* Mic — inner-right of composer, vertically centered */}
               <Tooltip>
                 <TooltipTrigger
                   id="mic-btn"
@@ -1337,10 +1469,10 @@ export default function ChatPanel({
                   onClick={toggleRecording}
                   className={cn(
                     buttonVariants({ variant: "ghost", size: "icon" }),
-                    "absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md text-muted-foreground transition-all duration-200",
+                    "mb-0.5 h-8 w-8 shrink-0 rounded-lg text-muted-foreground transition-all duration-200",
                     isRecording
-                      ? "bg-red-500/20 text-red-500 hover:bg-red-500/30 hover:text-red-600 animate-pulse"
-                      : "hover:text-primary hover:bg-accent",
+                      ? "animate-pulse bg-red-500/20 text-red-500 hover:bg-red-500/30 hover:text-red-600"
+                      : "hover:bg-accent hover:text-primary",
                   )}
                   aria-label={
                     isRecording
@@ -1369,9 +1501,7 @@ export default function ChatPanel({
                     })}
                 </TooltipContent>
               </Tooltip>
-            </div>
 
-            <div className="flex gap-1.5 shrink-0">
               <Tooltip>
                 <TooltipTrigger
                   id="send-btn"
@@ -1380,107 +1510,28 @@ export default function ChatPanel({
                   disabled={!streaming && !input.trim()}
                   className={cn(
                     buttonVariants({ size: "icon" }),
-                    "h-10 w-10 sm:h-[44px] sm:w-[44px]",
+                    "mb-0.5 h-9 w-9 shrink-0 rounded-xl shadow-sm shadow-primary/20",
                   )}
                   aria-label={streaming ? "Stop generating" : "Send message"}
                 >
                   {streaming ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Send className="w-4 h-4" />
+                    <Send className="h-4 w-4" />
                   )}
                 </TooltipTrigger>
                 <TooltipContent>
                   {streaming ? "Stop generating" : "Send message"}
                 </TooltipContent>
               </Tooltip>
-              {messages.length > 0 && (
-                <>
-                  {/* Export dropdown */}
-                  <div className="relative" ref={exportMenuRef}>
-                    <Tooltip>
-                      <TooltipTrigger
-                        id="export-chat-btn"
-                        type="button"
-                        onClick={() => setShowExportMenu((v) => !v)}
-                        className={cn(
-                          buttonVariants({ variant: "ghost", size: "icon" }),
-                          "h-10 w-10 sm:h-[44px] sm:w-[44px] text-muted-foreground hover:text-primary",
-                        )}
-                        aria-label={t("chat.exportTitle")}
-                        aria-expanded={showExportMenu}
-                        aria-controls="chat-export-menu"
-                        aria-haspopup="menu"
-                      >
-                        <Download className="w-4 h-4" />
-                      </TooltipTrigger>
-                      <TooltipContent>{t("chat.exportTitle")}</TooltipContent>
-                    </Tooltip>
-                    {showExportMenu && (
-                      <div
-                        id="chat-export-menu"
-                        role="menu"
-                        aria-label="Export chat"
-                        onKeyDown={handleExportMenuKeyDown}
-                        className="absolute bottom-full mb-2 right-0 min-w-[160px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-bottom-2 z-50"
-                      >
-                        <button
-                          id="export-md-btn"
-                          type="button"
-                          role="menuitem"
-                          onClick={() => handleExport("md")}
-                          className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-accent transition-colors text-left"
-                        >
-                          <span className="text-base">📝</span>
-                          {t("chat.markdown")}
-                        </button>
-                        <button
-                          id="export-txt-btn"
-                          type="button"
-                          role="menuitem"
-                          onClick={() => handleExport("txt")}
-                          className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-accent transition-colors text-left"
-                        >
-                          <span className="text-base">📄</span>
-                          {t("chat.plainText")}
-                        </button>
-                        <button
-                          id="export-pdf-btn"
-                          type="button"
-                          role="menuitem"
-                          onClick={() => handleExport("pdf")}
-                          className="w-full flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-accent transition-colors text-left"
-                        >
-                          <span className="text-base">📕</span>
-                          {t("chat.pdf")}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {/* Clear history */}
-                  <Tooltip>
-                    <TooltipTrigger
-                      type="button"
-                      onClick={handleClear}
-                      className={cn(
-                        buttonVariants({ variant: "ghost", size: "icon" }),
-                        "h-10 w-10 sm:h-[44px] sm:w-[44px] text-muted-foreground hover:text-destructive",
-                      )}
-                      aria-label="Clear chat history"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </TooltipTrigger>
-                    <TooltipContent>Clear chat history</TooltipContent>
-                  </Tooltip>
-                </>
-              )}
             </div>
           </div>
+
+          <p id="chat-input-hint" className="sr-only">
+            Press Enter to send. Press Shift and Enter for a new line. Press
+            Ctrl+Enter to send from anywhere. Press Escape to cancel streaming.
+          </p>
         </div>
-        <p id="chat-input-hint" className="sr-only">
-          Press Enter to send. Press Shift and Enter for a new line. Press
-          Ctrl+Enter to send from anywhere. Press Escape to cancel streaming.
-        </p>
       </div>
     </div>
   );
