@@ -129,16 +129,24 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         doc.processing_stage = "embedding"
         db.commit()
 
+        def _on_embed_progress(stored: int, total: int) -> None:
+            if total <= 0:
+                return
+            # Map embedding batches into overall progress 70% → 90%.
+            pct = 70 + int((stored / total) * 20)
+            _update_progress(document_id, min(pct, 90), "embedding")
+
         chunk_count = store_chunks(
             chunks=chunks,
             document_id=document_id,
             filename=original_name,
             user_id=user_id,
+            on_progress=_on_embed_progress,
         )
 
         persist_document_keywords(doc, chunks, db)
 
-        doc.processing_progress = 85
+        doc.processing_progress = 92
         db.commit()
 
         try:

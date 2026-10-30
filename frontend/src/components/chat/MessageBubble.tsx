@@ -33,6 +33,7 @@ import {
   encodeNotePayload,
 } from "@/lib/notes-mime";
 import MarkdownContent from "@/components/chat/MarkdownContent";
+import StreamingText from "@/components/chat/StreamingText";
 import { prepareMarkdownForMath } from "@/lib/math-markdown";
 
 const subscribe = () => () => {};
@@ -381,16 +382,22 @@ export default function MessageBubble({ message }: Props) {
               className={`prose-chat ${fontSizeClass} ${message.content ? "pr-24" : ""}`}
             >
               {message.content ? (
-                // While tokens arrive, render plain text so the UI paints every
-                // chunk like ChatGPT. Full markdown/KaTeX runs only when done —
-                // re-parsing on every token freezes the main thread and looks
-                // like the answer appeared all at once.
+                // While tokens arrive, paint plain text via StreamingText so the
+                // caret stays solid and the UI stays responsive. Full markdown /
+                // KaTeX runs only when the stream finishes.
                 message.isStreaming ? (
-                  <div className="whitespace-pre-wrap break-words">
-                    {prepareMarkdownForMath(message.content, {
+                  <StreamingText
+                    liveText={prepareMarkdownForMath(message.content, {
                       isStreaming: true,
                     })}
-                  </div>
+                    streaming
+                    loop={false}
+                    fill
+                    showActions={false}
+                    showFollowUps={false}
+                    followUps={[]}
+                    sources={[]}
+                  />
                 ) : (
                   <MarkdownContent content={message.content} />
                 )
@@ -401,9 +408,6 @@ export default function MessageBubble({ message }: Props) {
                   <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce [animation-delay:300ms]" />
                 </div>
               ) : null}
-              {message.isStreaming && message.content && (
-                <span className="inline-block w-0.5 h-4 bg-primary/60 animate-pulse ml-0.5 align-text-bottom" />
-              )}
             </div>
           </>
         )}

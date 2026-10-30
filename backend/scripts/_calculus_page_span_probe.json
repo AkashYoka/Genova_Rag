@@ -1,0 +1,242 @@
+[
+  {
+    "region": "first",
+    "q": "According to the preface of this Calculus Volume 1 PDF, what is OpenStax and where is it based?",
+    "elapsed_s": 35.5,
+    "answer": "According to the preface of this Calculus Volume 1 PDF, OpenStax is a nonprofit based at Rice University [Source: calculus-volume-1_-_WEB-1-300.pdf, Page 9].",
+    "sources": [
+      {
+        "page": 9,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "Preface 1\nPreface\nWelcome to Calculus Volume 1, an OpenStax resource. This textbook was written to increase student acce"
+      },
+      {
+        "page": 9,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "will also find a list of past errata changes on your book page on OpenStax.org.\nFormat\nYou can access this textbook for "
+      },
+      {
+        "page": 9,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "learning and empowering students and instructors to succeed.\nAbout OpenStax's resources\nCustomization\nCalculus Volume 1 "
+      },
+      {
+        "page": 4,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "HTML), then you must retain on every page the following attribution:\n“Access for free at openstax.org.”\n- If you noncomm"
+      },
+      {
+        "page": 6,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "Study where you want, what\nyou want, when you want.\nWhen you access your book in our web view, you can use our new onlin"
+      }
+    ],
+    "source_pages": [
+      9,
+      9,
+      9,
+      4,
+      6
+    ]
+  },
+  {
+    "region": "first",
+    "q": "From the table of contents early in this book, what topics does Chapter 1 cover?",
+    "elapsed_s": 28.2,
+    "answer": "According to the table of contents early in this book, Chapter 1 covers the following topics:\n\n- Early or late transcendentals (Source: calculus-volume-1_-_WEB-1-300.pdf, Page 10)\n- Introduction of exponential and logarithmic functions informally (Source: calculus-volume-1_-_WEB-1-300.pdf, Page 10)\n\nChapter 1 introduces these topics in a more informal manner before presenting them in more rigorous terms later in the book. Additionally, Chapter 1 discusses differentiation and integration of these functions for instructors who want to include them with other types of functions (Source: calculus-volume-1_-_WEB-1-300.pdf, Page 10).",
+    "sources": [
+      {
+        "page": 10,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "in the chapter, using the ideas covered in that chapter. Problems include the hydraulic force against the Hoover Dam, an"
+      },
+      {
+        "page": 10,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "for selected exercises are available in the Answer Key at the back of the book.\nEarly or late transcendentals\nCalculus V"
+      },
+      {
+        "page": 9,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "sections in your syllabus, in the order that you prefer. You can even provide a direct link in your syllabus to the sect"
+      },
+      {
+        "page": 10,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "modern applications and methods. Derivations and explanations are based on years of classroom experience on the part\nof "
+      },
+      {
+        "page": 294,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "286 3 • Derivatives\n361 . [T] The number of cases of influenza 362 . [T] The relative rate of\nin New York City from the "
+      }
+    ],
+    "source_pages": [
+      10,
+      10,
+      9,
+      10,
+      294
+    ]
+  },
+  {
+    "region": "middle",
+    "q": "According to this PDF, state Theorem 2.5 Limit Laws — list the named laws (sum, difference, etc.).",
+    "elapsed_s": 36.2,
+    "answer": "According to Theorem 2.5 in this PDF, the Limit Laws are as follows:\n\n- Sum law for limits:\n\\[ \\lim_{x \\to a} [f(x) + g(x)] = \\lim_{x \\to a} f(x) + \\lim_{x \\to a} g(x) \\]\n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 149]\n\n- Difference law for limits:\n\\[ \\lim_{x \\to a} [f(x) - g(x)] = \\lim_{x \\to a} f(x) - \\lim_{x \\to a} g(x) \\]\n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 149]\n\n- Constant multiple law for limits:\n\\[ \\lim_{x \\to a} [c \\cdot f(x)] = c \\cdot \\lim_{x \\to a} f(x) \\]\nwhere \\( c \\) is a constant. \n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 149]\n\n- Product law for limits:\n\\[ \\lim_{x \\to a} [f(x) \\cdot g(x)] = \\left( \\lim_{x \\to a} f(x) \\right) \\cdot \\left( \\lim_{x \\to a} g(x) \\right) \\]\n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 149]\n\n- Quotient law for limits:\n\\[ \\lim_{x \\to a} \\frac{f(x)}{g(x)} = \\frac{\\left( \\lim_{x \\to a} f(x) \\right)}{\\left( \\lim_{x \\to a} g(x) \\right)} \\]\nwhere \\( g(a) \\neq 0 \\). \n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 149]\n\n- Power law for limits:\n\\[ \\lim_{x \\to a} [f(x)]^n = \\left( \\lim_{x \\to a} f(x) \\right)^n \\]\nwhere \\( n \\) is any positive integer. \n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 149]\n\n- Root law for limits:\n\\[ \\lim_{x \\to a} \\sqrt[n]{f(x)} = \\sqrt[n]{\\left( \\lim_{x \\to a} f(x) \\right)} \\]\nwhere \\( n \\) is any positive integer and if \\( n \\) is odd, the root applies to both sides of \\( a \\). \n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 149]\n\nThese are the named laws stated in Theorem 2.5 from this PDF document.",
+    "sources": [
+      {
+        "page": 149,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "| Theorem 2.5 |\n| --- |\n| Limit Laws Let and be defined for all over some open interval containing a. Assume that L and "
+      },
+      {
+        "page": 154,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "146 2 • Limits\nStep 5. Then, we cancel the common factors of\nStep 6. Last, we evaluate using the limit laws:\n2.15\nEvalua"
+      },
+      {
+        "page": 155,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "Solution\n2.3 • The Limit Laws 147\nFigure 2.25 illustrates the function\nand aids in our understanding of these limits.\nFi"
+      },
+      {
+        "page": 150,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "142 2 • Limits\nEXAMPLE 2.15\nUsing Limit Laws Repeatedly\nUse the limit laws to evaluate\nSolution\nTo find this limit, we n"
+      },
+      {
+        "page": 148,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "140 2 • Limits\n82 . A track coach uses a\ncamera with a fast shutter\nto estimate the position of\na runner with respect to"
+      }
+    ],
+    "source_pages": [
+      149,
+      154,
+      155,
+      150,
+      148
+    ]
+  },
+  {
+    "region": "middle",
+    "q": "According to this PDF near the limit laws section, what does Theorem 2.6 say about limits of polynomial and rational functions?",
+    "elapsed_s": 28.8,
+    "answer": "According to Theorem 2.6 in this PDF, it states:\n\nLet \\( f(x) \\) and \\( g(x) \\) be polynomial functions. Let \\( a \\) be a real number. Then,\n\n\\[ \\lim_{x \\to a} [f(x) + g(x)] = \\lim_{x \\to a} f(x) + \\lim_{x \\to a} g(x) \\]\n\n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 150]",
+    "sources": [
+      {
+        "page": 150,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "142 2 • Limits\nEXAMPLE 2.15\nUsing Limit Laws Repeatedly\nUse the limit laws to evaluate\nSolution\nTo find this limit, we n"
+      },
+      {
+        "page": 150,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "| Theorem 2.6 |\n| --- |\n| Limits of Polynomial and Rational Functions Let and be polynomial functions. Let a be a real n"
+      },
+      {
+        "page": 192,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "184 2 • Chapter Review\nspace and finding volumes of solids.\n2.2 The Limit of a Function\n• A table of values or graph may"
+      },
+      {
+        "page": 151,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "2.3 • The Limit Laws 143\nExample 2.16 applies this result.\nEXAMPLE 2.16\nEvaluating a Limit of a Rational Function\nEvalua"
+      },
+      {
+        "page": 148,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "140 2 • Limits\n82 . A track coach uses a\ncamera with a fast shutter\nto estimate the position of\na runner with respect to"
+      }
+    ],
+    "source_pages": [
+      150,
+      150,
+      192,
+      151,
+      148
+    ]
+  },
+  {
+    "region": "last",
+    "q": "Near the end of this PDF in the Chapter 3 review, what is the product rule for derivatives as stated in the key concepts?",
+    "elapsed_s": 28.3,
+    "answer": "Near the end of Chapter 3 review in this PDF, the product rule for derivatives is stated as follows:\n\nThe derivative of a product of two functions \\( f(x) \\) and \\( g(x) \\) is given by:\n\\[ (f(x) \\cdot g(x))' = f'(x) \\cdot g(x) + f(x) \\cdot g'(x) \\]\n\n[Source: calculus-volume-1_-_WEB-1-300.pdf, Page 296]",
+    "sources": [
+      {
+        "page": 230,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "222 3 • Derivatives\nThis means that the derivative of a product of two functions is the derivative of the first function"
+      },
+      {
+        "page": 231,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "3.16\n3.3 • Differentiation Rules 223\nUse the product rule to obtain the derivative of\nThe Quotient Rule\nHaving developed"
+      },
+      {
+        "page": 262,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "254 3 • Derivatives\nEXAMPLE 3.54\nCombining the Chain Rule with the Product Rule\nFind the derivative of\nSolution\nFirst ap"
+      },
+      {
+        "page": 296,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "288 3 • Chapter Review\nChapter Review\nKey Terms\nacceleration is the rate of change of the velocity, that is, the derivat"
+      },
+      {
+        "page": 140,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "132 2 • Limits\nThus, according to Table 2.8, if an object with mass 100 kg is traveling at 0.9999c, its mass becomes 707"
+      }
+    ],
+    "source_pages": [
+      230,
+      231,
+      262,
+      296,
+      140
+    ]
+  },
+  {
+    "region": "last",
+    "q": "In the Chapter 3 Review Exercises near the end of this PDF, what true/false statement is question 370?",
+    "elapsed_s": 26.4,
+    "answer": "I couldn't find sufficient information in the uploaded documents to answer this question.",
+    "sources": [
+      {
+        "page": 143,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "2.2 • The Limit of a Function 135\nIn the following exercises, consider the graph of the function\nshown here. Which of th"
+      },
+      {
+        "page": 10,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "in the chapter, using the ideas covered in that chapter. Problems include the hydraulic force against the Hoover Dam, an"
+      },
+      {
+        "page": 18,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "10 1 • Functions and Graphs\nWe read this as the set of real numbers such that has some property. For example, if we were"
+      },
+      {
+        "page": 180,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "172 2 • Limits\nTherefore,\nThe following Problem-Solving Strategy summarizes the type of proof we worked out in Example 2"
+      },
+      {
+        "page": 11,
+        "doc": "calculus-volume-1_-_WEB-1-300.pdf",
+        "snippet": "Preface 3\nAnswers to Questions in the Book\nAnswers to Examples are provided just below the question in the book. All Che"
+      }
+    ],
+    "source_pages": [
+      143,
+      10,
+      18,
+      180,
+      11
+    ]
+  }
+]

@@ -193,6 +193,8 @@ class DocumentResponse(BaseModel):
     task_id: Optional[str] = None
     keywords: Optional[List[str]] = []
     extracted_urls: Optional[List[str]] = []
+    processing_progress: Optional[int] = None
+    processing_stage: Optional[str] = None
 
     @field_validator("id", mode="before")
     @classmethod

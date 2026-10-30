@@ -75,6 +75,8 @@ export interface DocInfo {
   error_message: string | null;
   uploaded_at: string;
   keywords?: string[];
+  processing_progress?: number | null;
+  processing_stage?: string | null;
 }
 
 function formatBytes(n: number): string {

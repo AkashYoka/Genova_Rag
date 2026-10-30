@@ -53,23 +53,25 @@ export default function BulkActionBar({
           </Button>
         )}
 
-        {mode === "active" && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
-            onClick={onDelete}
-            disabled={deleting || restoring}
-            aria-label={`Delete ${selectedCount} selected documents`}
-          >
-            {deleting ? (
-              <Loader2 className="w-3 h-3 animate-spin" />
-            ) : (
-              <Trash2 className="w-3 h-3" />
-            )}
-            Delete
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
+          onClick={onDelete}
+          disabled={deleting || restoring}
+          aria-label={
+            mode === "trash"
+              ? `Permanently delete ${selectedCount} selected documents`
+              : `Delete ${selectedCount} selected documents`
+          }
+        >
+          {deleting ? (
+            <Loader2 className="w-3 h-3 animate-spin" />
+          ) : (
+            <Trash2 className="w-3 h-3" />
+          )}
+          {mode === "trash" ? "Delete forever" : "Delete"}
+        </Button>
 
         <Button
           variant="ghost"

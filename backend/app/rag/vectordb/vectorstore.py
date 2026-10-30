@@ -13,7 +13,7 @@ Common example question:
    chronic spontaneous urticaria (CSU)?"
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -85,12 +85,14 @@ def store_chunks(
     document_id: str,
     filename: str,
     user_id: str,
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> int:
     """Embed + upsert chunks into Chroma; rebuild BM25 for the same document.
 
     Args:
         chunks: Dicts with at least text, page, chunk_index (from chunker).
         document_id / filename / user_id: ownership + metadata.
+        on_progress: Optional callback ``(stored_count, total_count)`` after each batch.
 
     Returns:
         Number of chunks added (0 if chunks empty).
@@ -188,6 +190,8 @@ def store_chunks(
             documents=batch_texts,
         )
         total_stored += len(batch_texts)
+        if on_progress:
+            on_progress(total_stored, len(texts))
 
     logger.info(f"Stored {total_stored} chunks for document {document_id}")
     return total_stored

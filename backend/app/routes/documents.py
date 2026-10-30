@@ -293,26 +293,43 @@ async def upload_document(
     db.refresh(document)
 
     # ── Queue background ingestion ─────────────────
+    # When Redis is down Celery runs task_always_eager=True, which would block
+    # this HTTP request for the entire ingest (large PDFs look "stuck"). Prefer
+    # FastAPI BackgroundTasks in that mode so upload returns 202 immediately.
     task_id = None
-    try:
-        task = process_document.delay(
+    from app.celery_app import celery_app as _celery
+
+    use_local_bg = bool(getattr(_celery.conf, "task_always_eager", False)) and background_tasks is not None
+    if use_local_bg:
+        background_tasks.add_task(
+            ingest_document,
             document_id=document.id,
             filepath=filepath,
             original_name=file.filename,
             user_id=user.id,
         )
-        task_id = task.id
-    except Exception as e:
-        logger.warning(f"Celery queue failed, falling back to background task: {e}")
-        if background_tasks:
-            background_tasks.add_task(
-                ingest_document,
+        task_id = f"local_{uuid.uuid4().hex}"
+        logger.info("Queued document %s via BackgroundTasks (Celery eager mode)", document.id)
+    else:
+        try:
+            task = process_document.delay(
                 document_id=document.id,
                 filepath=filepath,
                 original_name=file.filename,
                 user_id=user.id,
             )
-        task_id = f"local_{uuid.uuid4().hex}"
+            task_id = task.id
+        except Exception as e:
+            logger.warning(f"Celery queue failed, falling back to background task: {e}")
+            if background_tasks:
+                background_tasks.add_task(
+                    ingest_document,
+                    document_id=document.id,
+                    filepath=filepath,
+                    original_name=file.filename,
+                    user_id=user.id,
+                )
+            task_id = f"local_{uuid.uuid4().hex}"
 
     return DocumentResponse.model_validate(document).model_copy(update={"task_id": task_id})
 
@@ -392,25 +409,38 @@ async def batch_upload_documents(
             db.refresh(document)
 
             task_id = None
-            try:
-                task = process_document.delay(
+            from app.celery_app import celery_app as _celery
+
+            use_local_bg = bool(getattr(_celery.conf, "task_always_eager", False)) and background_tasks is not None
+            if use_local_bg:
+                background_tasks.add_task(
+                    ingest_document,
                     document_id=document.id,
                     filepath=filepath,
                     original_name=file.filename,
                     user_id=user.id,
                 )
-                task_id = task.id
-            except Exception as e:
-                logger.warning(f"Celery queue failed for {file.filename}, falling back to background task: {e}")
-                if background_tasks:
-                    background_tasks.add_task(
-                        ingest_document,
+                task_id = f"local_{uuid.uuid4().hex}"
+            else:
+                try:
+                    task = process_document.delay(
                         document_id=document.id,
                         filepath=filepath,
                         original_name=file.filename,
                         user_id=user.id,
                     )
-                task_id = f"local_{uuid.uuid4().hex}"
+                    task_id = task.id
+                except Exception as e:
+                    logger.warning(f"Celery queue failed for {file.filename}, falling back to background task: {e}")
+                    if background_tasks:
+                        background_tasks.add_task(
+                            ingest_document,
+                            document_id=document.id,
+                            filepath=filepath,
+                            original_name=file.filename,
+                            user_id=user.id,
+                        )
+                    task_id = f"local_{uuid.uuid4().hex}"
 
             created_documents.append(
                 DocumentResponse.model_validate(document).model_copy(update={"task_id": task_id})
@@ -607,6 +637,58 @@ def restore_document(document_id: str, user: User = Depends(get_current_user), d
     db.refresh(doc)
     
     return DocumentResponse.model_validate(doc)
+
+
+@router.delete("/trash", status_code=status.HTTP_200_OK)
+def empty_trash(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Permanently delete every soft-deleted document for the current user."""
+    from app.services.cleanup import _hard_delete_document
+
+    docs = (
+        db.query(Document)
+        .filter(Document.user_id == user.id, Document.is_deleted.is_(True))
+        .all()
+    )
+    deleted = 0
+    for doc in docs:
+        name = doc.original_name
+        _hard_delete_document(db, doc)
+        deleted += 1
+        logging.getLogger(__name__).info(
+            "Permanently deleted trash document '%s' for user %s", name, user.id
+        )
+    db.commit()
+    return {
+        "message": f"Permanently deleted {deleted} document{'s' if deleted != 1 else ''} from trash",
+        "deleted": deleted,
+    }
+
+
+@router.delete("/{document_id}/permanent", status_code=status.HTTP_200_OK)
+def permanently_delete_document(
+    document_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete one document that is already in trash (irreversible)."""
+    from app.services.cleanup import _hard_delete_document
+
+    doc = (
+        db.query(Document)
+        .filter(
+            Document.id == document_id,
+            Document.user_id == user.id,
+            Document.is_deleted.is_(True),
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found in trash")
+
+    name = doc.original_name
+    _hard_delete_document(db, doc)
+    db.commit()
+    return {"message": f"Document '{name}' permanently deleted"}
 
 
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)

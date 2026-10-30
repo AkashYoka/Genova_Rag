@@ -90,6 +90,10 @@ export default function DocumentSidebar({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkRestoring, setBulkRestoring] = useState(false);
+  const [emptyingTrash, setEmptyingTrash] = useState(false);
+  const [permanentDeletingId, setPermanentDeletingId] = useState<string | null>(
+    null,
+  );
 
   // Clear selection when switching tabs
   const handleTabChange = (value: string) => {
@@ -181,6 +185,101 @@ export default function DocumentSidebar({
     setBulkRestoring(false);
     void fetchTrash();
     await onDocumentsChange();
+  };
+
+  // ── Bulk permanent delete (trash tab) ────────────────────────────────────
+  const handleBulkPermanentDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (
+      !window.confirm(
+        `Permanently delete ${selectedIds.size} document${selectedIds.size > 1 ? "s" : ""}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkDeleting(true);
+    const ids = Array.from(selectedIds);
+    const results = await Promise.allSettled(
+      ids.map((id) => api.delete(`/api/v1/documents/${id}/permanent`)),
+    );
+
+    const failed = results.filter((r) => r.status === "rejected").length;
+    const succeeded = results.length - failed;
+
+    if (succeeded > 0) {
+      toast.success(
+        `${succeeded} document${succeeded > 1 ? "s" : ""} permanently deleted`,
+      );
+    }
+    if (failed > 0) {
+      toast.error(
+        `${failed} document${failed > 1 ? "s" : ""} could not be deleted`,
+      );
+    }
+
+    clearSelection();
+    setBulkDeleting(false);
+    void fetchTrash();
+    await onDocumentsChange();
+  };
+
+  const handleEmptyTrash = async () => {
+    if (trashDocuments.length === 0) return;
+    if (
+      !window.confirm(
+        `Empty trash and permanently delete all ${trashDocuments.length} document${trashDocuments.length > 1 ? "s" : ""}? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    setEmptyingTrash(true);
+    try {
+      const res = await api.delete<{ message: string; deleted: number }>(
+        "/api/v1/documents/trash",
+      );
+      toast.success(res.message || "Trash emptied");
+      clearSelection();
+      void fetchTrash();
+      await onDocumentsChange();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to empty trash";
+      toast.error(message);
+    } finally {
+      setEmptyingTrash(false);
+    }
+  };
+
+  const handlePermanentDelete = async (docId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const doc = trashDocuments.find((d) => d.id === docId);
+    const label = doc?.original_name || "this document";
+    if (
+      !window.confirm(
+        `Permanently delete "${label}"? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+
+    setPermanentDeletingId(docId);
+    try {
+      await api.delete(`/api/v1/documents/${docId}/permanent`);
+      toast.success("Document permanently deleted");
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(docId);
+        return next;
+      });
+      void fetchTrash();
+      await onDocumentsChange();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Delete forever failed";
+      toast.error(message);
+    } finally {
+      setPermanentDeletingId(null);
+    }
   };
 
   const fetchTrash = useCallback(async () => {
@@ -477,7 +576,7 @@ export default function DocumentSidebar({
         onValueChange={handleTabChange}
         className="flex-1 flex flex-col min-h-0"
       >
-        <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+        <div className="px-3 pt-3 pb-1 flex items-center justify-between gap-2">
           <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             {activeTab === "active"
               ? loading
@@ -487,23 +586,47 @@ export default function DocumentSidebar({
                 ? "TRASH (...)"
                 : `TRASH (${trashDocuments.length})`}
           </h3>
-          <TabsList className="h-7 bg-sidebar-accent">
-            <TabsTrigger value="active" className="text-[10px] px-2 py-0.5">
-              Active
-            </TabsTrigger>
-            <TabsTrigger value="trash" className="text-[10px] px-2 py-0.5">
-              Trash
-            </TabsTrigger>
-          </TabsList>
+          <div className="flex items-center gap-1.5">
+            {activeTab === "trash" && trashDocuments.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[10px] px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={() => void handleEmptyTrash()}
+                disabled={emptyingTrash || bulkDeleting || bulkRestoring}
+                aria-label="Empty trash"
+                title="Empty trash"
+              >
+                {emptyingTrash ? (
+                  <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                ) : (
+                  <Trash2 className="w-3 h-3 mr-1" />
+                )}
+                Empty trash
+              </Button>
+            )}
+            <TabsList className="h-7 bg-sidebar-accent">
+              <TabsTrigger value="active" className="text-[10px] px-2 py-0.5">
+                Active
+              </TabsTrigger>
+              <TabsTrigger value="trash" className="text-[10px] px-2 py-0.5">
+                Trash
+              </TabsTrigger>
+            </TabsList>
+          </div>
         </div>
 
         {/* ── Bulk Action Bar ──────────────────────── */}
         <BulkActionBar
           selectedCount={selectedIds.size}
-          onDelete={handleBulkDelete}
+          onDelete={
+            activeTab === "trash"
+              ? handleBulkPermanentDelete
+              : handleBulkDelete
+          }
           onRestore={handleBulkRestore}
           onClear={clearSelection}
-          deleting={bulkDeleting}
+          deleting={bulkDeleting || emptyingTrash}
           restoring={bulkRestoring}
           mode={activeTab as "active" | "trash"}
         />
@@ -629,9 +752,26 @@ export default function DocumentSidebar({
                             {doc.status === "processing" && (
                               <Badge
                                 variant="secondary"
-                                className="h-4 px-1.5 text-[9px]"
+                                className="h-4 px-1.5 text-[9px] tabular-nums"
+                                title={
+                                  doc.processing_stage
+                                    ? `${doc.processing_stage}${
+                                        typeof doc.processing_progress ===
+                                        "number"
+                                          ? ` · ${doc.processing_progress}%`
+                                          : ""
+                                      }`
+                                    : undefined
+                                }
                               >
-                                {t("documents.processing")}
+                                {typeof doc.processing_progress === "number"
+                                  ? t("documents.processingPercent", {
+                                      percent: Math.max(
+                                        0,
+                                        Math.min(100, doc.processing_progress),
+                                      ),
+                                    })
+                                  : t("documents.processing")}
                               </Badge>
                             )}
                             {doc.status === "failed" && (
@@ -739,8 +879,34 @@ export default function DocumentSidebar({
                             onClick={(e) => handleRestore(doc.id, e)}
                             title={`Restore ${doc.original_name}`}
                             aria-label={`Restore ${doc.original_name}`}
+                            disabled={
+                              emptyingTrash ||
+                              permanentDeletingId === doc.id ||
+                              bulkDeleting
+                            }
                           >
                             <RefreshCw className="w-3 h-3 text-primary" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                            onClick={(e) =>
+                              void handlePermanentDelete(doc.id, e)
+                            }
+                            title={`Delete forever ${doc.original_name}`}
+                            aria-label={`Delete forever ${doc.original_name}`}
+                            disabled={
+                              emptyingTrash ||
+                              permanentDeletingId === doc.id ||
+                              bulkDeleting
+                            }
+                          >
+                            {permanentDeletingId === doc.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin text-destructive" />
+                            ) : (
+                              <Trash2 className="w-3 h-3 text-destructive" />
+                            )}
                           </Button>
                         </div>
                       </div>

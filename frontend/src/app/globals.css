@@ -464,6 +464,88 @@
   background: oklch(0.5 0.16 25 / 10%);
 }
 
+/* StreamingText (Beautiful UI) — caret, source avatars, motion */
+.streaming-source-avatar {
+  box-shadow: 0 0 0 1px oklch(0.21 0.034 263.436 / 0.1);
+}
+.dark .streaming-source-avatar {
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 0.08);
+}
+
+.streaming-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 1.5px;
+  translate: 0 -0.5px;
+  border-radius: 1px;
+  background: var(--foreground);
+  vertical-align: text-bottom;
+  animation: streaming-caret-blink 1s step-end infinite;
+}
+.streaming-caret.is-streaming {
+  animation: none;
+}
+
+.streaming-animated-underline {
+  position: relative;
+  display: inline-block;
+}
+.streaming-animated-underline::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  content: "";
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+a:hover .streaming-animated-underline::after,
+a:focus-visible .streaming-animated-underline::after {
+  transform: scaleX(1);
+}
+
+@keyframes streaming-caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes streaming-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes streaming-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .streaming-caret {
+    animation: none;
+  }
+}
+
 html,
 body {
   min-width: 375px;

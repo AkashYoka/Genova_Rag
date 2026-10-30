@@ -286,3 +286,106 @@ def test_delete_document_soft_deletes_and_hides_document(client, auth_headers, r
 
     get_response = client.get(f"/api/v1/documents/{doc_id}", headers=auth_headers)
     assert get_response.status_code == 404
+
+
+def test_permanent_delete_removes_trashed_document(
+    client, auth_headers, ready_document, db_session, monkeypatch
+):
+    from datetime import datetime, timezone
+
+    from app.models import Document
+
+    def fake_hard_delete(db, doc):
+        db.delete(doc)
+        db.flush()
+
+    monkeypatch.setattr(
+        "app.services.cleanup._hard_delete_document",
+        fake_hard_delete,
+    )
+
+    ready_document.is_deleted = True
+    ready_document.deleted_at = datetime.now(timezone.utc)
+    db_session.commit()
+    doc_id = ready_document.id
+
+    # Active docs cannot be permanently deleted via this endpoint
+    active = Document(
+        user_id=ready_document.user_id,
+        filename="active.txt",
+        original_name="active.txt",
+        file_size=10,
+        status="ready",
+        is_deleted=False,
+    )
+    db_session.add(active)
+    db_session.commit()
+    db_session.refresh(active)
+
+    bad = client.delete(
+        f"/api/v1/documents/{active.id}/permanent",
+        headers=auth_headers,
+    )
+    assert bad.status_code == 404
+
+    ok = client.delete(
+        f"/api/v1/documents/{doc_id}/permanent",
+        headers=auth_headers,
+    )
+    assert ok.status_code == 200
+    assert db_session.get(Document, doc_id) is None
+
+    trash = client.get("/api/v1/documents/trash", headers=auth_headers)
+    assert trash.status_code == 200
+    assert all(item["id"] != str(doc_id) for item in trash.json()["items"])
+
+
+def test_empty_trash_permanently_deletes_all(
+    client, auth_headers, ready_document, db_session, user, monkeypatch
+):
+    from datetime import datetime, timezone
+
+    from app.models import Document
+
+    def fake_hard_delete(db, doc):
+        db.delete(doc)
+        db.flush()
+
+    monkeypatch.setattr(
+        "app.services.cleanup._hard_delete_document",
+        fake_hard_delete,
+    )
+
+    ready_document.is_deleted = True
+    ready_document.deleted_at = datetime.now(timezone.utc)
+    second = Document(
+        user_id=user.id,
+        filename="trashed2.txt",
+        original_name="trashed2.txt",
+        file_size=20,
+        status="ready",
+        is_deleted=True,
+        deleted_at=datetime.now(timezone.utc),
+    )
+    keep = Document(
+        user_id=user.id,
+        filename="keep.txt",
+        original_name="keep.txt",
+        file_size=20,
+        status="ready",
+        is_deleted=False,
+    )
+    db_session.add_all([second, keep])
+    db_session.commit()
+    keep_id = keep.id
+    trashed_id = ready_document.id
+
+    response = client.delete("/api/v1/documents/trash", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deleted"] == 2
+
+    trash = client.get("/api/v1/documents/trash", headers=auth_headers)
+    assert trash.json()["total"] == 0
+    assert db_session.get(Document, keep_id) is not None
+    assert db_session.get(Document, trashed_id) is None

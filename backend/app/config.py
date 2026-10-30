@@ -10,7 +10,7 @@ from pydantic import model_validator, field_validator
 
 class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────
-    APP_NAME: str = "Document AI Analyst"
+    APP_NAME: str = "Genova_Document_Assistant"
     SECRET_KEY: str = "change-me-in-production-please"
     DEBUG: bool = False
     ENVIRONMENT: str = "development"

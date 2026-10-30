@@ -33,8 +33,14 @@ def _hard_delete_document(db, doc):
         logger.warning("Cleanup: error deleting vectors for %s: %s", doc_id, e)
 
     try:
+        from app.rag.utils.graph_builder import delete_graph
+        delete_graph(user_id=str(user_id), document_id=str(doc_id))
+    except Exception as e:
+        logger.warning("Cleanup: error deleting graph for %s: %s", doc_id, e)
+
+    try:
         import os
-        filepath = os.path.join(settings.UPLOAD_DIR, user_id, doc.filename)
+        filepath = os.path.join(settings.UPLOAD_DIR, str(user_id), doc.filename)
         if os.path.exists(filepath):
             os.remove(filepath)
     except Exception as e:
@@ -42,6 +48,7 @@ def _hard_delete_document(db, doc):
 
     try:
         db.delete(doc)
+        db.flush()
     except Exception as e:
         logger.warning("Cleanup: error deleting DB record for %s: %s", doc_id, e)
 
