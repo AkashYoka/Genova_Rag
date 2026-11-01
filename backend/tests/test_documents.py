@@ -229,16 +229,17 @@ def test_ingest_document_builds_and_saves_graph(db_session, monkeypatch, tmp_pat
     fake_summary.generate_document_summary = lambda filepath, max_sentences=2: "Summary"
     monkeypatch.setitem(__import__("sys").modules, "app.rag.utils.summarizer", fake_summary)
 
-    monkeypatch.setattr(
-        "app.rag.utils.graph_builder.build_graph",
-        lambda received_chunks: {"chunks": received_chunks},
-    )
-    monkeypatch.setattr(
-        "app.rag.utils.graph_builder.save_graph",
-        lambda graph, user_id, document_id: saved.update(
-            {"graph": graph, "user_id": user_id, "document_id": document_id}
-        ),
-    )
+    def fake_index_document(document_id, user_id, received_chunks, **_kwargs):
+        saved.update(
+            {
+                "chunks": received_chunks,
+                "user_id": user_id,
+                "document_id": document_id,
+            }
+        )
+        return {"ok": True, "status": "ready"}
+
+    monkeypatch.setattr("app.graph.service.index_document", fake_index_document)
 
     ingest_document(
         document_id=document_id,
@@ -248,7 +249,7 @@ def test_ingest_document_builds_and_saves_graph(db_session, monkeypatch, tmp_pat
     )
 
     assert saved == {
-        "graph": {"chunks": chunks},
+        "chunks": chunks,
         "user_id": user_id,
         "document_id": document_id,
     }
@@ -262,9 +263,9 @@ def test_delete_document_soft_deletes_and_hides_document(client, auth_headers, r
     doc_id = ready_document.id
 
     monkeypatch.setattr(
-        "app.rag.utils.graph_builder.delete_graph",
-        lambda user_id, document_id: deletion_calls.append(
-            {"user_id": user_id, "document_id": document_id}
+        "app.graph.service.remove_document",
+        lambda document_id, user_id, **kwargs: deletion_calls.append(
+            {"document_id": document_id, "user_id": user_id}
         ),
     )
 
@@ -274,7 +275,9 @@ def test_delete_document_soft_deletes_and_hides_document(client, auth_headers, r
     )
 
     assert response.status_code == 200
-    assert deletion_calls == []
+    assert deletion_calls == [
+        {"document_id": doc_id, "user_id": ready_document.user_id}
+    ]
 
     db_session.refresh(ready_document)
     assert ready_document.is_deleted is True

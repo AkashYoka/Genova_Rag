@@ -108,6 +108,23 @@ class Settings(BaseSettings):
     }
     GRAPH_MAX_RELATIONSHIPS: int = 12
 
+    # ── Workspace GraphRAG (entity/relationship graph in the relational DB) ──
+    GRAPH_INDEXING_ENABLED: bool = True
+    GRAPH_RETRIEVAL_ENABLED: bool = True
+    GRAPH_EXTRACTION_MODEL: str = ""  # blank → reuse the configured chat model
+    GRAPH_EXTRACTION_MAX_CHUNKS: int = 40  # per document; keeps one upload bounded
+    GRAPH_EXTRACTION_BATCH_CHUNKS: int = 4  # chunks per LLM extraction call
+    GRAPH_EXTRACTION_TIMEOUT_S: int = 120
+    GRAPH_MIN_CONFIDENCE: float = 0.35
+    GRAPH_MAX_ENTITIES_PER_DOC: int = 80
+    GRAPH_MAX_RELATIONSHIPS_PER_DOC: int = 120
+    GRAPH_ENTITY_RESOLUTION_THRESHOLD: float = 0.9  # fuzzy candidates below
+    GRAPH_TRAVERSAL_DEPTH: int = 2
+    GRAPH_MAX_QUERY_ENTITIES: int = 8
+    GRAPH_MAX_NEIGHBORHOOD_NODES: int = 60
+    GRAPH_MAX_GRAPH_RELATIONSHIPS: int = 30
+    GRAPH_MAX_EVIDENCE_SOURCES: int = 3
+
     # ── Embeddings ───────────────────────────────────────
     # Default: Ollama nomic-embed-text (768-d). Set EMBEDDING_PROVIDER=huggingface
     # to use sentence-transformers/all-MiniLM-L6-v2 (384-d) instead.

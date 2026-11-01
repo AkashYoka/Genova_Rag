@@ -35,6 +35,7 @@ from app.schemas import (
     ShareAnswerResponse,
     ShareLinkResponse,
     SourceChunk,
+    GraphContextInfo,
     ChatSessionCreate,
     ChatSessionUpdate,
     ChatSessionResponse,
@@ -98,6 +99,29 @@ def _parse_message_sources_json(
     return sources, usage, llm_provider, response_time_ms, quiz, attachments
 
 
+def _parse_graph_from_sources_json(raw: Optional[str]) -> Optional[dict]:
+    """Return the graph metadata stored with a message, if any."""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    if isinstance(parsed, dict):
+        graph = parsed.get("graph")
+        return graph if isinstance(graph, dict) else None
+    return None
+
+
+def _coerce_graph_payload(graph: Optional[dict]) -> Optional[GraphContextInfo]:
+    if not graph or not isinstance(graph, dict):
+        return None
+    try:
+        return GraphContextInfo(**graph)
+    except Exception:
+        return None
+
+
 def _coerce_quiz_payload(quiz: Optional[dict]) -> Optional[QuizPayload]:
     if not quiz or not isinstance(quiz, dict):
         return None
@@ -125,6 +149,7 @@ def _message_response_from_row(msg: ChatMessage) -> ChatMessageResponse:
         llm_provider=llm_provider,
         response_time_ms=response_time_ms,
         quiz=_coerce_quiz_payload(quiz),
+        graph=_coerce_graph_payload(_parse_graph_from_sources_json(msg.sources_json)),
     )
 
 
@@ -136,6 +161,7 @@ def _enriched_sources_payload(
     llm_provider: Optional[str] = None,
     response_time_ms: Optional[int] = None,
     attachments: Optional[list] = None,
+    graph: Optional[dict] = None,
 ):
     """Build sources_json value: plain list when no metadata, else enriched dict."""
     if (
@@ -144,6 +170,7 @@ def _enriched_sources_payload(
         and not llm_provider
         and response_time_ms is None
         and not attachments
+        and not graph
     ):
         return sources
     payload = {
@@ -158,6 +185,8 @@ def _enriched_sources_payload(
         payload["quiz"] = quiz
     if attachments:
         payload["attachments"] = attachments
+    if graph:
+        payload["graph"] = graph
     return payload
 
 
@@ -357,6 +386,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             full_answer = ""
             sources: list = []
             quiz_payload = None
+            graph_payload = None
             for chunk in generate_answer_stream(
                 question=question,
                 user_id=user.id,
@@ -379,6 +409,8 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                             sources = event_payload.get("data") or []
                         elif event_type == "quiz":
                             quiz_payload = event_payload.get("data")
+                        elif event_type == "graph":
+                            graph_payload = event_payload.get("data")
                         if event_type == "done":
                             continue
                         await websocket.send_json(event_payload)
@@ -395,6 +427,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                     quiz=quiz_payload,
                     usage=last_usage,
                     llm_provider=llm_provider,
+                    graph=graph_payload,
                 )
                 assistant_message_id = _save_message(
                     db,
@@ -890,6 +923,7 @@ def ask_question(
             quiz=quiz_data,
             usage=result.get("usage"),
             llm_provider=payload.llm_provider,
+            graph=result.get("graph"),
         )
         attach_meta = None
         if payload.document_ids:
@@ -942,6 +976,7 @@ def ask_question(
             sources=safe_sources,
             document_id=payload.document_id,
             quiz=_coerce_quiz_payload(quiz_data),
+            graph=_coerce_graph_payload(result.get("graph")),
         )
     finally:
         record_query_response_time(time.perf_counter() - started_at)
@@ -1141,6 +1176,7 @@ def ask_question_stream(
         full_answer = ""
         sources = []
         quiz_payload = None
+        graph_payload = None
         last_usage = None
 
         try:
@@ -1171,6 +1207,8 @@ def ask_question_stream(
                             sources = data.get("data", [])
                         elif data.get("type") == "quiz":
                             quiz_payload = data.get("data")
+                        elif data.get("type") == "graph":
+                            graph_payload = data.get("data")
                 except Exception:
                     pass
                 yield chunk
@@ -1197,6 +1235,7 @@ def ask_question_stream(
                 usage=last_usage,
                 llm_provider=payload.llm_provider,
                 response_time_ms=elapsed_ms,
+                graph=graph_payload,
             )
 
             assistant_message_id = None

@@ -16,7 +16,7 @@ from huggingface_hub.inference._generated.types.chat_completion import (
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from app.rag.retrieval.graph_retriever import get_entity_context
+from app.graph.retrieval import get_entity_context
 from app.rag.retrieval.retriever import retrieve
 
 logger = logging.getLogger(__name__)
@@ -191,8 +191,8 @@ class PDFSearchTool(BaseTool):
             # Also try to get GraphRAG context
             graph_context = get_entity_context(
                 query=query,
-                user_id=self.user_id,
-                document_id=self.document_id,
+                user_id=str(self.user_id),
+                document_ids=[self.document_id] if self.document_id else None,
             )
 
             main_context = "\n\n".join(context_parts)

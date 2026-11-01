@@ -12,6 +12,7 @@ from sqlalchemy import (
     Column,
     String,
     Integer,
+    Float,
     DateTime,
     ForeignKey,
     Text,
@@ -438,3 +439,135 @@ class SharedMessage(Base):
 
     # Relationships
     message = relationship("ChatMessage", back_populates="shared_message")
+
+
+# ── Knowledge graph (GraphRAG) ────────────────────────────────────────────────
+# The graph is scoped to a user (the user's document collection), so entities
+# can be shared across every document they upload. Provenance is stored on
+# mentions/evidence rows rather than on the entity itself, which keeps every
+# statement traceable to the document, page and chunk it came from.
+
+
+class GraphEntity(Base):
+    """A canonical entity/concept shared across a user's documents."""
+
+    __tablename__ = "graph_entities"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "entity_type",
+            "normalized_name",
+            name="uq_graph_entity_identity",
+        ),
+    )
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    canonical_name = Column(String(255), nullable=False)
+    normalized_name = Column(String(255), nullable=False, index=True)
+    entity_type = Column(String(64), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    aliases_json = Column(Text, nullable=True)
+    mention_count = Column(Integer, default=0, nullable=False)
+    document_count = Column(Integer, default=0, nullable=False)
+    confidence = Column(Float, default=0.0, nullable=False)
+    # Set when a fuzzy candidate existed but merging was not safe.
+    possible_duplicate_of = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class GraphEntityMention(Base):
+    """One piece of evidence that an entity appears in a document chunk."""
+
+    __tablename__ = "graph_entity_mentions"
+
+    id = Column(String(64), primary_key=True)
+    entity_id = Column(
+        String(64),
+        ForeignKey("graph_entities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(GUID, nullable=False, index=True)
+    document_id = Column(GUID, nullable=False, index=True)
+    chunk_id = Column(String(128), nullable=True)
+    page = Column(Integer, nullable=True)
+    section = Column(String(255), nullable=True)
+    evidence_text = Column(Text, nullable=True)
+    confidence = Column(Float, default=0.0, nullable=False)
+    extraction_method = Column(String(32), default="llm", nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class GraphRelationship(Base):
+    """A directed, evidence-backed edge between two canonical entities."""
+
+    __tablename__ = "graph_relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "source_entity_id",
+            "target_entity_id",
+            "relation_type",
+            name="uq_graph_relationship",
+        ),
+    )
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(GUID, nullable=False, index=True)
+    source_entity_id = Column(
+        String(64),
+        ForeignKey("graph_entities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    target_entity_id = Column(
+        String(64),
+        ForeignKey("graph_entities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    relation_type = Column(String(64), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    confidence = Column(Float, default=0.0, nullable=False)
+    extraction_method = Column(String(32), default="llm", nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class GraphRelationshipEvidence(Base):
+    """Supporting passage for a relationship, kept per source document."""
+
+    __tablename__ = "graph_relationship_evidence"
+
+    id = Column(String(64), primary_key=True)
+    relationship_id = Column(
+        String(64),
+        ForeignKey("graph_relationships.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(GUID, nullable=False, index=True)
+    document_id = Column(GUID, nullable=False, index=True)
+    chunk_id = Column(String(128), nullable=True)
+    page = Column(Integer, nullable=True)
+    section = Column(String(255), nullable=True)
+    evidence_text = Column(Text, nullable=True)
+    confidence = Column(Float, default=0.0, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class GraphIndexStatus(Base):
+    """Per-document indexing state so failures are visible and retryable."""
+
+    __tablename__ = "graph_index_status"
+
+    document_id = Column(GUID, primary_key=True)
+    user_id = Column(GUID, nullable=False, index=True)
+    status = Column(String(20), default="pending", nullable=False)
+    entity_count = Column(Integer, default=0, nullable=False)
+    relationship_count = Column(Integer, default=0, nullable=False)
+    chunk_count = Column(Integer, default=0, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    error = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

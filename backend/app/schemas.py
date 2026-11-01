@@ -404,11 +404,21 @@ class QuizStateUpdateRequest(BaseModel):
     completed: Optional[bool] = None
 
 
+class GraphContextInfo(BaseModel):
+    """Compact summary of the graph evidence used to ground an answer."""
+
+    entities: List[str] = []
+    relationship_count: int = 0
+    source_count: int = 0
+    truncated: bool = False
+
+
 class ChatResponse(BaseModel):
     answer: str
     sources: List[SourceChunk] = []
     document_id: Optional[str] = None
     quiz: Optional[QuizPayload] = None
+    graph: Optional[GraphContextInfo] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -432,6 +442,7 @@ class ChatMessageResponse(BaseModel):
     llm_provider: Optional[str] = None
     response_time_ms: Optional[int] = None
     quiz: Optional[QuizPayload] = None
+    graph: Optional[GraphContextInfo] = None
 
     class Config:
         from_attributes = True

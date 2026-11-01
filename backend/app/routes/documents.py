@@ -915,11 +915,24 @@ def delete_document(
     if not doc:
         raise NotFoundException("Document")
 
+    original_name = doc.original_name
+    document_id_value = str(doc.id)
+    user_id_value = str(user.id)
+
     doc.is_deleted = True
     doc.deleted_at = datetime.now(timezone.utc)
     db.commit()
 
-    return {"message": f"Document '{doc.original_name}' deleted successfully"}
+    # Drop this document's graph contribution. Entities and relationships that
+    # other documents still support are preserved; only unsupported ones go.
+    try:
+        from app.graph.service import remove_document as remove_document_graph
+
+        remove_document_graph(document_id_value, user_id_value, db=db)
+    except Exception as exc:  # graph cleanup must not fail the delete request
+        logger.warning("Graph cleanup failed for document %s: %s", document_id_value, exc)
+
+    return {"message": f"Document '{original_name}' deleted successfully"}
 
 
 @router.post("/{document_id}/chunk_settings", response_model=DocumentResponse)

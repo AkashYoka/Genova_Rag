@@ -113,17 +113,30 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             db.commit()
             return
 
-        doc.processing_progress = 50
-        doc.processing_stage = "indexing"
+        doc.processing_progress = 55
+        doc.processing_stage = "graph"
         db.commit()
 
+        # ── Knowledge-graph indexing (incremental, per document) ──────────
+        # The graph service owns its own session and records an explicit
+        # indexing status. A graph failure is logged and marked on the status
+        # row, never silently swallowed or allowed to fail the upload.
         try:
-            from app.rag.utils.graph_builder import build_graph, save_graph
+            from app.graph.service import index_document as index_document_graph
 
-            graph = build_graph(chunks)
-            save_graph(graph, user_id=user_id, document_id=document_id)
+            graph_result = index_document_graph(document_id, user_id, chunks)
+            if not graph_result.get("ok") and graph_result.get("status") != "disabled":
+                logger.warning(
+                    "Knowledge-graph indexing failed for document %s: %s",
+                    document_id,
+                    graph_result.get("error") or graph_result.get("status"),
+                )
         except Exception as e:
-            logger.warning("Could not build knowledge graph for document %s: %s", document_id, e)
+            logger.warning(
+                "Could not run knowledge-graph indexing for document %s: %s",
+                document_id,
+                e,
+            )
 
         doc.processing_progress = 70
         doc.processing_stage = "embedding"

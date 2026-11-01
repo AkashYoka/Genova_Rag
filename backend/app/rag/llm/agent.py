@@ -24,7 +24,6 @@ from langchain_core.prompts import PromptTemplate
 
 from app.config import get_settings
 from app.rag.retrieval.retriever import retrieve
-from app.rag.retrieval.graph_retriever import get_entity_context
 from app.rag.prompts.prompts import (
     AGENT_SYSTEM_PROMPT,
     GREETING_PROMPT,
@@ -577,6 +576,104 @@ def _sources_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ]
 
 
+def _graph_scope(
+    document_id: Optional[str], document_ids: Optional[List[str]]
+) -> List[str]:
+    """Documents the graph may draw evidence from for this request."""
+    scope = _unique_document_ids(document_ids)
+    if document_id and document_id not in scope:
+        scope = [document_id] + scope
+    return scope
+
+
+def _collect_graph_evidence(
+    question: str,
+    user_id: str,
+    document_id: Optional[str] = None,
+    document_ids: Optional[List[str]] = None,
+):
+    """Retrieve bounded, evidence-backed graph context for the question.
+
+    Returns ``None`` when graph retrieval is disabled, empty, or fails; the
+    caller then behaves exactly like the vector-only RAG pipeline.
+    """
+    if not getattr(settings, "GRAPH_RETRIEVAL_ENABLED", False):
+        return None
+
+    try:
+        from app.database import SessionLocal
+        from app.graph.retrieval import retrieve_graph_evidence
+    except Exception as exc:  # optional dependency chain missing
+        logger.warning("GraphRAG unavailable: %s", exc)
+        return None
+
+    db = None
+    try:
+        db = SessionLocal()
+        evidence = retrieve_graph_evidence(
+            db,
+            user_id,
+            question,
+            document_ids=_graph_scope(document_id, document_ids) or None,
+        )
+    except Exception as exc:
+        logger.warning("GraphRAG evidence retrieval failed: %s", exc)
+        return None
+    finally:
+        if db is not None:
+            db.close()
+
+    if evidence is None or evidence.is_empty:
+        return None
+    return evidence
+
+
+def _graph_payload(evidence) -> Optional[Dict[str, Any]]:
+    """Compact graph metadata for the UI / chat history."""
+    if evidence is None:
+        return None
+    names = [
+        entity.get("canonical_name")
+        for entity in evidence.entities
+        if entity.get("canonical_name")
+    ]
+    return {
+        "entities": names[:12],
+        "relationship_count": len(evidence.relationships),
+        "source_count": len(evidence.sources),
+        "truncated": bool(evidence.truncated),
+    }
+
+
+def _merge_sources(
+    sources: List[Dict[str, Any]], extra: Optional[List[Dict[str, Any]]]
+) -> List[Dict[str, Any]]:
+    """Append graph evidence citations without duplicating vector sources."""
+    merged = list(sources or [])
+    seen = {
+        (
+            item.get("filename"),
+            item.get("page"),
+            (item.get("text") or "")[:60],
+        )
+        for item in merged
+        if isinstance(item, dict)
+    }
+    for item in extra or []:
+        if not isinstance(item, dict) or not item.get("text"):
+            continue
+        key = (
+            item.get("filename"),
+            item.get("page"),
+            (item.get("text") or "")[:60],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
 def _capability_answer(
     question: str,
     *,
@@ -709,6 +806,10 @@ def _generate_answer_direct(
         )
 
     attach_ids = _unique_document_ids(document_ids)
+    graph_evidence = _collect_graph_evidence(question, user_id, document_id, document_ids)
+    graph_info = _graph_payload(graph_evidence)
+    graph_block = f"\n\n{graph_evidence.context}" if graph_evidence else ""
+
     summarize_pack = (
         _build_attached_summarize_context(question, user_id, attach_ids)
         if attach_ids
@@ -725,7 +826,7 @@ def _generate_answer_direct(
             top_k=top_k or settings.TOP_K_RERANK,
         )
         sources = _sources_from_chunks(chunks)
-        if not chunks:
+        if not chunks and not graph_evidence:
             return {
                 "answer": (
                     "I couldn't find sufficient information in the uploaded documents "
@@ -733,7 +834,15 @@ def _generate_answer_direct(
                 ),
                 "sources": [],
             }
-        context = _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
+        context = (
+            _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
+            if chunks
+            else graph_block.strip()
+        )
+
+    if graph_evidence:
+        context = f"{context}{graph_block}"
+        sources = _merge_sources(sources, graph_evidence.sources)
 
     user_prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)
     history = _format_chat_history(chat_history) if chat_history else ""
@@ -757,6 +866,8 @@ def _generate_answer_direct(
     if not answer:
         answer = MALFORMED_OUTPUT_MESSAGE
     result: Dict[str, Any] = {"answer": answer, "sources": sources}
+    if graph_info:
+        result["graph"] = graph_info
     usage = getattr(client, "last_usage", None)
     if isinstance(usage, dict) and usage:
         result["usage"] = usage
@@ -814,6 +925,12 @@ def _generate_answer_stream_direct(
 
     yield f"data: {json.dumps({'type': 'status', 'data': 'retrieving'})}\n\n"
     attach_ids = _unique_document_ids(document_ids)
+    graph_evidence = _collect_graph_evidence(question, user_id, document_id, document_ids)
+    graph_info = _graph_payload(graph_evidence)
+    graph_block = f"\n\n{graph_evidence.context}" if graph_evidence else ""
+    if graph_info:
+        yield f"data: {json.dumps({'type': 'graph', 'data': graph_info})}\n\n"
+
     summarize_pack = (
         _build_attached_summarize_context(question, user_id, attach_ids)
         if attach_ids
@@ -830,7 +947,7 @@ def _generate_answer_stream_direct(
             top_k=top_k or settings.TOP_K_RERANK,
         )
         sources = _sources_from_chunks(chunks)
-        if not chunks:
+        if not chunks and not graph_evidence:
             msg = (
                 "I couldn't find sufficient information in the uploaded documents "
                 "to answer this question."
@@ -839,7 +956,15 @@ def _generate_answer_stream_direct(
             yield f"data: {json.dumps({'type': 'token', 'data': msg})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
-        context = _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
+        context = (
+            _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
+            if chunks
+            else graph_block.strip()
+        )
+
+    if graph_evidence:
+        context = f"{context}{graph_block}"
+        sources = _merge_sources(sources, graph_evidence.sources)
 
     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
     user_prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)

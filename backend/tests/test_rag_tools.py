@@ -158,8 +158,8 @@ def test_pdf_search_tool_formats_chunks_and_graph_context(monkeypatch):
         retrieve_calls.append((query, user_id, document_id))
         return chunks
 
-    def fake_get_entity_context(query, user_id, document_id=None):
-        graph_calls.append((query, user_id, document_id))
+    def fake_get_entity_context(query, user_id, document_ids=None):
+        graph_calls.append((query, user_id, document_ids))
         return "Alpha -> acquired -> Beta"
 
     monkeypatch.setattr(tools, "retrieve", fake_retrieve)
@@ -169,7 +169,7 @@ def test_pdf_search_tool_formats_chunks_and_graph_context(monkeypatch):
     result = tool.run({"query": "What happened to Alpha?"})
 
     assert retrieve_calls == [("What happened to Alpha?", "user-1", "doc-1")]
-    assert graph_calls == [("What happened to Alpha?", "user-1", "doc-1")]
+    assert graph_calls == [("What happened to Alpha?", "user-1", ["doc-1"])]
     assert tool.last_sources == chunks
     assert "Excerpt 1 (alpha.pdf, Page 1):\nAlpha revenue grew by 12%." in result
     assert "Excerpt 2 (beta.pdf, Page 4):\nBeta margin narrowed." in result

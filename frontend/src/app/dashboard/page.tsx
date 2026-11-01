@@ -62,6 +62,21 @@ const KnowledgeGraph = dynamic(
   { ssr: false },
 );
 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogClose,
+} from "@/components/ui/dialog";
+
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+
 import type { DocInfo } from "@/types/document";
 import { normalizeDocInfo, type DocumentListApiResponse } from "@/types/document";
 export type { DocInfo };
@@ -269,9 +284,6 @@ export default function DashboardPage() {
     if (graphOpen) setGraphOpen(false);
   }
 
-  // Keep KnowledgeGraph in the bundle path used by the product
-  void KnowledgeGraph;
-
   if (!initialized) {
     return (
       <div
@@ -375,6 +387,8 @@ export default function DashboardPage() {
         }}
         compareOpen={compareOpen}
         onToggleCompare={() => setCompareOpen(!compareOpen)}
+        graphOpen={graphOpen}
+        onToggleGraph={() => setGraphOpen(!graphOpen)}
       />
 
       {connectionError ? (
@@ -549,6 +563,22 @@ export default function DashboardPage() {
           )
         )}
       </div>
+
+      <Dialog open={graphOpen} onOpenChange={setGraphOpen}>
+        <DialogContent
+          className="flex h-[88vh] w-[calc(100vw-1rem)] max-w-none flex-col gap-0 overflow-hidden p-0 outline-none sm:h-[90vh] sm:max-w-[min(1600px,calc(100vw-3rem))]"
+          showCloseButton={false}
+        >
+          <DialogHeader className="sr-only">
+            <DialogTitle>Knowledge graph explorer</DialogTitle>
+          </DialogHeader>
+          {graphOpen ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <KnowledgeGraph onClose={() => setGraphOpen(false)} />
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

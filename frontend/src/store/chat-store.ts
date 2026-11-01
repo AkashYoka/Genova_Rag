@@ -69,6 +69,14 @@ export interface AttachedDocument {
   filename: string;
 }
 
+/** Graph evidence the backend used to ground an answer. */
+export interface GraphContextInfo {
+  entities: string[];
+  relationship_count: number;
+  source_count: number;
+  truncated: boolean;
+}
+
 export interface ChatMsg {
   branch_id?: string;
   parent_message_id?: string;
@@ -83,6 +91,7 @@ export interface ChatMsg {
   usage?: LlmUsage;
   llm_provider?: string;
   quiz?: QuizPayload | null;
+  graph?: GraphContextInfo | null;
 }
 
 export interface ChatSession {

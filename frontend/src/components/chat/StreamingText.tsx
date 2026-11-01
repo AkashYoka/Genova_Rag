@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 /* ─────────────────────────────────────────────────────────
  * STREAMING TEXT (Beautiful UI)
@@ -175,7 +175,10 @@ export default function StreamingText({
   onAction?: (index: number) => void;
 } = {}) {
   const isLive = typeof liveText === "string";
-  const tokens = isLive ? textToStreamingTokens(liveText) : content;
+  const tokens = useMemo(
+    () => (isLive ? textToStreamingTokens(liveText) : content),
+    [isLive, liveText, content],
+  );
   const l = {
     ...DEFAULT_LABELS,
     sources:
@@ -184,33 +187,41 @@ export default function StreamingText({
         : DEFAULT_LABELS.sources,
     ...labels,
   };
-  const [count, setCount] = useState(isLive ? tokens.length : 0);
+  // `count` only drives the demo word-reveal. Live text is painted in full, so
+  // it must never be mirrored into state from an effect (that would re-render
+  // on every streamed chunk).
+  const [count, setCount] = useState(0);
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const done = isLive
-    ? !streaming
-    : count >= tokens.length && tokens.length > 0;
+  const done = isLive ? !streaming : count >= tokens.length && tokens.length > 0;
 
+  const doneNotified = useRef(false);
+
+  // Fire onDone exactly once per stream, and once per completed demo replay.
   useEffect(() => {
     if (isLive) {
-      setCount(tokens.length);
-      return;
-    }
-    if (done && !loop) {
+      if (streaming) {
+        doneNotified.current = false;
+        return;
+      }
+      if (doneNotified.current) return;
+      doneNotified.current = true;
       onDone?.();
       return;
     }
+    if (done && !loop && tokens.length > 0) {
+      onDone?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLive, streaming, done, loop, tokens.length]);
+
+  useEffect(() => {
+    if (isLive || tokens.length === 0) return;
     const t = setTimeout(
       () => setCount((c) => (c >= tokens.length ? 0 : c + 1)),
       done ? HOLD_MS : WORD_MS,
     );
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [count, done, loop, isLive, tokens.length, liveText]);
-
-  useEffect(() => {
-    if (isLive && done) onDone?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive, done]);
+  }, [isLive, count, done, tokens.length]);
 
   const visible = isLive ? tokens : tokens.slice(0, count);
   const showChrome = done && !streaming;

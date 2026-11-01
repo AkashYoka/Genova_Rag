@@ -31,6 +31,7 @@ import {
   Columns2,
   StickyNote,
   KeyRound,
+  Network,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import {
@@ -52,6 +53,8 @@ interface HeaderProps {
   onToggleNotes?: () => void;
   compareOpen?: boolean;
   onToggleCompare?: () => void;
+  graphOpen?: boolean;
+  onToggleGraph?: () => void;
   /** Pass DocumentSidebar JSX so the mobile sheet can render it */
   mobileSheetContent?: React.ReactNode;
 }
@@ -69,6 +72,8 @@ export default function Header({
   onToggleNotes,
   compareOpen = false,
   onToggleCompare,
+  graphOpen = false,
+  onToggleGraph,
   mobileSheetContent,
 }: HeaderProps) {
   const { user, logout } = useAuth();
@@ -240,6 +245,25 @@ export default function Header({
               aria-pressed={compareOpen}
             >
               <Columns2 className="h-4 w-4" />
+            </Button>
+          ) : null}
+          {onToggleGraph ? (
+            <Button
+              variant={graphOpen ? "secondary" : "ghost"}
+              size="icon"
+              className={
+                graphOpen
+                  ? "h-8 w-8 bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)]"
+                  : toolBtn
+              }
+              onClick={onToggleGraph}
+              title={graphOpen ? "Close knowledge graph" : "Open knowledge graph"}
+              aria-label={
+                graphOpen ? "Close knowledge graph" : "Open knowledge graph"
+              }
+              aria-pressed={graphOpen}
+            >
+              <Network className="h-4 w-4" />
             </Button>
           ) : null}
           <Button
