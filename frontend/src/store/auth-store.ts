@@ -2,7 +2,6 @@
 
 import { create } from "zustand";
 import { api } from "@/lib/api";
-import { isDevAuthBypass } from "@/lib/dev-auth";
 
 export interface AuthUser {
   id: string;
@@ -143,33 +142,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         }
       }
 
-      const bypassEnabled = isDevAuthBypass();
 
-      // 2. Local/dev auto sign-in — skip the login form when no token is stored
-      if (!storedToken && bypassEnabled) {
-        set({ loading: true });
-        try {
-          const data = await api.post<{
-            access_token: string;
-            refresh_token: string;
-            user: AuthUser;
-          }>("/api/v1/auth/dev-login", {});
-          localStorage.setItem("token", data.access_token);
-          localStorage.setItem("refresh_token", data.refresh_token);
-          set({
-            token: data.access_token,
-            user: data.user,
-            loading: false,
-            initialized: true,
-          });
-          return;
-        } catch {
-          // Fall through to anonymous state if backend bypass is off
-          clearStoredTokens();
-          set({ user: null, token: null, loading: false, initialized: true });
-          return;
-        }
-      }
+
 
       // 3. If no token, don't request /me (prevents CORS preflight credentials error for anonymous users)
       if (!storedToken) {
@@ -191,28 +165,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           initialized: true,
         });
       } catch {
-        // Stale token: try local bypass once before giving up
-        if (bypassEnabled) {
-          try {
-            clearStoredTokens();
-            const data = await api.post<{
-              access_token: string;
-              refresh_token: string;
-              user: AuthUser;
-            }>("/api/v1/auth/dev-login", {});
-            localStorage.setItem("token", data.access_token);
-            localStorage.setItem("refresh_token", data.refresh_token);
-            set({
-              token: data.access_token,
-              user: data.user,
-              loading: false,
-              initialized: true,
-            });
-            return;
-          } catch {
-            // ignore and clear below
-          }
-        }
         clearStoredTokens();
         set({ user: null, token: null, loading: false, initialized: true });
       }

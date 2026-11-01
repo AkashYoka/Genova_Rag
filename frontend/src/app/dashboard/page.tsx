@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { isDevAuthBypass } from "@/lib/dev-auth";
 import { toast } from "sonner";
 import {
   api,
@@ -136,7 +135,7 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (initialized && !user && !isDevAuthBypass()) {
+    if (initialized && !user) {
       router.replace("/login");
     }
   }, [user, initialized, router]);
@@ -192,7 +191,6 @@ export default function DashboardPage() {
       const message =
         err instanceof Error ? err.message : CONNECTION_ERROR_MESSAGE;
       if (
-        !isDevAuthBypass() &&
         (message.includes("Invalid or expired token") ||
           message.includes("Unauthorized") ||
           message.includes("User not found"))
@@ -299,25 +297,7 @@ export default function DashboardPage() {
     );
   }
 
-  // Dev bypass can finish auth with no user if the API is down — don't spin forever.
   if (!user) {
-    if (isDevAuthBypass()) {
-      return (
-        <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-6 text-center text-foreground">
-          <p className="text-sm text-muted-foreground">
-            Could not sign in to the local API. Is the backend running on port
-            7860?
-          </p>
-          <button
-            type="button"
-            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
-            onClick={() => window.location.reload()}
-          >
-            Retry
-          </button>
-        </div>
-      );
-    }
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div
@@ -327,7 +307,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-
   const sidebarContent = (
     <DocumentSidebar
       documents={documents}

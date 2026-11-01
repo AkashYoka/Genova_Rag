@@ -326,7 +326,7 @@ export default function Header({
                 }}
               >
                 <KeyRound className="mr-2 h-4 w-4" />
-                HuggingFace Token
+
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="cursor-pointer text-destructive"
@@ -438,7 +438,7 @@ export default function Header({
       <Dialog open={hfModalOpen} onOpenChange={setHfModalOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>HuggingFace Token</DialogTitle>
+            <DialogTitle>Token</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -455,7 +455,7 @@ export default function Header({
 
             <div className="space-y-2">
               <label htmlFor="hf-token-input" className="text-sm font-medium">
-                HuggingFace API Token
+                API Token
               </label>
               <div className="relative">
                 <input

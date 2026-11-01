@@ -8,7 +8,7 @@ const resources = {
   en: {
     translation: {
       common: {
-        appName: "Document AI Analyst",
+        appName: "Genova_RAG",
         language: "Language",
         english: "English",
         hindi: "Hindi",
@@ -29,7 +29,7 @@ const resources = {
       },
       login: {
         title: "Welcome back",
-        description: "Sign in to your Document AI Analyst account",
+        description: "Sign in to your Genova account",
         fallbackError: "Login failed",
         submit: "Sign In",
         submitting: "Signing in...",

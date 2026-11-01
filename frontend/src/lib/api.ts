@@ -4,7 +4,6 @@
  * and automatic token refresh on 401 responses.
  */
 
-import { isDevAuthBypass } from "@/lib/dev-auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:7860";
 const CONNECTION_ERROR_MESSAGE = "Could not connect to the server. Please try again later.";
@@ -122,15 +121,7 @@ class ApiClient {
   private handleUnauthorized(): void {
     this.clearTokens();
     if (typeof window === "undefined") return;
-    // With login bypass, bounce to dashboard so AuthProvider re-runs dev-login
-    if (isDevAuthBypass()) {
-      if (!window.location.pathname.startsWith("/dashboard")) {
-        window.location.href = "/dashboard";
-      } else {
-        window.location.reload();
-      }
-      return;
-    }
+    
     if (window.location.pathname.startsWith("/dashboard")) {
       window.location.href = "/login";
     }

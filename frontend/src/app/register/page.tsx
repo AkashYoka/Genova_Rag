@@ -17,7 +17,6 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
 import { PasswordField } from "@/components/auth/PasswordField";
-import HuggingFaceSignInButton from "@/components/auth/HuggingFaceSignInButton";
 import Logo from "@/components/layout/Logo";
 import { Aurora } from "@/components/bits/Aurora";
 import { FadeIn } from "@/components/bits/FadeIn";
@@ -92,7 +91,6 @@ export default function RegisterPage() {
 
           <CardContent>
             <div className="flex flex-col gap-2.5 mb-4">
-              <HuggingFaceSignInButton onError={setError} />
               <GoogleSignInButton
                 onError={setError}
                 onSuccess={handleGoogleSuccess}
@@ -132,7 +130,7 @@ export default function RegisterPage() {
                 <Input
                   id="reg-username"
                   type="text"
-                  placeholder="paramjit"
+                  placeholder="akash"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required

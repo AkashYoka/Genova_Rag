@@ -3,14 +3,12 @@
 import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { isDevAuthBypass } from "@/lib/dev-auth";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Eye, EyeOff, Loader2, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
-import HuggingFaceSignInButton from "@/components/auth/HuggingFaceSignInButton";
 import Logo from "@/components/layout/Logo";
 import { Aurora } from "@/components/bits/Aurora";
 import { FadeIn } from "@/components/bits/FadeIn";
@@ -27,26 +25,22 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (isDevAuthBypass()) {
-      router.replace("/dashboard");
-      return;
-    }
     if (initialized && user) {
       router.replace("/dashboard");
     }
   }, [user, initialized, router]);
 
-  if (isDevAuthBypass() || !initialized || user) {
+  const handleGoogleSuccess = useCallback(() => {
+    router.replace("/dashboard");
+  }, [router]);
+
+  if (!initialized || user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
-
-  const handleGoogleSuccess = useCallback(() => {
-    router.replace("/dashboard");
-  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,7 +80,7 @@ export default function LoginPage() {
             Trust every source.
           </h1>
           <p className="text-sm text-white/65 leading-relaxed">
-            Sign in to your Genova_Rag workspace — hybrid retrieval, streaming
+            Sign in to your Genova workspace — hybrid retrieval, streaming
             chat, and page-accurate citations.
           </p>
         </div>
@@ -119,7 +113,6 @@ export default function LoginPage() {
             </div>
 
             <div className="flex flex-col gap-2.5">
-              <HuggingFaceSignInButton onError={setError} />
               <GoogleSignInButton
                 onError={setError}
                 onSuccess={handleGoogleSuccess}

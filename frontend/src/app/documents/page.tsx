@@ -28,7 +28,6 @@ import {
   FileCode,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { isDevAuthBypass } from "@/lib/dev-auth";
 import {
   api,
   CONNECTION_ERROR_BANNER_MESSAGE,
@@ -110,7 +109,7 @@ export default function DocumentLibraryPage() {
 
   // ── Auth guard ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (initialized && !user && !isDevAuthBypass()) {
+    if (initialized && !user) {
       router.replace("/login");
     }
   }, [user, initialized, router]);
@@ -140,7 +139,7 @@ export default function DocumentLibraryPage() {
         const message =
           err instanceof Error ? err.message : CONNECTION_ERROR_MESSAGE;
         if (
-          !isDevAuthBypass() &&
+          
           (message.includes("Invalid or expired token") ||
             message.includes("Unauthorized") ||
             message.includes("User not found"))

@@ -31,14 +31,11 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRY_MINUTES: int = 15
     JWT_REFRESH_EXPIRY_DAYS: int = 7
-    # Local-only: allow POST /api/v1/auth/dev-login (auto sign-in). Forced off in production.
-    DEV_AUTH_BYPASS: bool = True
+    # Auth bypass disabled for security
+    DEV_AUTH_BYPASS: bool = False
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_DRIVE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google-drive/callback"
-    HF_CLIENT_ID: str = ""
-    HF_CLIENT_SECRET: str = ""
-    HF_REDIRECT_URI: str = ""
     FRONTEND_URL: str = "http://localhost:3000"
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
 
@@ -126,9 +123,8 @@ class Settings(BaseSettings):
     GRAPH_MAX_EVIDENCE_SOURCES: int = 3
 
     # ── Embeddings ───────────────────────────────────────
-    # Default: Ollama nomic-embed-text (768-d). Set EMBEDDING_PROVIDER=huggingface
-    # to use sentence-transformers/all-MiniLM-L6-v2 (384-d) instead.
-    EMBEDDING_PROVIDER: str = "ollama"  # ollama | huggingface
+    # Default: Ollama nomic-embed-text (768-d).    # to use sentence-transformers/all-MiniLM-L6-v2 (384-d) instead.
+    EMBEDDING_PROVIDER: str = "ollama"
     EMBEDDING_MODEL: str = "nomic-embed-text"
     EMBEDDING_DIMENSION: int = 768
 
@@ -138,11 +134,9 @@ class Settings(BaseSettings):
     CHROMA_PERSIST_DIR: str = "./data/chroma_db_ollama_nomic"
 
     # ── LLM ──────────────────────────────────────────────
-    # Default: local Ollama. Set LLM_PROVIDER=huggingface (+ HF_TOKEN) for HF API.
-    # Per-request ChatRequest.llm_provider can override to bedrock without changing defaults.
-    LLM_PROVIDER: str = "ollama"  # ollama | huggingface | bedrock
+    # Default: local Ollama.    # Per-request ChatRequest.llm_provider can override to bedrock without changing defaults.
+    LLM_PROVIDER: str = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    HF_TOKEN: str = ""  # Optional — only required when LLM_PROVIDER=huggingface
     LLM_MODEL: str = "qwen2.5:3b"
     LLM_MAX_NEW_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.3
@@ -170,7 +164,6 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str = "pdf-assistant-rag"
 
     # ── Reranker ─────────────────────────────────────────
-    # Off by default for local Ollama setups to avoid a large HuggingFace download.
     # Set RERANKER_ENABLED=true to enable BGE cross-encoder reranking.
     RERANKER_ENABLED: bool = False
     RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
@@ -250,22 +243,11 @@ class Settings(BaseSettings):
                 object.__setattr__(
                     self, "CHROMA_PERSIST_DIR", "./data/chroma_db_ollama_nomic"
                 )
-        elif self.EMBEDDING_PROVIDER == "huggingface":
-            if "EMBEDDING_MODEL" not in os.environ and not self.EMBEDDING_MODEL.startswith(
-                "sentence-transformers/"
-            ):
-                object.__setattr__(
-                    self, "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
-                )
-            if "EMBEDDING_DIMENSION" not in os.environ and self.EMBEDDING_DIMENSION == 768:
-                object.__setattr__(self, "EMBEDDING_DIMENSION", 384)
-
+        
         if self.LLM_PROVIDER == "ollama":
             if "LLM_MODEL" not in os.environ and "/" in self.LLM_MODEL:
                 object.__setattr__(self, "LLM_MODEL", "qwen2.5:3b")
-        elif self.LLM_PROVIDER == "huggingface":
-            if "LLM_MODEL" not in os.environ and ":" in self.LLM_MODEL and "/" not in self.LLM_MODEL:
-                object.__setattr__(self, "LLM_MODEL", "Qwen/Qwen2.5-72B-Instruct")
+        
         elif self.LLM_PROVIDER == "bedrock":
             if "LLM_MODEL" not in os.environ:
                 object.__setattr__(self, "LLM_MODEL", self.BEDROCK_MODEL_ID)
@@ -282,10 +264,9 @@ class Settings(BaseSettings):
 
     @property
     def uses_direct_rag_llm(self) -> bool:
-        """Retrieve-then-generate path (Ollama or Bedrock), not HuggingFace ReAct."""
+        """Retrieve-then-generate path (Ollama or Bedrock)."""
         return self.LLM_PROVIDER in {"ollama", "bedrock"}
 
-    @property
     def uses_ollama_embeddings(self) -> bool:
         return self.EMBEDDING_PROVIDER == "ollama"
 

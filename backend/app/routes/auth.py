@@ -310,9 +310,16 @@ def dev_login(db: Session = Depends(get_db)):
             403,
         )
 
-    email = "localdev@localhost"
+    email = "dev@genova.ai"
     username = "localdev"
-    user = db.query(User).filter(User.email == email).first()
+    user = (
+        db.query(User).filter(User.email == email).first()
+        or db.query(User).filter(User.email == "localdev@localhost").first()
+    )
+    if user and user.email != email:
+        user.email = email
+        db.commit()
+        db.refresh(user)
     if not user:
         user = User(
             username=username,
