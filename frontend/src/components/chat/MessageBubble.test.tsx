@@ -50,7 +50,6 @@ describe("MessageBubble", () => {
       "const ok = true;",
     );
     expect(screen.getByLabelText("Copy response")).toBeInTheDocument();
-    expect(screen.getByLabelText("Share response")).toBeInTheDocument();
   });
 
   it("renders inline and display math with KaTeX", () => {

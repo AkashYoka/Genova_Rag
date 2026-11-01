@@ -23,7 +23,7 @@ from app.exceptions import (
     UnauthorizedException,
     ValidationException, )
 from app.metrics import record_query_response_time
-from app.models import User, ChatMessage, Document, SharedMessage, ChatSession
+from app.models import User, ChatMessage, Document, ChatSession
 from app.rate_limit import CHAT_QUERY_RATE_LIMIT, check_chat_ws_rate_limit, limiter
 from app.rag.utils.security import UnsafePromptError, validate_user_input
 from app.schemas import (
@@ -32,8 +32,6 @@ from app.schemas import (
     ChatMessageResponse,
     ChatHistoryResponse,
     FeedbackRequest,
-    ShareAnswerResponse,
-    ShareLinkResponse,
     SourceChunk,
     GraphContextInfo,
     ChatSessionCreate,
@@ -461,76 +459,6 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             pass
     finally:
         db.close()
-
-
-@router.get(
-    "/share/{message_id}",
-    response_model=ShareAnswerResponse,
-    summary="Read a public shared answer",
-    description=(
-        "Returns a previously shared assistant answer and its safe citation "
-        "metadata without requiring authentication."
-    ),
-)
-def get_shared_answer(
-    message_id: str,
-    db: Session = Depends(get_db),
-):
-    """Return a public shared assistant answer by message ID."""
-    message = (
-        db.query(ChatMessage)
-        .filter(
-            ChatMessage.id == message_id,
-            ChatMessage.role == "assistant",
-        )
-        .first()
-    )
-
-    if not message or not db.query(SharedMessage).filter(SharedMessage.message_id == message.id).first():
-        raise NotFoundException("Shared answer")
-
-    return _share_answer_response(message)
-
-
-@router.post(
-    "/share/{message_id}",
-    response_model=ShareLinkResponse,
-    summary="Create a public share link for an assistant answer",
-    description=(
-        "Marks one authenticated user's assistant message as shareable and " "returns the frontend share URL."
-    ),
-)
-def create_share_link(
-    message_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Create or reuse a public share record for an assistant answer."""
-    message = (
-        db.query(ChatMessage)
-        .filter(
-            ChatMessage.id == message_id,
-            ChatMessage.user_id == user.id,
-        )
-        .first()
-    )
-
-    if not message:
-        raise NotFoundException("Message")
-
-    if message.role != "assistant":
-        raise ValidationException("Only assistant messages can be shared")
-
-    shared_message = db.query(SharedMessage).filter(SharedMessage.message_id == message.id).first()
-    if not shared_message:
-        shared_message = SharedMessage(message_id=message.id)
-        db.add(shared_message)
-        db.commit()
-
-    return ShareLinkResponse(
-        message_id=str(message.id),
-        share_url=f"/share?message_id={message.id}",
-    )
 
 
 @router.get(
@@ -1447,17 +1375,6 @@ def clear_chat_history(
     db: Session = Depends(get_db),
 ):
     """Delete all chat messages associated with a specific document."""
-    # Find the query/subquery of chat messages to delete
-    message_ids_query = db.query(ChatMessage.id).filter(
-        ChatMessage.user_id == user.id,
-        ChatMessage.document_id == document_id,
-    )
-
-    # Delete any associated SharedMessage records first
-    db.query(SharedMessage).filter(
-        SharedMessage.message_id.in_(message_ids_query)
-    ).delete(synchronize_session=False)
-
     # Delete the ChatMessage records
     db.query(ChatMessage).filter(
         ChatMessage.user_id == user.id,
@@ -1611,23 +1528,6 @@ def _save_message(
     db.commit()
     db.refresh(msg)
     return msg.id
-
-
-def _share_answer_response(message: ChatMessage) -> ShareAnswerResponse:
-    """Format a shared assistant message with only safe public fields."""
-    sources = []
-    if message.sources_json:
-        try:
-            sources = [SourceChunk(**item) for item in json.loads(message.sources_json)]
-        except Exception:
-            sources = []
-
-    return ShareAnswerResponse(
-        id=str(message.id),
-        content=message.content,
-        created_at=message.created_at,
-        sources=sources,
-    )
 
 
 def _format_markdown(doc, messages) -> str:

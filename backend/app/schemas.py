@@ -467,18 +467,6 @@ class ChunkSettings(BaseModel):
 class UploadUrl(BaseModel):
     url: str
 
-class ShareAnswerResponse(BaseModel):
-    id: str
-    content: str
-    sources: List[SourceChunk] = []
-    created_at: datetime
-
-
-class ShareLinkResponse(BaseModel):
-    message_id: str
-    share_url: str
-
-
 class FeedbackRequest(BaseModel):
     feedback: Optional[str] = Field(None, pattern="^(up|down)?$")
 

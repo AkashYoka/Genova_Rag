@@ -3,7 +3,7 @@
 Safely migrate all data from SQLite to PostgreSQL without data loss.
 
 Supports both the current FastAPI schema (users, api_keys, documents,
-chat_messages, shared_messages) and the extended schema that includes
+chat_messages) and the extended schema that includes
 workspaces, workspace_invitations, workspace_members, chat_sessions,
 and drive_connections.
 
@@ -19,7 +19,7 @@ Tables migrated (FK-safe order)
 ---------------------------------
     users → api_keys → workspaces → workspace_invitations
     → workspace_members → chat_sessions → documents
-    → chat_messages → drive_connections → shared_messages
+    → chat_messages → drive_connections
 
 Usage
 -----
@@ -99,7 +99,6 @@ TABLE_ORDER = [
     "documents",
     "chat_messages",
     "drive_connections",
-    "shared_messages",
 ]
 
 # Columns that hold UUID / GUID values and need string normalisation

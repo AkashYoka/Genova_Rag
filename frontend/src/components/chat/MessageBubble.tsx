@@ -3,15 +3,11 @@
 import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import { formatDistanceToNow } from "date-fns";
 import type { ChatMsg } from "@/store/chat-store";
-import { api } from "@/lib/api";
 import {
   Brain,
   User,
   Copy,
   Check,
-  Share2,
-  Link2,
-  X,
   Play,
   Pause,
   GitBranch,
@@ -58,11 +54,8 @@ export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
   const messageTime = timestampFromMessageId(message.id);
   const [copied, setCopied] = useState(false);
-  const [shared, setShared] = useState(false);
-  const [shareFailed, setShareFailed] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sharedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   // Cancel speech synthesis when the component unmounts
@@ -102,32 +95,6 @@ export default function MessageBubble({ message }: Props) {
       copiedTimeoutRef.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
-    }
-  };
-
-  const handleShare = async () => {
-    if (!message.content || message.isStreaming) return;
-    try {
-      const data = await api.post<{ message_id: string; share_url: string }>(
-        `/api/v1/chat/share/${message.id}`,
-      );
-      await navigator.clipboard.writeText(
-        `${window.location.origin}${data.share_url}`,
-      );
-      setShared(true);
-      setShareFailed(false);
-      if (sharedTimeoutRef.current) clearTimeout(sharedTimeoutRef.current);
-      sharedTimeoutRef.current = setTimeout(() => {
-        setShared(false);
-        setShareFailed(false);
-      }, 2000);
-    } catch {
-      setShareFailed(true);
-      setShared(false);
-      if (sharedTimeoutRef.current) clearTimeout(sharedTimeoutRef.current);
-      sharedTimeoutRef.current = setTimeout(() => {
-        setShareFailed(false);
-      }, 2000);
     }
   };
 
@@ -329,41 +296,6 @@ export default function MessageBubble({ message }: Props) {
                     </Tooltip>
                   )}
 
-                  {/* Share button */}
-                  {!message.isStreaming && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        type="button"
-                        className={cn(
-                          buttonVariants({ variant: "ghost", size: "icon-xs" }),
-                          "text-muted-foreground hover:text-foreground",
-                        )}
-                        onClick={handleShare}
-                        aria-label={
-                          shared
-                            ? "Link copied"
-                            : shareFailed
-                              ? "Share failed"
-                              : "Share response"
-                        }
-                      >
-                        {shared ? (
-                          <Link2 className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : shareFailed ? (
-                          <X className="w-3.5 h-3.5 text-destructive" />
-                        ) : (
-                          <Share2 className="w-3.5 h-3.5" />
-                        )}
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {shared
-                          ? "Link copied"
-                          : shareFailed
-                            ? "Share failed"
-                            : "Share response"}
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
                 </div>
 
                 {copied && (

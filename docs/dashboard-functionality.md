@@ -66,7 +66,7 @@ The dashboard combines functional areas in a single desk layout: document librar
 
 **Out of scope (documented as absent/not part of dashboard):**
 
-- `/admin`, `/settings`, `/share`, `/drive`, `/login`, `/register`, `/verify-email`, `/auth/*` pages except where their APIs are called from the dashboard
+- `/admin`, `/login`, `/register`, `/verify-email`, `/auth/*` pages except where their APIs are called from the dashboard
 - Background ingestion workers (Celery) except where triggered by dashboard upload
 - GraphRAG, quiz generation, batch upload, URL upload, email service, audit logging, observability/metrics, cleanup scheduler — present in the repository but not invoked by the dashboard page code inspected
 

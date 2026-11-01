@@ -397,12 +397,6 @@ class ChatMessage(Base):
     user = relationship("User", back_populates="messages")
     document = relationship("Document", back_populates="messages")
     session = relationship("ChatSession", back_populates="messages")
-    shared_message = relationship(
-        "SharedMessage",
-        back_populates="message",
-        uselist=False,
-        cascade="all, delete-orphan",
-    )
 
 
 class DriveConnection(Base):
@@ -419,26 +413,6 @@ class DriveConnection(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="drive_connections")
-
-
-class SharedMessage(Base):
-    """
-    Links specific chat messages to public sharing URLs.
-    """
-    __tablename__ = "shared_messages"
-
-    id = Column(GUID, primary_key=True, default=uuid.uuid4)
-    message_id = Column(
-        GUID,
-        ForeignKey("chat_messages.id"),
-        nullable=False,
-        unique=True,
-        index=True,
-    )
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    # Relationships
-    message = relationship("ChatMessage", back_populates="shared_message")
 
 
 # ── Knowledge graph (GraphRAG) ────────────────────────────────────────────────

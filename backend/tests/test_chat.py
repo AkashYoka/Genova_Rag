@@ -129,8 +129,8 @@ def test_agent_dynamic_token(monkeypatch):
     assert called_with_token == get_settings().HF_TOKEN
 
 
-def test_clear_chat_history_with_shared_messages(client, auth_headers, ready_document, db_session, user):
-    from app.models import ChatMessage, SharedMessage
+def test_clear_chat_history(client, auth_headers, ready_document, db_session, user):
+    from app.models import ChatMessage
     
     # Create a user ChatMessage and an assistant ChatMessage associated with ready_document
     user_msg = ChatMessage(
@@ -149,17 +149,9 @@ def test_clear_chat_history_with_shared_messages(client, auth_headers, ready_doc
     db_session.commit()
     db_session.refresh(assistant_msg)
     
-    # Make assistant message shared by creating a SharedMessage link
-    shared = SharedMessage(message_id=assistant_msg.id)
-    db_session.add(shared)
-    db_session.commit()
-
-    assistant_msg_id = assistant_msg.id
-    
     # Expunge objects so session doesn't try to auto-refresh deleted rows
     db_session.expunge(user_msg)
     db_session.expunge(assistant_msg)
-    db_session.expunge(shared)
     
     # Call DELETE /api/v1/chat/history/{document_id}
     response = client.delete(
@@ -176,12 +168,6 @@ def test_clear_chat_history_with_shared_messages(client, auth_headers, ready_doc
         ChatMessage.document_id == ready_document.id
     ).all()
     assert len(remaining_messages) == 0
-    
-    # Check that SharedMessage records are deleted
-    remaining_shared = db_session.query(SharedMessage).filter(
-        SharedMessage.message_id == assistant_msg_id
-    ).all()
-    assert len(remaining_shared) == 0
 
 
 def test_clear_chat_history_repeated_or_empty(client, auth_headers, ready_document, db_session):

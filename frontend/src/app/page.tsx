@@ -249,31 +249,11 @@ export default function HomePage() {
             </ul>
           </div>
 
-          <div className="md:col-span-2 space-y-3">
-            <h4 className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground/80">
-              Legal
-            </h4>
-            <ul className="space-y-2.5 text-sm text-muted-foreground">
-              <li>
-                <Link href="/privacy" className="hover:text-foreground transition-colors">
-                  Privacy
-                </Link>
-              </li>
-              <li>
-                <Link href="/terms" className="hover:text-foreground transition-colors">
-                  Terms
-                </Link>
-              </li>
-            </ul>
-          </div>
         </div>
 
         <div className="max-w-6xl mx-auto px-6 py-5 border-t border-border/20 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground/70">
             © {new Date().getFullYear()} Yoka · Genova_Rag
-          </p>
-          <p className="text-xs text-muted-foreground/60">
-            FastAPI · Next.js · ChromaDB · Hybrid RAG
           </p>
         </div>
       </footer>
