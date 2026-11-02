@@ -1,6 +1,6 @@
 """
-SQLAlchemy database setup with SQLite.
-Uses synchronous SQLAlchemy for simplicity and compatibility.
+SQLAlchemy database setup — MySQL 8.4 LTS in deployments, SQLite by default
+for local use. Uses synchronous SQLAlchemy for simplicity and compatibility.
 """
 import os
 import time
@@ -14,7 +14,9 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 # ── Engine & Session ─────────────────────────────────
-is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+_database_url_lower = settings.DATABASE_URL.lower()
+is_sqlite = _database_url_lower.startswith("sqlite")
+is_mysql = _database_url_lower.startswith("mysql") or _database_url_lower.startswith("mariadb")
 
 if is_sqlite:
     # ── Ensure data directory exists ─────────────────────
@@ -36,6 +38,10 @@ if is_sqlite:
         cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 else:
+    # MySQL 8.4 LTS (and any other server-backed dialect).  utf8mb4 keeps
+    # document text, emoji and CJK intact; pool_recycle prevents "MySQL
+    # server has gone away" on long-lived Celery workers.
+    _connect_args = {"charset": "utf8mb4"} if is_mysql else {}
     engine = create_engine(
         settings.DATABASE_URL,
         echo=settings.DEBUG,
@@ -43,6 +49,7 @@ else:
         max_overflow=settings.DATABASE_MAX_OVERFLOW,
         pool_pre_ping=settings.DATABASE_POOL_PRE_PING,
         pool_recycle=settings.DATABASE_POOL_RECYCLE,  # Recycle stale connections
+        connect_args=_connect_args,
     )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -130,27 +137,50 @@ if settings.DEBUG:
         logger.debug("Session %s closed", id(session))
 
 
+def _ensure_index(table: str, index_name: str, columns: str) -> None:
+    """Create a non-unique index when it is missing.
+
+    MySQL has no ``CREATE INDEX IF NOT EXISTS``, so existence is checked via
+    the inspector instead of relying on dialect-specific DDL.
+    """
+    try:
+        inspector = inspect(engine)
+        if table not in inspector.get_table_names():
+            return
+        existing = {index.get("name") for index in inspector.get_indexes(table)}
+        if index_name in existing:
+            return
+        with engine.begin() as conn:
+            conn.execute(text(f"CREATE INDEX {index_name} ON {table} ({columns})"))
+        logger.info("Migration: created index %s", index_name)
+    except Exception as exc:
+        logger.warning("Index creation skipped for %s: %s", index_name, exc)
+
+
 def _migrate_schema():
-    """Apply schema migrations for existing databases (SQLite-compatible).
+    """Apply schema migrations for existing databases (SQLite and MySQL).
 
     SQLAlchemy's ``create_all`` only creates new tables and does **not**
     add missing columns to existing tables.  This helper fills that gap
     for non-destructive changes such as new nullable columns.
     """
     inspector = inspect(engine)
+    text_type = "LONGTEXT" if is_mysql else "TEXT"
+    # DATETIME(6) keeps sub-second precision and avoids MySQL's 2038 TIMESTAMP limit.
+    timestamp_type = "DATETIME(6)" if is_mysql else "TIMESTAMP"
     # Migrate users
     existing_users_columns = {c["name"] for c in inspector.get_columns("users")}
     users_migrations = [
         ("users", "hf_token", "ALTER TABLE users ADD COLUMN hf_token VARCHAR(255)"),
-        ("users", "google_refresh_token", "ALTER TABLE users ADD COLUMN google_refresh_token TEXT"),
+        ("users", "google_refresh_token", f"ALTER TABLE users ADD COLUMN google_refresh_token {text_type}"),
         ("users", "role", "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'"),
-        ("users", "last_login", "ALTER TABLE users ADD COLUMN last_login TIMESTAMP"),
+        ("users", "last_login", f"ALTER TABLE users ADD COLUMN last_login {timestamp_type}"),
         ("users", "is_verified", "ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT 1 NOT NULL"),
         ("users", "verification_token_hash", "ALTER TABLE users ADD COLUMN verification_token_hash VARCHAR(64)"),
         (
             "users",
             "verification_token_created_at",
-            "ALTER TABLE users ADD COLUMN verification_token_created_at TIMESTAMP",
+            f"ALTER TABLE users ADD COLUMN verification_token_created_at {timestamp_type}",
         ),
         ("users", "display_name", "ALTER TABLE users ADD COLUMN display_name VARCHAR(120)"),
         ("users", "avatar_url", "ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500)"),
@@ -174,7 +204,7 @@ def _migrate_schema():
     keys_migrations = [
         ("api_keys", "name", "ALTER TABLE api_keys ADD COLUMN name VARCHAR(100) DEFAULT 'default'"),
         ("api_keys", "is_active", "ALTER TABLE api_keys ADD COLUMN is_active BOOLEAN DEFAULT 1 NOT NULL"),
-        ("api_keys", "last_used_at", "ALTER TABLE api_keys ADD COLUMN last_used_at TIMESTAMP"),
+        ("api_keys", "last_used_at", f"ALTER TABLE api_keys ADD COLUMN last_used_at {timestamp_type}"),
     ]
     for table, column, ddl in keys_migrations:
         if column not in existing_keys_columns:
@@ -190,23 +220,23 @@ def _migrate_schema():
     # Migrate documents
     existing_docs_columns = {c["name"] for c in inspector.get_columns("documents")}
     docs_migrations = [
-        ("documents", "last_accessed_at", "ALTER TABLE documents ADD COLUMN last_accessed_at TIMESTAMP"),
+        ("documents", "last_accessed_at", f"ALTER TABLE documents ADD COLUMN last_accessed_at {timestamp_type}"),
         ("documents", "is_deleted", "ALTER TABLE documents ADD COLUMN is_deleted BOOLEAN DEFAULT 0 NOT NULL"),
-        ("documents", "deleted_at", "ALTER TABLE documents ADD COLUMN deleted_at TIMESTAMP"),
-        ("documents", "summary", "ALTER TABLE documents ADD COLUMN summary TEXT"),
+        ("documents", "deleted_at", f"ALTER TABLE documents ADD COLUMN deleted_at {timestamp_type}"),
+        ("documents", "summary", f"ALTER TABLE documents ADD COLUMN summary {text_type}"),
         ("documents", "chunk_size", "ALTER TABLE documents ADD COLUMN chunk_size INTEGER"),
         ("documents", "chunk_overlap", "ALTER TABLE documents ADD COLUMN chunk_overlap INTEGER"),
         ("documents", "drive_file_id", "ALTER TABLE documents ADD COLUMN drive_file_id VARCHAR(255)"),
         ("documents", "drive_folder_id", "ALTER TABLE documents ADD COLUMN drive_folder_id VARCHAR(255)"),
-        ("documents", "drive_synced_at", "ALTER TABLE documents ADD COLUMN drive_synced_at TIMESTAMP"),
+        ("documents", "drive_synced_at", f"ALTER TABLE documents ADD COLUMN drive_synced_at {timestamp_type}"),
         ("documents", "processing_progress", "ALTER TABLE documents ADD COLUMN processing_progress INTEGER DEFAULT 0"),
         ("documents", "processing_stage", "ALTER TABLE documents ADD COLUMN processing_stage VARCHAR(20) DEFAULT 'queued'"),
         ("documents", "retry_count", "ALTER TABLE documents ADD COLUMN retry_count INTEGER DEFAULT 0"),
-        ("documents", "last_error_traceback", "ALTER TABLE documents ADD COLUMN last_error_traceback TEXT"),
-        ("documents", "processing_started_at", "ALTER TABLE documents ADD COLUMN processing_started_at TIMESTAMP"),
-        ("documents", "completed_at", "ALTER TABLE documents ADD COLUMN completed_at TIMESTAMP"),
-        ("documents", "extracted_urls", "ALTER TABLE documents ADD COLUMN extracted_urls TEXT"),
-        ("documents", "keywords", "ALTER TABLE documents ADD COLUMN keywords TEXT"),
+        ("documents", "last_error_traceback", f"ALTER TABLE documents ADD COLUMN last_error_traceback {text_type}"),
+        ("documents", "processing_started_at", f"ALTER TABLE documents ADD COLUMN processing_started_at {timestamp_type}"),
+        ("documents", "completed_at", f"ALTER TABLE documents ADD COLUMN completed_at {timestamp_type}"),
+        ("documents", "extracted_urls", f"ALTER TABLE documents ADD COLUMN extracted_urls {text_type}"),
+        ("documents", "keywords", f"ALTER TABLE documents ADD COLUMN keywords {text_type}"),
     ]
     for table, column, ddl in docs_migrations:
         if column not in existing_docs_columns:
@@ -240,11 +270,7 @@ def _migrate_schema():
                 )
     
     # Ensure index exists on session_id
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_messages_session_id ON chat_messages (session_id)"))
-    except Exception:
-        pass
+    _ensure_index("chat_messages", "ix_chat_messages_session_id", "session_id")
 
 
     # Migrate documents — embedding cache tracking
@@ -257,7 +283,7 @@ def _migrate_schema():
         (
             "documents",
             "extracted_urls",
-            "ALTER TABLE documents ADD COLUMN extracted_urls TEXT",
+            f"ALTER TABLE documents ADD COLUMN extracted_urls {text_type}",
         ),
     ]
     for table, column, ddl in embedding_cache_migrations:
@@ -278,18 +304,17 @@ def _migrate_schema():
     if "workspaces" not in existing_tables:
         try:
             with engine.begin() as conn:
-                conn.execute(text("""
+                conn.execute(text(f"""
                     CREATE TABLE workspaces (
                         id         CHAR(36)     PRIMARY KEY,
                         name       VARCHAR(255) NOT NULL,
-                        created_by CHAR(36)     NOT NULL REFERENCES users(id),
-                        created_at TIMESTAMP
+                        created_by CHAR(36)     NOT NULL,
+                        created_at {timestamp_type},
+                        CONSTRAINT fk_workspaces_created_by
+                            FOREIGN KEY (created_by) REFERENCES users (id)
                     )
                 """))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_workspaces_created_by "
-                    "ON workspaces (created_by)"
-                ))
+            _ensure_index("workspaces", "ix_workspaces_created_by", "created_by")
             logger.info("Migration: created table workspaces")
         except Exception:
             logger.warning("Migration skipped (may already exist): workspaces")
@@ -297,24 +322,24 @@ def _migrate_schema():
     if "workspace_members" not in existing_tables:
         try:
             with engine.begin() as conn:
-                conn.execute(text("""
+                conn.execute(text(f"""
                     CREATE TABLE workspace_members (
                         id           CHAR(36)    PRIMARY KEY,
-                        workspace_id CHAR(36)    NOT NULL REFERENCES workspaces(id),
-                        user_id      CHAR(36)    NOT NULL REFERENCES users(id),
+                        workspace_id CHAR(36)    NOT NULL,
+                        user_id      CHAR(36)    NOT NULL,
                         role         VARCHAR(20) NOT NULL DEFAULT 'viewer',
-                        joined_at    TIMESTAMP,
-                        CONSTRAINT uq_workspace_member UNIQUE (workspace_id, user_id)
+                        joined_at    {timestamp_type},
+                        CONSTRAINT uq_workspace_member UNIQUE (workspace_id, user_id),
+                        CONSTRAINT fk_workspace_members_workspace
+                            FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
+                        CONSTRAINT fk_workspace_members_user
+                            FOREIGN KEY (user_id) REFERENCES users (id)
                     )
                 """))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_workspace_members_workspace_id "
-                    "ON workspace_members (workspace_id)"
-                ))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_workspace_members_user_id "
-                    "ON workspace_members (user_id)"
-                ))
+            _ensure_index(
+                "workspace_members", "ix_workspace_members_workspace_id", "workspace_id"
+            )
+            _ensure_index("workspace_members", "ix_workspace_members_user_id", "user_id")
             logger.info("Migration: created table workspace_members")
         except Exception:
             logger.warning("Migration skipped (may already exist): workspace_members")
@@ -322,40 +347,45 @@ def _migrate_schema():
     if "workspace_invitations" not in existing_tables:
         try:
             with engine.begin() as conn:
-                conn.execute(text("""
+                conn.execute(text(f"""
                     CREATE TABLE workspace_invitations (
                         id             CHAR(36)     PRIMARY KEY,
                         email          VARCHAR(120) NOT NULL,
                         token_hash     VARCHAR(255) NOT NULL UNIQUE,
-                        inviter_id     CHAR(36)     NOT NULL REFERENCES users(id),
+                        inviter_id     CHAR(36)     NOT NULL,
                         workspace_name VARCHAR(255) NOT NULL,
-                        created_at     TIMESTAMP,
-                        expires_at     TIMESTAMP    NOT NULL,
-                        accepted_at    TIMESTAMP
+                        created_at     {timestamp_type},
+                        expires_at     {timestamp_type}    NOT NULL,
+                        accepted_at    {timestamp_type},
+                        CONSTRAINT fk_workspace_invitations_inviter
+                            FOREIGN KEY (inviter_id) REFERENCES users (id)
                     )
                 """))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_workspace_invitations_email "
-                    "ON workspace_invitations (email)"
-                ))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_workspace_invitations_token_hash "
-                    "ON workspace_invitations (token_hash)"
-                ))
-                conn.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_workspace_invitations_inviter_id "
-                    "ON workspace_invitations (inviter_id)"
-                ))
+            _ensure_index(
+                "workspace_invitations", "ix_workspace_invitations_email", "email"
+            )
+            _ensure_index(
+                "workspace_invitations",
+                "ix_workspace_invitations_token_hash",
+                "token_hash",
+            )
+            _ensure_index(
+                "workspace_invitations",
+                "ix_workspace_invitations_inviter_id",
+                "inviter_id",
+            )
             logger.info("Migration: created table workspace_invitations")
         except Exception:
             logger.warning("Migration skipped (may already exist): workspace_invitations")
 
 
-def advisory_lock(lock_id: int):
-    """Context manager that acquires a PostgreSQL advisory lock (xact scope).
+def advisory_lock(lock_id: int, timeout_seconds: int = 30):
+    """Context manager that acquires a cross-process advisory lock.
 
-    On SQLite the lock is a no-op because SQLite serializes all writes anyway.
-    On PostgreSQL the lock is released automatically at transaction commit.
+    * SQLite — no-op, because SQLite serializes writes anyway.
+    * MySQL — ``GET_LOCK``/``RELEASE_LOCK`` on a dedicated connection, so
+      concurrent Celery workers and the cleanup scheduler never overlap.
+    * Other server dialects — transaction-scoped advisory lock.
 
     Usage::
 
@@ -366,15 +396,40 @@ def advisory_lock(lock_id: int):
         # SQLite serializes writes; no explicit lock needed.
         return _noop_contextmanager()
 
-    from contextlib import contextmanager
+    if is_mysql:
+        @contextmanager
+        def _mysql_lock():
+            # GET_LOCK names are server-wide and capped at 64 characters.
+            lock_name = f"pdf_rag:{lock_id}"
+            conn = engine.connect()
+            try:
+                acquired = conn.execute(
+                    text("SELECT GET_LOCK(:name, :timeout)"),
+                    {"name": lock_name, "timeout": timeout_seconds},
+                ).scalar()
+                if acquired != 1:
+                    logger.warning(
+                        "Advisory lock %s not acquired within %ss",
+                        lock_name,
+                        timeout_seconds,
+                    )
+                yield
+            finally:
+                try:
+                    conn.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": lock_name})
+                except Exception:
+                    logger.debug("Failed to release advisory lock %s", lock_name, exc_info=True)
+                conn.close()
+
+        return _mysql_lock()
 
     @contextmanager
-    def _pg_lock():
+    def _xact_lock():
         with engine.begin() as conn:
             conn.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": lock_id})
             yield
 
-    return _pg_lock()
+    return _xact_lock()
 
 
 def _noop_contextmanager():

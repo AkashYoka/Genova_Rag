@@ -975,7 +975,7 @@ def update_chunk_settings(
     # Guard against re-queuing ingestion while a prior run for this same document is still actively processing. Without this, two
     # process_document runs can execute concurrently against the same document_id: store_chunks() in vectorstore.py performs a non-atomic
     # delete-then-batch-insert sequence, so one run's delete can fire in between the other run's delete-then-insert steps, corrupting the
-    # vector store and leaving Postgres' chunk_count out of sync with whatever vectors actually survive.
+    # vector store and leaving the database's chunk_count out of sync with whatever vectors actually survive.
     if doc.status == "processing":
         raise ConflictException(
             "Document is still processing. Wait for the current run to "

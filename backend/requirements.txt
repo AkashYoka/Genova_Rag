@@ -5,10 +5,11 @@ fastapi
 uvicorn[standard]
 python-multipart
 
-# Database
+# Database — MySQL 8.4 LTS (PyMySQL is pure Python, no build toolchain needed)
 sqlalchemy
 aiosqlite
-psycopg[binary]
+pymysql
+cryptography
 
 # Auth
 pyjwt

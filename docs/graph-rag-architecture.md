@@ -10,7 +10,7 @@ Scope: `backend/app/graph/`, `backend/app/routes/graph.py`, `frontend/src/compon
 | Area | Implementation (inspected) |
 |---|---|
 | Frontend | Next.js App Router + React 19, Tailwind, Zustand stores, `@xyflow/react` for graph UI |
-| Backend | FastAPI, SQLAlchemy, SQLite by default (`DATABASE_URL`), Celery eager/Redis optional |
+| Backend | FastAPI, SQLAlchemy, MySQL 8.4 LTS in deployments / SQLite default (`DATABASE_URL`), Celery eager/Redis optional |
 | Upload | `backend/app/routes/documents.py` → background task / Celery task |
 | Text extraction + chunking | `app/rag/chunking/chunker.py` (`chunk_document`, `get_page_count`) |
 | Embeddings | `app/rag/embeddings/embeddings.py` (Ollama `nomic-embed-text` or MiniLM) |

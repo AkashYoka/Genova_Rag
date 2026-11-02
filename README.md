@@ -25,7 +25,7 @@ short_description: Enterprise Agentic RAG — upload PDFs and chat with AI
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://postgresql.org/)
+[![MySQL](https://img.shields.io/badge/MySQL-8.4_LTS-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](https://dev.mysql.com/doc/relnotes/mysql/8.4/en/)
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-VectorDB-FF6B35?style=for-the-badge)](https://trychroma.com/)
 [![HuggingFace](https://img.shields.io/badge/HuggingFace-Inference-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/)
 [![Celery](https://img.shields.io/badge/Celery-Redis-37814A?style=for-the-badge&logo=celery&logoColor=white)](https://docs.celeryq.dev/)
@@ -72,7 +72,7 @@ subgraph group_backend["Backend"]
   node_backend_rag_retrieval["Retrieval<br/>hybrid RAG<br/>[retriever.py]"]
   node_backend_rag_generation["Generation<br/>prompt/LLM<br/>[prompts.py]"]
   node_backend_graph_rag["Graph RAG<br/>entity graph<br/>[graph_builder.py]"]
-  node_backend_storage_db[("Database<br/>SQLAlchemy/PG<br/>[database.py]")]
+  node_backend_storage_db[("Database<br/>SQLAlchemy/MySQL<br/>[database.py]")]
   node_backend_storage_vector[("Vector store<br/>ChromaDB<br/>[vectorstore.py]")]
   node_backend_storage_cache[("Cache<br/>Redis/LRU<br/>[cache.py]")]
   node_backend_queue["Queue<br/>Celery/Redis<br/>[celery_app.py]"]
@@ -165,7 +165,7 @@ class node_integrations_bot,node_ops_obs,node_ops_deploy toneMint
 |---|---|---|
 | <img src="https://skillicons.dev/icons?i=fastapi" width="30"/> | **FastAPI** | Async web framework + routing |
 | <img src="https://skillicons.dev/icons?i=python" width="30"/> | **Python 3.11** | Runtime environment |
-| <img src="https://skillicons.dev/icons?i=postgresql" width="30"/> | **PostgreSQL / SQLite** | Relational database (SQLAlchemy ORM) |
+| <img src="https://skillicons.dev/icons?i=mysql" width="30"/> | **MySQL 8.4 LTS / SQLite** | Relational database (SQLAlchemy ORM) |
 | <img src="https://img.shields.io/badge/JWT-000000?style=flat&logo=jsonwebtokens&logoColor=white" height="24"/> | **JWT + bcrypt** | Authentication & password hashing |
 | <img src="https://img.shields.io/badge/ChromaDB-000000?style=flat" height="24"/> | **ChromaDB** | Local vector store (embeddings) |
 | <img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=flat&logo=huggingface&logoColor=black" height="24"/> | **HuggingFace Inference API** | LLM answer generation |
@@ -247,7 +247,7 @@ class node_integrations_bot,node_ops_obs,node_ops_deploy toneMint
 
 ### Engineering
 - **Async FastAPI** with SSE streaming
-- **PostgreSQL** metadata + **ChromaDB** vectors
+- **MySQL 8.4 LTS** metadata + **ChromaDB** vectors
 - **Celery + Redis** async ingestion pipeline
 - **Multi-stage Docker** with CPU & GPU profiles
 - **Prometheus metrics** + Grafana dashboard
@@ -402,7 +402,7 @@ npm run dev
 | Health | http://localhost:7860/api/v1/health/status |
 
 **Notes for Windows local mode:**
-- SQLite is used by default (`./data/app.db`) — Postgres is not required.
+- SQLite is used by default (`./data/app.db`) — MySQL is not required for local mode.
 - Redis/Celery are optional. If Redis is down, Celery runs in **eager** mode and uploads still ingest in-process.
 - Register a user in the UI (no SMTP → account is auto-verified for local testing).
 - Optional overrides (PowerShell session only, no `.env` file):
@@ -569,7 +569,7 @@ crawl4ai-setup
 | `EMBEDDING_MODEL` | ❌ | `nomic-embed-text` | Ollama embedding model (768-d) |
 | `EMBEDDING_DIMENSION` | ❌ | `768` | Must match embedding model |
 | `HF_TOKEN` | ❌ | — | Required only when `LLM_PROVIDER=huggingface` |
-| `DATABASE_URL` | ❌ | `sqlite:///./data/app.db` | SQLAlchemy connection string (SQLite or PostgreSQL) |
+| `DATABASE_URL` | ❌ | `sqlite:///./data/app.db` | SQLAlchemy connection string (SQLite or MySQL). Bare `mysql://` is upgraded to `mysql+pymysql://` |
 | `CELERY_BROKER_URL` | ❌ | `redis://localhost:6379/0` | Redis broker for Celery (optional locally) |
 | `CELERY_RESULT_BACKEND` | ❌ | `redis://localhost:6379/1` | Redis backend for Celery results |
 | `REDIS_URL` | ❌ | — | Redis URL for response + embedding cache |
@@ -619,10 +619,44 @@ crawl4ai-setup
 |---------|-------------|
 | `docker compose --profile cpu up --build` | Full stack — CPU only |
 | `docker compose --profile gpu up --build` | Full stack — GPU accelerated |
-| `docker compose --profile debug up` | Also start pgAdmin at http://localhost:5050 |
+| `docker compose --profile debug up` | Also start Adminer at http://localhost:5050 |
+| `docker compose --profile legacy-postgres up -d postgres` | Start the pre-migration PostgreSQL 16 service (for dumping old data) |
 | `docker compose down` | Stop all containers |
 
 > **GPU profile** requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+
+### Migrating an existing PostgreSQL database to MySQL 8.4
+
+The relational schema is created automatically by the app (`create_all` +
+`_migrate_schema`), so only row data has to be moved:
+
+```bash
+# 0. Snapshot the old database (keep it until MySQL is validated)
+docker exec pdf_rag_postgres pg_dump -U pdf_rag_user -d pdf_rag -Fc \
+  > backup_pre_mysql.dump
+
+# 1. Start MySQL alongside the legacy PostgreSQL container
+docker compose --profile legacy-postgres up -d postgres
+
+# 2. Dry run, then the real copy (writes a JSON snapshot first)
+python backend/scripts/migrate_postgres_to_mysql.py \
+  --postgres postgresql://pdf_rag_user:pdf_rag_pass@localhost:5432/pdf_rag \
+  --mysql    mysql+pymysql://pdf_rag_user:pdf_rag_pass@localhost:3306/pdf_rag \
+  --dry-run
+
+python backend/scripts/migrate_postgres_to_mysql.py \
+  --postgres postgresql://pdf_rag_user:pdf_rag_pass@localhost:5432/pdf_rag \
+  --mysql    mysql+pymysql://pdf_rag_user:pdf_rag_pass@localhost:3306/pdf_rag \
+  --backup ./backups/pre_mysql.json
+
+# 3. Re-verify without writing, then start the stack against MySQL
+docker compose --profile cpu up -d --build
+```
+
+The migration script copies rows in foreign-key order, normalises UUIDs and
+timezone-aware timestamps, runs in a single MySQL transaction, and verifies
+row counts plus a per-column sample. ChromaDB vectors and uploaded files live
+on the `app_data` volume and are unaffected.
 
 <br/>
 

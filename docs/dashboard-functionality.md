@@ -144,18 +144,18 @@ Every endpoint listed in the API Documentation section is protected by `get_curr
 ### Database technology
 
 - **Primary:** SQLAlchemy (sync) with SQLite default (`DATABASE_URL = "sqlite:///./data/app.db"`).
-- **Production alternative:** PostgreSQL+psycopg via docker-compose or env.
+- **Production alternative:** MySQL 8.4 LTS via PyMySQL (`mysql+pymysql://`) in docker-compose or env.
 - **Migrations:** `init_db()` in `backend/app/database.py` — `Base.metadata.create_all(bind=engine)` + raw-SQL migrations.
 
 ### Relevant tables / collections
 
 | Entity | Storage | Key fields (dashboard-relevant) | Relationships |
 |---|---|---|---|
-| `User` | SQLite `/ Postgres` | `id`, `username`, `email`, `is_admin`, `is_deleted`, `drive_folder_id`, `last_login`, `hf_token` (encrypted) | — owns — `documents`, `chat_messages`, `chat_sessions`, `drive_connections` |
-| `Document` | SQLite `/ Postgres` | `id`, `user_id`, `original_name`, `filename`, `file_size`, `page_count`, `chunk_count`, `status` | `user_id → User.id`; `one → many chat_messages` |
-| `ChatSession` | SQLite `/ Postgres` | `id`, `title`, `created_at` | `one → many chat_messages` |
-| `ChatMessage` | SQLite `/ Postgres` | `id`, `user_id`, `document_id`, `session_id`, `role`, `content`, `sources_json` | `user_id → User.id`; `document_id → Document.id`; `session_id → ChatSession.id` |
-| `DriveConnection` | SQLite `/ Postgres` | `id`, `user_id`, `folder_id`, `credentials_json` | `user_id → User.id` |
+| `User` | SQLite `/ MySQL` | `id`, `username`, `email`, `is_admin`, `is_deleted`, `drive_folder_id`, `last_login`, `hf_token` (encrypted) | — owns — `documents`, `chat_messages`, `chat_sessions`, `drive_connections` |
+| `Document` | SQLite `/ MySQL` | `id`, `user_id`, `original_name`, `filename`, `file_size`, `page_count`, `chunk_count`, `status` | `user_id → User.id`; `one → many chat_messages` |
+| `ChatSession` | SQLite `/ MySQL` | `id`, `title`, `created_at` | `one → many chat_messages` |
+| `ChatMessage` | SQLite `/ MySQL` | `id`, `user_id`, `document_id`, `session_id`, `role`, `content`, `sources_json` | `user_id → User.id`; `document_id → Document.id`; `session_id → ChatSession.id` |
+| `DriveConnection` | SQLite `/ MySQL` | `id`, `user_id`, `folder_id`, `credentials_json` | `user_id → User.id` |
 | ChromaDB | Persistent client | Per-user collection `user_<id>`; chunk metadata + embedding vectors | User isolation |
 
 ### Operations

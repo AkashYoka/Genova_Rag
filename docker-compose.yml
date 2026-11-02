@@ -22,11 +22,43 @@ services:
       retries: 5
       start_period: 5s
 
-  # ── PostgreSQL Database ──────────────────────────────────
+  # ── MySQL 8.4 LTS Database ───────────────────────────────
+  mysql:
+    image: mysql:8.4
+    container_name: pdf_rag_mysql
+    restart: unless-stopped
+    logging: *default-logging
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_ai_ci
+      --explicit_defaults_for_timestamp=ON
+      --max-allowed-packet=64M
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-pdf_rag}
+      MYSQL_USER: ${MYSQL_USER:-pdf_rag_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-pdf_rag_pass}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-pdf_rag_root_pass}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./scripts/init_mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Legacy PostgreSQL (opt-in, migration window only) ────
+  # Kept so the pre-migration stack can still be started to dump/verify
+  # existing data before MySQL is promoted. Not started by default:
+  #   docker compose --profile legacy-postgres up -d postgres
   postgres:
     image: postgres:16-alpine
     container_name: pdf_rag_postgres
     restart: unless-stopped
+    profiles: ["legacy-postgres"]
     logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-pdf_rag}
@@ -57,7 +89,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-pdf_rag_user}:${MYSQL_PASSWORD:-pdf_rag_pass}@mysql:3306/${MYSQL_DATABASE:-pdf_rag}?charset=utf8mb4
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -65,7 +97,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - DEVICE=cpu
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -90,7 +122,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-pdf_rag_user}:${MYSQL_PASSWORD:-pdf_rag_pass}@mysql:3306/${MYSQL_DATABASE:-pdf_rag}?charset=utf8mb4
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -105,7 +137,7 @@ services:
               count: all
               capabilities: [gpu]
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -129,7 +161,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-pdf_rag_user}:${MYSQL_PASSWORD:-pdf_rag_pass}@mysql:3306/${MYSQL_DATABASE:-pdf_rag}?charset=utf8mb4
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -137,7 +169,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - DEVICE=cpu
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -155,7 +187,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-pdf_rag_user}:${MYSQL_PASSWORD:-pdf_rag_pass}@mysql:3306/${MYSQL_DATABASE:-pdf_rag}?charset=utf8mb4
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -170,7 +202,7 @@ services:
               count: all
               capabilities: [gpu]
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -196,23 +228,23 @@ services:
       retries: 3
       start_period: 20s
 
-  # ── pgAdmin (optional — for local DB inspection) ─────────
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: pdf_rag_pgadmin
+  # ── Adminer (optional — for local MySQL inspection) ──────
+  adminer:
+    image: adminer:latest
+    container_name: pdf_rag_adminer
     restart: unless-stopped
     profiles: ["debug"]
     logging: *default-logging
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@local.dev
-      PGADMIN_DEFAULT_PASSWORD: admin
-      PGADMIN_CONFIG_SERVER_MODE: "False"
+      ADMINER_DEFAULT_SERVER: mysql
     ports:
-      - "5050:80"
+      - "5050:8080"
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
 
 volumes:
+  mysql_data:
+  # Retained so the legacy PostgreSQL profile can still read pre-migration data.
   postgres_data:
   app_data:

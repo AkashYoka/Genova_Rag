@@ -8,7 +8,7 @@ document_id was still "processing", this let two ingestion runs execute
 concurrently against the same document - and since store_chunks() in
 vectorstore.py performs a non-atomic delete-then-batch-insert sequence,
 the two runs could interleave and corrupt the vector store relative to
-whatever chunk_count ends up persisted in Postgres.
+whatever chunk_count ends up persisted in the database.
 """
 from app.models import Document
 

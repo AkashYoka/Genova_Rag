@@ -202,6 +202,24 @@ class Settings(BaseSettings):
                     origins.append(o_strip)
         return origins
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, value: str) -> str:
+        """Upgrade bare MySQL URLs to the bundled PyMySQL driver.
+
+        ``mysql://`` and ``mariadb://`` are not usable by SQLAlchemy on their
+        own; both are rewritten to ``mysql+pymysql://`` unless an explicit
+        driver (e.g. ``mysql+mysqldb://``) was already supplied.
+        """
+        if not value:
+            return value
+        url = str(value).strip()
+        if url.startswith("mysql://"):
+            return "mysql+pymysql://" + url[len("mysql://"):]
+        if url.startswith("mariadb://"):
+            return "mysql+pymysql://" + url[len("mariadb://"):]
+        return url
+
     @field_validator("LLM_PROVIDER", "EMBEDDING_PROVIDER", mode="before")
     @classmethod
     def _normalize_provider(cls, value: str) -> str:

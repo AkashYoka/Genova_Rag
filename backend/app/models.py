@@ -19,10 +19,23 @@ from sqlalchemy import (
     Boolean,
     Enum as SQLAlchemyEnum,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.types import TypeDecorator, CHAR
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.mysql import DATETIME as MYSQL_DATETIME, LONGTEXT as MYSQL_LONGTEXT
 from sqlalchemy.orm import relationship
+
+# ── Portable large-text column ────────────────────────────────────────────────
+# MySQL's TEXT tops out at 64 KB, which is too small for full chat answers,
+# extracted URL lists or tracebacks.  LONGTEXT keeps the historical "unbounded
+# text" behaviour the application relies on; other dialects stay on TEXT.
+LongText = Text().with_variant(MYSQL_LONGTEXT(), "mysql")
+
+# ── Portable high-resolution timestamp ────────────────────────────────────────
+# MySQL's plain DATETIME truncates fractional seconds, which would make
+# messages created in the same second sort ambiguously.  DATETIME(6) keeps the
+# microsecond precision the application has always stored.
+Timestamp = DateTime().with_variant(MYSQL_DATETIME(fsp=6), "mysql")
 
 from app.database import Base
 
@@ -33,28 +46,24 @@ def generate_uuid():
 
 class GUID(TypeDecorator):
     """Platform-independent GUID type.
-    Uses PostgreSQL's UUID type, otherwise uses CHAR(36).
+
+    Stored as ``CHAR(36)`` on MySQL (and SQLite), which keeps every existing
+    value readable as a plain lowercase UUID string.
     """
     impl = CHAR
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
-        if dialect.name == 'postgresql':
-            return dialect.type_descriptor(PG_UUID(as_uuid=True))
-        else:
-            return dialect.type_descriptor(CHAR(36))
+        return dialect.type_descriptor(CHAR(36))
 
     def process_bind_param(self, value, dialect):
         if value is None:
             return value
         if isinstance(value, uuid.UUID):
-            return value if dialect.name == 'postgresql' else str(value)
+            return str(value)
         try:
-            val_uuid = uuid.UUID(value)
-            return val_uuid if dialect.name == 'postgresql' else str(val_uuid)
+            return str(uuid.UUID(value))
         except ValueError:
-            if dialect.name == 'postgresql':
-                return uuid.UUID(int=0)
             return value
 
     def process_result_value(self, value, dialect):
@@ -69,7 +78,7 @@ class EncryptedString(TypeDecorator):
     in the database using Fernet (AES). This ensures sensitive tokens
     aren't stored in plain text while remaining easily accessible in code.
     """
-    impl = Text
+    impl = LongText
     cache_ok = False
 
     def _get_cipher(self):
@@ -135,12 +144,14 @@ class User(Base):
         server_default="user",
     )
     is_admin = Column(Boolean, default=False)
-    is_verified = Column(Boolean, default=True, nullable=False, server_default="true")
+    # MySQL rejects a quoted 'true' default for BOOL; TRUE is valid on MySQL,
+    # SQLite and PostgreSQL alike.
+    is_verified = Column(Boolean, default=True, nullable=False, server_default=text("TRUE"))
     verification_token_hash = Column(String(64), nullable=True, index=True)
-    verification_token_created_at = Column(DateTime, nullable=True)
+    verification_token_created_at = Column(Timestamp, nullable=True)
 
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_login = Column(DateTime, nullable=True, index=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+    last_login = Column(Timestamp, nullable=True, index=True)
     hf_token = Column(EncryptedString, nullable=True)
     display_name = Column(String(120), nullable=True)
     avatar_url = Column(String(500), nullable=True)
@@ -191,8 +202,8 @@ class ApiKey(Base):
     key_prefix = Column(String(20), nullable=False)
     hashed_key = Column(String(255), nullable=False, unique=True, index=True)
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_used_at = Column(DateTime, nullable=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+    last_used_at = Column(Timestamp, nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="api_keys")
@@ -211,9 +222,9 @@ class WorkspaceInvitation(Base):
         index=True,
     )
     workspace_name = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    expires_at = Column(DateTime, nullable=False)
-    accepted_at = Column(DateTime, nullable=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(Timestamp, nullable=False)
+    accepted_at = Column(Timestamp, nullable=True)
 
     inviter = relationship("User")
 
@@ -233,7 +244,7 @@ class Workspace(Base):
     )
 
     created_at = Column(
-        DateTime,
+        Timestamp,
         default=lambda: datetime.now(timezone.utc),
     )
 
@@ -285,7 +296,7 @@ class WorkspaceMember(Base):
     )
 
     joined_at = Column(
-        DateTime,
+        Timestamp,
         default=lambda: datetime.now(timezone.utc),
     )
 
@@ -309,7 +320,7 @@ class ChatSession(Base):
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("User", back_populates="chat_sessions")
@@ -334,29 +345,29 @@ class Document(Base):
     page_count = Column(Integer, default=0)
     chunk_count = Column(Integer, default=0)
     status = Column(String(20), default="pending")
-    error_message = Column(Text, nullable=True)
-    uploaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    error_message = Column(LongText, nullable=True)
+    uploaded_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
     last_accessed_at = Column(
-        DateTime,
+        Timestamp,
         default=lambda: datetime.now(timezone.utc),
         nullable=True,
     )
-    summary = Column(Text, nullable=True)
+    summary = Column(LongText, nullable=True)
     chunk_size = Column(Integer, nullable=True)
     chunk_overlap = Column(Integer, nullable=True)
     drive_file_id = Column(String(255), unique=True, nullable=True, index=True)
     drive_folder_id = Column(String(255), nullable=True, index=True)
-    drive_synced_at = Column(DateTime, nullable=True)
+    drive_synced_at = Column(Timestamp, nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
-    deleted_at = Column(DateTime, nullable=True)
+    deleted_at = Column(Timestamp, nullable=True)
     processing_progress = Column(Integer, default=0)
     processing_stage = Column(String(20), default="queued")
     retry_count = Column(Integer, default=0)
-    last_error_traceback = Column(Text, nullable=True)
-    processing_started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
-    extracted_urls = Column(Text, nullable=True)
-    keywords = Column(Text, nullable=True)
+    last_error_traceback = Column(LongText, nullable=True)
+    processing_started_at = Column(Timestamp, nullable=True)
+    completed_at = Column(Timestamp, nullable=True)
+    extracted_urls = Column(LongText, nullable=True)
+    keywords = Column(LongText, nullable=True)
 
     # Relationships
     owner = relationship("User", back_populates="documents")
@@ -388,10 +399,10 @@ class ChatMessage(Base):
         index=True,
     )
     role = Column(String(20), nullable=False)  # "user" | "assistant"
-    content = Column(Text, nullable=False)
-    sources_json = Column(Text, nullable=True)
+    content = Column(LongText, nullable=False)
+    sources_json = Column(LongText, nullable=True)
     feedback = Column(String(10), nullable=True)  # "up" | "down" | None
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("User", back_populates="messages")
@@ -405,12 +416,12 @@ class DriveConnection(Base):
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
     folder_id = Column(String(255), nullable=False, index=True)
-    credentials_json = Column(Text, nullable=True)
+    credentials_json = Column(LongText, nullable=True)
     service_account_file = Column(String(500), nullable=True)
     enabled = Column(Boolean, default=True, nullable=False)
-    last_synced_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_synced_at = Column(Timestamp, nullable=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="drive_connections")
 
@@ -440,15 +451,15 @@ class GraphEntity(Base):
     canonical_name = Column(String(255), nullable=False)
     normalized_name = Column(String(255), nullable=False, index=True)
     entity_type = Column(String(64), nullable=False, index=True)
-    description = Column(Text, nullable=True)
-    aliases_json = Column(Text, nullable=True)
+    description = Column(LongText, nullable=True)
+    aliases_json = Column(LongText, nullable=True)
     mention_count = Column(Integer, default=0, nullable=False)
     document_count = Column(Integer, default=0, nullable=False)
     confidence = Column(Float, default=0.0, nullable=False)
     # Set when a fuzzy candidate existed but merging was not safe.
     possible_duplicate_of = Column(String(64), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
 
 class GraphEntityMention(Base):
@@ -468,10 +479,10 @@ class GraphEntityMention(Base):
     chunk_id = Column(String(128), nullable=True)
     page = Column(Integer, nullable=True)
     section = Column(String(255), nullable=True)
-    evidence_text = Column(Text, nullable=True)
+    evidence_text = Column(LongText, nullable=True)
     confidence = Column(Float, default=0.0, nullable=False)
     extraction_method = Column(String(32), default="llm", nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
 
 class GraphRelationship(Base):
@@ -503,10 +514,10 @@ class GraphRelationship(Base):
         index=True,
     )
     relation_type = Column(String(64), nullable=False, index=True)
-    description = Column(Text, nullable=True)
+    description = Column(LongText, nullable=True)
     confidence = Column(Float, default=0.0, nullable=False)
     extraction_method = Column(String(32), default="llm", nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
 
 class GraphRelationshipEvidence(Base):
@@ -526,9 +537,9 @@ class GraphRelationshipEvidence(Base):
     chunk_id = Column(String(128), nullable=True)
     page = Column(Integer, nullable=True)
     section = Column(String(255), nullable=True)
-    evidence_text = Column(Text, nullable=True)
+    evidence_text = Column(LongText, nullable=True)
     confidence = Column(Float, default=0.0, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
 
 class GraphIndexStatus(Base):
@@ -543,5 +554,5 @@ class GraphIndexStatus(Base):
     relationship_count = Column(Integer, default=0, nullable=False)
     chunk_count = Column(Integer, default=0, nullable=False)
     attempts = Column(Integer, default=0, nullable=False)
-    error = Column(Text, nullable=True)
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    error = Column(LongText, nullable=True)
+    updated_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))

@@ -42,7 +42,7 @@
 {"id":"q042","question":"Why should DEBUG not be enabled in production?","reference":"DEBUG enables detailed behavior intended for development and should not be enabled in production."}
 {"id":"q043","question":"How are production CORS origins configured?","reference":"Production CORS origins are configured through ALLOWED_ORIGINS."}
 {"id":"q044","question":"What database is used by default for local development?","reference":"The default database URL points to a local SQLite database at ./data/app.db."}
-{"id":"q045","question":"What database does Docker Compose provide for the stack?","reference":"Docker Compose provides a PostgreSQL database service for the stack."}
+{"id":"q045","question":"What database does Docker Compose provide for the stack?","reference":"Docker Compose provides a MySQL 8.4 LTS database service for the stack."}
 {"id":"q046","question":"What is the contributor target branch for pull requests?","reference":"Contributor pull requests should target the dev branch."}
 {"id":"q047","question":"Which branch is production protected for deployment?","reference":"The main branch is treated as the production branch for deployment."}
 {"id":"q048","question":"Where can developers view Swagger locally?","reference":"Developers can view Swagger at /docs when the backend is running locally."}

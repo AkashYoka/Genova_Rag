@@ -20,7 +20,7 @@ router = APIRouter(prefix="/health", tags=["Health"])
 
 
 def _check_database() -> Dict[str, Any]:
-    """Ping the configured database (SQLite or PostgreSQL)."""
+    """Ping the configured database (MySQL or SQLite)."""
     start = time.perf_counter()
     try:
         from app.database import engine
@@ -153,7 +153,7 @@ def _check_ollama() -> Dict[str, Any]:
     "/status",
     summary="Deep system health check",
     description=(
-        "Returns connection status for PostgreSQL/SQLite, Redis, "
+        "Returns connection status for MySQL/SQLite, Redis, "
         "Celery workers, ChromaDB, and Ollama (when configured). "
         "Always returns HTTP 200 — inspect the `overall` field to "
         "determine system health."
@@ -168,7 +168,7 @@ def health_status():
     - ``degraded`` — one or more components down or unavailable.
 
     Redis/Celery may be unavailable locally (eager fallback); that alone
-    does not block RAG when Ollama + SQLite + ChromaDB are healthy.
+    does not block RAG when Ollama + the relational DB + ChromaDB are healthy.
     """
     checks = {
         "database": _check_database(),
