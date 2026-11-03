@@ -130,11 +130,11 @@ def get_llm_client(hf_token: Optional[str] = None, llm_provider: Optional[str] =
 
     from huggingface_hub import InferenceClient
 
-    token = hf_token or settings.HF_TOKEN
+    token = hf_token
     if not token:
         raise ValueError(
-            "Hugging Face API token is missing. Set HF_TOKEN, or switch to "
-            "local Ollama with LLM_PROVIDER=ollama (the default)."
+            "Hugging Face API token is missing. Add your token in the profile menu, "
+            "or switch to local Ollama with LLM_PROVIDER=ollama (the default)."
         )
     return InferenceClient(token=token)
 
@@ -199,11 +199,11 @@ def _build_chat_llm(hf_token: Optional[str] = None):
     from langchain_huggingface import HuggingFaceEndpoint
     from langchain_huggingface.chat_models import ChatHuggingFace
 
-    token = hf_token or settings.HF_TOKEN
+    token = hf_token
     if not token:
         raise ValueError(
-            "Hugging Face API token is missing. Set HF_TOKEN, or switch to "
-            "local Ollama with LLM_PROVIDER=ollama (the default)."
+            "Hugging Face API token is missing. Add your token in the profile menu, "
+            "or switch to local Ollama with LLM_PROVIDER=ollama (the default)."
         )
 
     llm = HuggingFaceEndpoint(
@@ -678,11 +678,14 @@ def _capability_answer(
     question: str,
     *,
     llm_provider: Optional[str] = None,
+    hf_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Answer product/capability questions without retrieving documents."""
     provider = normalize_llm_provider(llm_provider)
-    client = get_llm_client(llm_provider=provider)
+    answer = ""
+    client = None
     try:
+        client = get_llm_client(hf_token=hf_token, llm_provider=provider)
         response = client.chat_completion(
             messages=[
                 {
@@ -699,10 +702,11 @@ def _capability_answer(
             max_tokens=256,
             temperature=settings.LLM_TEMPERATURE,
         )
-        answer = ""
         if response and getattr(response, "choices", None):
             answer = (response.choices[0].message.content or "").strip()
     except Exception:
+        # Missing provider credentials (e.g. no HuggingFace user token) must not
+        # turn a greeting into an error — fall back to the static answer below.
         answer = ""
     if not answer:
         answer = (
@@ -711,7 +715,7 @@ def _capability_answer(
             "ground answers in that file."
         )
     result: Dict[str, Any] = {"answer": answer, "sources": []}
-    usage = getattr(client, "last_usage", None)
+    usage = getattr(client, "last_usage", None) if client is not None else None
     if isinstance(usage, dict) and usage:
         result["usage"] = usage
     return result
@@ -722,10 +726,10 @@ def _chat_memory_answer(
     chat_history: Optional[List[Dict[str, str]]] = None,
     *,
     llm_provider: Optional[str] = None,
+    hf_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Answer from chat history only — no corpus retrieval / no document sources."""
     provider = normalize_llm_provider(llm_provider)
-    client = get_llm_client(llm_provider=provider)
     history = _format_chat_history(chat_history) if chat_history else ""
     user_prompt = (
         "No PDF is attached. Answer ONLY from the conversation history below. "
@@ -734,29 +738,36 @@ def _chat_memory_answer(
         f"{history or '(No prior conversation.)'}\n\n"
         f"Current question: {question}\n\nAnswer:"
     )
-    response = client.chat_completion(
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are Document AI Analyst. Use only the provided chat history. "
-                    "Never retrieve or invent document contents. Do not cite PDF filenames "
-                    "unless they appear in the chat history."
-                ),
-            },
-            {"role": "user", "content": user_prompt},
-        ],
-        model=llm_model_for_provider(provider),
-        max_tokens=settings.LLM_MAX_NEW_TOKENS,
-        temperature=settings.LLM_TEMPERATURE,
-    )
     answer = ""
-    if response and getattr(response, "choices", None):
-        answer = (response.choices[0].message.content or "").strip()
+    client = None
+    try:
+        client = get_llm_client(hf_token=hf_token, llm_provider=provider)
+        response = client.chat_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Document AI Analyst. Use only the provided chat history. "
+                        "Never retrieve or invent document contents. Do not cite PDF filenames "
+                        "unless they appear in the chat history."
+                    ),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            model=llm_model_for_provider(provider),
+            max_tokens=settings.LLM_MAX_NEW_TOKENS,
+            temperature=settings.LLM_TEMPERATURE,
+        )
+        if response and getattr(response, "choices", None):
+            answer = (response.choices[0].message.content or "").strip()
+    except Exception as exc:
+        # Provider credentials (e.g. a HuggingFace user token) may be missing;
+        # answer gracefully instead of failing the whole chat request.
+        logger.warning("Chat-memory answer unavailable: %s", exc)
     if not answer:
         answer = MALFORMED_OUTPUT_MESSAGE
     result: Dict[str, Any] = {"answer": answer, "sources": []}
-    usage = getattr(client, "last_usage", None)
+    usage = getattr(client, "last_usage", None) if client is not None else None
     if isinstance(usage, dict) and usage:
         result["usage"] = usage
     return result
@@ -1063,10 +1074,10 @@ def generate_answer(
 
     # ── Handle greetings / capability (no document retrieve) ─────────────────
     if is_capability_question(question) and not (document_id or document_ids):
-        return _capability_answer(question, llm_provider=provider)
+        return _capability_answer(question, llm_provider=provider, hf_token=hf_token)
     if is_chat_memory_question(question) and not (document_id or document_ids):
         return _chat_memory_answer(
-            question, chat_history, llm_provider=provider
+            question, chat_history, llm_provider=provider, hf_token=hf_token
         )
 
     # Local Ollama / Bedrock: direct retrieve-then-generate
@@ -1184,9 +1195,11 @@ def generate_answer_stream(
         is_capability_question(question) or is_chat_memory_question(question)
     ):
         result = (
-            _capability_answer(question, llm_provider=provider)
+            _capability_answer(question, llm_provider=provider, hf_token=hf_token)
             if is_capability_question(question)
-            else _chat_memory_answer(question, chat_history, llm_provider=provider)
+            else _chat_memory_answer(
+                question, chat_history, llm_provider=provider, hf_token=hf_token
+            )
         )
         yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
         yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer') or ''})}\n\n"

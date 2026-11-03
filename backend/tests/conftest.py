@@ -19,7 +19,6 @@ if str(BACKEND_DIR) not in sys.path:
 os.environ["SECRET_KEY"] = "test-secret-key-that-is-long-enough"
 os.environ["DATABASE_URL"] = "sqlite:///./test_bootstrap.db"
 os.environ["DEBUG"] = "false"
-os.environ["HF_TOKEN"] = "test-hf-token"
 # Keep unit tests on the HuggingFace code path; local defaults are Ollama.
 os.environ["LLM_PROVIDER"] = "huggingface"
 os.environ["EMBEDDING_PROVIDER"] = "huggingface"
@@ -48,7 +47,9 @@ class _FakeChromaClient:
 
 fake_vectorstore = types.ModuleType("app.rag.vectordb.vectorstore")
 fake_vectorstore.get_chroma_client = lambda: _FakeChromaClient()
-fake_vectorstore.store_chunks = lambda chunks, document_id, filename, user_id: len(chunks)
+fake_vectorstore.store_chunks = (
+    lambda chunks, document_id, filename, user_id, on_progress=None: len(chunks)
+)
 fake_vectorstore.delete_document_chunks = lambda document_id, user_id: None
 fake_vectorstore.query_chunks = lambda query_embedding, user_id, document_id=None, top_k=10: []
 

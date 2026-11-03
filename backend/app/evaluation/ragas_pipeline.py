@@ -125,7 +125,9 @@ def generate_grounded_answer(question: str, contexts: list[str]) -> str:
     if not contexts:
         return "I do not have enough retrieved context to answer this question."
 
-    client = InferenceClient(token=settings.HF_TOKEN)
+    # huggingface_hub resolves credentials from the standard HF environment /
+    # cached login, so no token is referenced in application settings.
+    client = InferenceClient()
     context_block = "\n\n".join(
         f"Context {index}:\n{context}" for index, context in enumerate(contexts, start=1)
     )
@@ -217,7 +219,6 @@ def evaluate_records(records: list[EvaluationRecord]) -> dict[str, float]:
     evaluator_llm = LangchainLLMWrapper(
         HuggingFaceEndpoint(
             repo_id=settings.LLM_MODEL,
-            huggingfacehub_api_token=settings.HF_TOKEN,
             max_new_tokens=512,
             temperature=0.0,
             timeout=300,

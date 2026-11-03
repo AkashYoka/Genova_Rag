@@ -76,7 +76,7 @@ The dashboard combines functional areas in a single desk layout: document librar
 
 - **Dashboard gate:** `DashboardPage` mounts `useAuth()`; while `initialized === false` or no user, the page renders `null` (no UI shown).
 - **Dev auto-login:** Enabled when `NEXT_PUBLIC_DEV_AUTH_BYPASS !== "false"` (frontend `.env.local`) AND `DEV_AUTH_BYPASS=true` with `ENVIRONMENT != "production"` (backend config). On localhost, this auto-signs in via `POST /api/v1/auth/dev-login`, returning tokens stored in `localStorage` + HttpOnly cookies.
-- **OAuth login:** Google OAuth flow (`/api/v1/auth/google`) and HuggingFace OAuth (`/api/v1/auth/huggingface`) complete external auth and return JWT tokens; frontend sets cookies + `localStorage` via `auth-store`.
+- **OAuth login:** Google OAuth flow (`/api/v1/auth/google`) completes external auth and returns JWT tokens; frontend sets cookies + `localStorage` via `auth-store`.
 - **Login form:** `/login` page is separate; the dashboard itself does not render a login form — the auth gate either auto-signs in or redirects.
 
 ### Authentication middleware

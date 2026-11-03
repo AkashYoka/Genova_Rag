@@ -146,6 +146,21 @@ def sync_drive_pdfs(db: Session) -> dict:
                         _download_drive_file(service, drive_file["id"], filepath)
                         document.file_size = Path(filepath).stat().st_size
                         db.commit()
+
+                        # Mirror the synced PDF into the user's S3 folder.
+                        try:
+                            from app.services import s3_storage
+
+                            if s3_storage.is_configured():
+                                s3_storage.upload_pdf(
+                                    str(connection.user_id), stored_filename, filepath
+                                )
+                        except Exception as s3_exc:
+                            logger.warning(
+                                "Drive PDF S3 mirror failed for %s: %s",
+                                stored_filename,
+                                s3_exc,
+                            )
                         ingest_document(
                             document_id=document.id,
                             filepath=filepath,

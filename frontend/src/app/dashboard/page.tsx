@@ -11,7 +11,6 @@ import {
   CONNECTION_ERROR_MESSAGE,
 } from "@/lib/api";
 import Header from "@/components/layout/Header";
-import DocumentSidebar from "@/components/document/DocumentSidebar";
 import ChatSessionSidebar from "@/components/chat/ChatSessionSidebar";
 import ChatPanel from "@/components/chat/ChatPanel";
 import CompareView from "@/components/document/CompareView";
@@ -112,33 +111,31 @@ export default function DashboardPage() {
       unit?: "percent" | "pixels" | "pdf";
     }[];
   } | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(true);
   const [graphOpen, setGraphOpen] = useState(false);
   const [connectionError, setConnectionError] = useState("");
-  const [documentsLoading, setDocumentsLoading] = useState(true);
   const [compareOpen, setCompareOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<"notes" | "pdf">("notes");
   const notesOpen = useNotesStore((s) => s.notesOpen);
   const setNotesOpen = useNotesStore((s) => s.setNotesOpen);
   const notesFocusToken = useNotesStore((s) => s.focusToken);
 
-  const handleDocumentRenamed = useCallback((renamedDocument: DocInfo) => {
-    setDocuments((current) =>
-      current.map((document) =>
-        document.id === renamedDocument.id ? renamedDocument : document,
-      ),
-    );
-    setActiveDoc((current) =>
-      current?.id === renamedDocument.id ? renamedDocument : current,
-    );
-  }, []);
-
   useEffect(() => {
     if (initialized && !user) {
       router.replace("/login");
     }
   }, [user, initialized, router]);
+
+  // Restore this user's sticky notes from S3 on login; drop them on logout so a
+  // different account on the same browser never sees another user's notes.
+  const loadNotes = useNotesStore((s) => s.loadNotes);
+  useEffect(() => {
+    if (user?.id) {
+      void loadNotes(user.id);
+    } else if (initialized) {
+      useNotesStore.getState().reset();
+    }
+  }, [user?.id, initialized, loadNotes]);
 
   useEffect(() => {
     if (user) {
@@ -151,9 +148,7 @@ export default function DashboardPage() {
     }
   }, [user]);
 
-  const loadDocuments = useCallback(async (opts?: { silent?: boolean }) => {
-    // Polling must stay silent — toggling loading remounts the list (blink).
-    if (!opts?.silent) setDocumentsLoading(true);
+  const loadDocuments = useCallback(async () => {
     try {
       const data = await api.get<DocumentListApiResponse>(
         "/api/v1/documents/",
@@ -203,8 +198,6 @@ export default function DashboardPage() {
           ? CONNECTION_ERROR_BANNER_MESSAGE
           : message,
       );
-    } finally {
-      if (!opts?.silent) setDocumentsLoading(false);
     }
   }, [router]);
 
@@ -264,7 +257,7 @@ export default function DashboardPage() {
     );
     if (!hasPending) return;
     const interval = setInterval(() => {
-      void loadDocuments({ silent: true });
+      void loadDocuments();
     }, 3000);
     return () => clearInterval(interval);
   }, [documents, loadDocuments]);
@@ -276,11 +269,17 @@ export default function DashboardPage() {
     }
   }, [notesFocusToken]);
 
+  // Close the graph only when the selected document actually changes. Comparing
+  // normalized ids keeps the null (no document) case stable; otherwise
+  // `undefined !== null` fired every render and immediately closed the dialog.
   const prevDocIdRef = useRef<string | null>(null);
-  if (activeDoc?.id !== prevDocIdRef.current) {
-    prevDocIdRef.current = activeDoc?.id ?? null;
-    if (graphOpen) setGraphOpen(false);
-  }
+  useEffect(() => {
+    const activeDocId = activeDoc?.id ?? null;
+    if (activeDocId !== prevDocIdRef.current) {
+      prevDocIdRef.current = activeDocId;
+      setGraphOpen(false);
+    }
+  }, [activeDoc?.id]);
 
   if (!initialized) {
     return (
@@ -307,20 +306,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-  const sidebarContent = (
-    <DocumentSidebar
-      documents={documents}
-      activeDoc={activeDoc}
-      loading={documentsLoading}
-      onSelectDoc={(doc) => {
-        setActiveDoc(doc);
-        setPdfPage(1);
-      }}
-      onDocumentsChange={loadDocuments}
-      onDocumentRenamed={handleDocumentRenamed}
-    />
-  );
-
   const showPdfDock =
     !compareOpen &&
     viewerOpen &&
@@ -354,8 +339,6 @@ export default function DashboardPage() {
       />
 
       <Header
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         viewerOpen={viewerOpen}
         onToggleViewer={() => setViewerOpen(!viewerOpen)}
         notesOpen={notesOpen}
@@ -377,18 +360,6 @@ export default function DashboardPage() {
       ) : null}
 
       <div className="genova-desk-stage">
-        {/* Region 1 — document library (nav) */}
-        {sidebarOpen && (
-          <aside
-            className={`genova-desk-docs${sidebarOpen ? " is-open" : ""}`}
-            aria-label="Document library"
-          >
-            {sidebarContent}
-          </aside>
-        )}
-
-        {/* Document library is intentionally hidden on the dashboard */}
-
         {/* Region 2 — chat sessions (list) */}
         <aside className="genova-desk-sessions" aria-label="Chat sessions">
           <div className="dashboard-sessions-shell h-full">

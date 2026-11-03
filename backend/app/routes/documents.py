@@ -15,9 +15,9 @@ import shutil
 import socket
 import ipaddress
 import tempfile
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Query, BackgroundTasks, Request, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
@@ -45,6 +45,7 @@ from app.config import get_settings
 from app.tasks import process_document
 from app.services.document_ingestion import ingest_document
 from app.services.layout_parser import AdvancedPDFParser
+from app.services import s3_storage
 
 try:
     from crawl4ai import AsyncWebCrawler
@@ -62,6 +63,23 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
+
+
+def _mirror_document_to_s3(user_id: str, filename: str, filepath: str) -> None:
+    """Copy a freshly stored upload into the user's S3 ``pdfs/`` folder.
+
+    The local copy is retained because ingestion parses from disk. An S3
+    failure is logged and never fails the upload request: the document is
+    still usable locally, and the next upload/retry re-syncs it.
+    """
+    if not s3_storage.is_configured():
+        return
+    try:
+        s3_storage.upload_pdf(str(user_id), filename, filepath)
+    except s3_storage.S3StorageError as exc:
+        logger.error(
+            "S3 storage failed for user %s (%s): %s", user_id, filename, exc
+        )
 
 
 ALLOWED_MIME_TYPES = settings.ALLOWED_MIME_TYPES
@@ -278,6 +296,9 @@ async def upload_document(
     shutil.move(temp_path, filepath)
     file_size = Path(filepath).stat().st_size
 
+    # ── Persist in the user's S3 folder (best-effort) ─
+    _mirror_document_to_s3(user.id, stored_filename, filepath)
+
     # ── Create database record ───────────────────────
     document = Document(
         user_id=user.id,
@@ -394,6 +415,8 @@ async def batch_upload_documents(
             filepath = os.path.join(user_dir, stored_filename)
             shutil.move(temp_path, filepath)
             file_size = Path(filepath).stat().st_size
+
+            _mirror_document_to_s3(user.id, stored_filename, filepath)
 
             document = Document(
                 user_id=user.id,
@@ -535,6 +558,9 @@ async def upload_document_url(
         temp_path = None  # file is now at filepath; no longer a temp to clean up
 
         file_size = Path(filepath).stat().st_size
+
+        # ── Persist in the user's S3 folder (best-effort) ─
+        _mirror_document_to_s3(user.id, stored_filename, filepath)
 
         # ── Derive a human-readable name from the URL ─────────
         url_path = parsed.path.rstrip("/")
@@ -865,6 +891,39 @@ def serve_pdf(
     if not doc:
         raise NotFoundException("Document")
 
+    # S3 is the system of record for uploaded documents. Fall back to the local
+    # working copy (offline dev, pre-S3 documents) when the object is missing.
+    if s3_storage.is_configured():
+        try:
+            stored = s3_storage.open_pdf(user.id, doc.filename)
+        except s3_storage.S3StorageError as exc:
+            logger.warning(
+                "S3 read failed for %s/%s: %s", user.id, doc.filename, exc
+            )
+            stored = None
+        if stored is not None:
+            content_length = stored.content_length
+            headers = {
+                "Content-Disposition": (
+                    "inline; filename*=UTF-8''" + quote(doc.original_name)
+                ),
+                "Cache-Control": "private, max-age=0",
+            }
+            if content_length:
+                headers["Content-Length"] = str(content_length)
+
+            def stream_pdf():
+                # Close the S3 body as soon as the response finishes so the
+                # underlying HTTP connection is returned to the pool.
+                with stored:
+                    yield from stored.iter_chunks(chunk_size=64 * 1024)
+
+            return StreamingResponse(
+                stream_pdf(),
+                media_type="application/pdf",
+                headers=headers,
+            )
+
     filepath = os.path.join(settings.UPLOAD_DIR, user.id, doc.filename)
 
     if not os.path.exists(filepath):
@@ -1066,6 +1125,12 @@ def retry_document_processing(
 
     # Re-queue ingestion
     filepath = os.path.join(settings.UPLOAD_DIR, user.id, doc.filename)
+
+    # Heal a missing or failed S3 copy before re-processing. The local file is
+    # the ingestion source, so a retry is also the natural place to re-sync S3.
+    if os.path.exists(filepath):
+        _mirror_document_to_s3(user.id, doc.filename, filepath)
+
     task_id = None
     try:
         task = process_document.delay(

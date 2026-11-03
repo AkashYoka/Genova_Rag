@@ -43,10 +43,18 @@ const NotesEditor = dynamic(() => import("./NotesEditor"), {
 
 export default function NotesPanel() {
   const html = useNotesStore((s) => s.html);
-  const setHtml = useNotesStore((s) => s.setHtml);
+  const document = useNotesStore((s) => s.document);
+  const pendingAppends = useNotesStore((s) => s.pendingAppends);
+  const clearToken = useNotesStore((s) => s.clearToken);
+  const commitDocument = useNotesStore((s) => s.commitDocument);
+  const syncDocument = useNotesStore((s) => s.syncDocument);
+  const appendsHandled = useNotesStore((s) => s.appendsHandled);
   const appendMessage = useNotesStore((s) => s.appendMessage);
   const clear = useNotesStore((s) => s.clear);
   const setNotesOpen = useNotesStore((s) => s.setNotesOpen);
+  const saving = useNotesStore((s) => s.saving);
+  const storage = useNotesStore((s) => s.storage);
+  const error = useNotesStore((s) => s.error);
   const [dragOver, setDragOver] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -120,7 +128,7 @@ export default function NotesPanel() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      aria-label="Shared notes"
+      aria-label="Sticky notes"
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--gd-border,#e2e5ea)] px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -130,7 +138,15 @@ export default function NotesPanel() {
               Notes
             </p>
             <p className="truncate text-[10px] text-muted-foreground">
-              Shared across Chat 1 &amp; Chat 2
+              {saving
+                ? "Saving…"
+                : storage === "s3"
+                  ? "Synced to your private S3 folder"
+                  : storage === "unavailable"
+                    ? "Stored on this device"
+                    : error
+                      ? "Kept on this device — sync failed"
+                      : "Saved on this device"}
             </p>
           </div>
         </div>
@@ -213,7 +229,15 @@ export default function NotesPanel() {
             Drop message into notes
           </div>
         ) : null}
-        <NotesEditor html={html} onChange={setHtml} />
+        <NotesEditor
+          document={document}
+          legacyHtml={document ? undefined : html}
+          pendingAppends={pendingAppends}
+          clearToken={clearToken}
+          onDocumentChange={commitDocument}
+          onDocumentReady={syncDocument}
+          onAppendsHandled={appendsHandled}
+        />
       </div>
     </div>
   );

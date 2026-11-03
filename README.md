@@ -347,7 +347,7 @@ Genova_Rag/
 - Embeddings: `nomic-embed-text` (768-d)
 - Chroma persist dir: `./data/chroma_db_ollama_nomic` (separate from any MiniLM 384-d index)
 
-A `.env` file is **not required**. HuggingFace `HF_TOKEN` is optional when using Ollama.
+A `.env` file is **not required**. HuggingFace tokens are optional and set per user in the app.
 
 ---
 
@@ -416,11 +416,13 @@ $env:NEXT_PUBLIC_API_URL = "http://localhost:7860"
 
 ### 3. Optional: HuggingFace Inference instead of Ollama
 
+Set the provider below, then add your HuggingFace token in the app's profile menu.
+The token is stored per user; no server-side token variable is used.
+
 ```powershell
 $env:LLM_PROVIDER = "huggingface"
 $env:EMBEDDING_PROVIDER = "huggingface"   # or keep ollama embeddings
 $env:LLM_MODEL = "Qwen/Qwen2.5-72B-Instruct"
-$env:HF_TOKEN = "hf_..."
 $env:EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 $env:EMBEDDING_DIMENSION = "384"
 $env:CHROMA_PERSIST_DIR = "./data/chroma_db"   # separate from Ollama index
@@ -568,8 +570,10 @@ crawl4ai-setup
 | `LLM_MODEL` | ❌ | `qwen2.5:3b` | Ollama chat model (or HF repo id if provider=huggingface) |
 | `EMBEDDING_MODEL` | ❌ | `nomic-embed-text` | Ollama embedding model (768-d) |
 | `EMBEDDING_DIMENSION` | ❌ | `768` | Must match embedding model |
-| `HF_TOKEN` | ❌ | — | Required only when `LLM_PROVIDER=huggingface` |
 | `DATABASE_URL` | ❌ | `sqlite:///./data/app.db` | SQLAlchemy connection string (SQLite or MySQL). Bare `mysql://` is upgraded to `mysql+pymysql://` |
+| `S3_BUCKET` | ❌ | — | Enables per-user S3 storage for PDFs and sticky notes. Unset → local disk + on-device notes |
+| `S3_REGION` | ❌ | `AWS_REGION` / `us-east-1` | S3 region |
+| `S3_ENDPOINT_URL` | ❌ | — | Custom endpoint (MinIO / LocalStack) |
 | `CELERY_BROKER_URL` | ❌ | `redis://localhost:6379/0` | Redis broker for Celery (optional locally) |
 | `CELERY_RESULT_BACKEND` | ❌ | `redis://localhost:6379/1` | Redis backend for Celery results |
 | `REDIS_URL` | ❌ | — | Redis URL for response + embedding cache |
@@ -625,6 +629,45 @@ crawl4ai-setup
 
 > **GPU profile** requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
+### Per-user storage in AWS S3 (PDFs + sticky notes)
+
+Set `S3_BUCKET` to store each user's documents and notes under their own
+prefix; credentials come from the standard AWS provider chain (env vars,
+shared credentials file, or IAM role):
+
+```text
+s3://<bucket>/{user_id}/pdfs/<stored-filename>
+s3://<bucket>/{user_id}/sticky_notes/notes.json
+```
+
+Sticky notes are saved as the CKEditor JSON document (headings, paragraphs,
+bold/italic, links, lists and block quotes preserved) via `PUT /api/v1/notes`
+and restored on login via `GET /api/v1/notes`. The folder is always resolved
+from the JWT, so a user cannot address another user's prefix.
+
+Minimum IAM policy for the bucket:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET"
+    }
+  ]
+}
+```
+
+Without `S3_BUCKET` the app keeps documents on local disk and notes fall back
+to on-device drafts, so local development needs no AWS account.
+
 ### Migrating an existing PostgreSQL database to MySQL 8.4
 
 The relational schema is created automatically by the app (`create_all` +
@@ -665,11 +708,11 @@ on the `app_data` volume and are unaffected.
 ### HuggingFace Spaces
 
 1. Create a Space at [huggingface.co/new-space](https://huggingface.co/new-space) (SDK: Docker)
-2. Set Space secrets: `HF_TOKEN`, `SECRET_KEY`, `DATABASE_URL`
+2. Set Space secrets: `SECRET_KEY`, `DATABASE_URL`
 3. Push to the `hf` remote:
 
 ```bash
-git remote add hf https://<username>:<HF_TOKEN>@huggingface.co/spaces/<username>/<space-name>
+git remote add hf https://<username>:<access-token>@huggingface.co/spaces/<username>/<space-name>
 git push hf main
 ```
 

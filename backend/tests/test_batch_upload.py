@@ -204,7 +204,9 @@ def test_batch_upload_document_persisted_in_db(client, auth_headers, monkeypatch
     doc = db_session.get(Document, doc_id)
     assert doc is not None
     assert doc.original_name == "persisted.txt"
-    assert doc.status == "pending"
+    # Eager Celery mode runs ingestion via FastAPI BackgroundTasks, which the
+    # test client executes before returning, so the document is already ready.
+    assert doc.status == "ready"
     assert doc.chunk_size == 1000
     assert doc.chunk_overlap == 200
 

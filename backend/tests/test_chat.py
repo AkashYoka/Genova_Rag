@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_chat_ask_success(client, auth_headers, ready_document, monkeypatch):
     monkeypatch.setattr(
         "app.routes.chat.generate_answer",
@@ -123,10 +126,11 @@ def test_agent_dynamic_token(monkeypatch):
     generate_answer(question="hello?", user_id="some-user", hf_token="my-custom-hf-token")
     assert called_with_token == "my-custom-hf-token"
 
-    # Test with None (should fallback to global token in config)
-    generate_answer(question="hello?", user_id="some-user", hf_token=None)
-    from app.config import get_settings
-    assert called_with_token == get_settings().HF_TOKEN
+    # Without a user token the HF provider must not fall back to server config.
+    import app.rag.llm.agent as agent_module
+
+    with pytest.raises(ValueError, match="Hugging Face API token"):
+        agent_module.get_llm_client()
 
 
 def test_clear_chat_history(client, auth_headers, ready_document, db_session, user):

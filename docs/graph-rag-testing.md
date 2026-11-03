@@ -95,16 +95,9 @@ Frontend:
 * `npx tsc --noEmit` — clean.
 * `npx eslint` on the graph panel, chat panel, dashboard page and chat store — clean (the dashboard `notesFocusToken` effect error and the `Header.tsx` unused-import warning exist on `HEAD` and are unrelated).
 
-## 5. Pre-existing failures (verified against `HEAD`)
+## 5. Known failures
 
-These fail with the feature's files reverted to their committed versions, so they are not regressions:
-
-| Test | Symptom |
-|---|---|
-| `tests/test_chat.py::test_agent_dynamic_token` | ReAct path builds the LLM client with the configured HF token instead of the per-request token |
-| `tests/test_batch_upload.py::test_batch_upload_document_persisted_in_db` | Eager-mode ingestion hits the conftest `store_chunks` fake that lacks `on_progress`, so the document ends up `failed` instead of `pending` |
-
-They were checked by temporarily restoring `backend/app/rag/llm/agent.py` and `backend/app/services/document_ingestion.py` from `HEAD`, re-running the two tests, and restoring the feature files.
+None. The two tests that previously failed on `HEAD` — `tests/test_chat.py::test_agent_dynamic_token` (per-request HuggingFace token) and `tests/test_batch_upload.py::test_batch_upload_document_persisted_in_db` (eager-mode ingestion) — now pass; the suite is green apart from unrelated pre-existing lint findings.
 
 ## 6. Not covered by automated tests
 

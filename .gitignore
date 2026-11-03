@@ -33,4 +33,5 @@ static/
 .planning/
 
 .pytest_tmp/
+backend/test_uploads/
 frontend/test-results/

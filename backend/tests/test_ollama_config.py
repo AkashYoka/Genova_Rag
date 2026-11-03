@@ -22,7 +22,6 @@ def test_ollama_settings_defaults_without_env(monkeypatch):
         "EMBEDDING_DIMENSION",
         "CHROMA_PERSIST_DIR",
         "OLLAMA_BASE_URL",
-        "HF_TOKEN",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -36,16 +35,14 @@ def test_ollama_settings_defaults_without_env(monkeypatch):
         assert s.EMBEDDING_DIMENSION == 768
         assert "chroma_db_ollama_nomic" in s.CHROMA_PERSIST_DIR
         assert s.OLLAMA_BASE_URL == "http://localhost:11434"
-        assert s.HF_TOKEN == ""
         assert s.uses_ollama_llm is True
         assert s.uses_ollama_embeddings is True
     finally:
         get_settings.cache_clear()
 
 
-def test_huggingface_provider_still_requires_token_semantics(monkeypatch):
+def test_huggingface_provider_requires_user_token(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "huggingface")
-    monkeypatch.setenv("HF_TOKEN", "")
     get_settings.cache_clear()
     try:
         from app.rag.llm import agent as agent_mod

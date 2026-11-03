@@ -30,6 +30,7 @@ from app.rag.vectordb.vectorstore import get_chroma_client
 from app.scheduler import start_scheduler, stop_scheduler
 from app.routes.profile import router as profile_router
 from app.routes.health import router as health_router
+from app.routes.notes import router as notes_router
 
 # Configure logging using loguru structured JSON logging
 setup_logging()
@@ -178,6 +179,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 logger.info(f"CORS origins: {settings.cors_origins}")
 
@@ -256,6 +258,7 @@ app.include_router(admin_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(graph_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")
+app.include_router(notes_router, prefix="/api/v1")
 
 setup_prometheus_metrics(app)
 

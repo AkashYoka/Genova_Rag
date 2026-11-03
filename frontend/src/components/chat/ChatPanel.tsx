@@ -18,6 +18,12 @@ import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -150,8 +156,8 @@ export default function ChatPanel({
     (state) => state.fetchSessionHistory,
   );
 
-  const [showExportMenu, setShowExportMenu] = useState(false);
   const [attachedDocs, setAttachedDocs] = useState<AttachedDocument[]>([]);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [attachPickerOpen, setAttachPickerOpen] = useState(false);
   const [attachFilter, setAttachFilter] = useState("");
   const MAX_CHARACTERS = 2000;
@@ -214,7 +220,6 @@ export default function ChatPanel({
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const prevDocId = useRef<string | null>(null);
-  const exportMenuRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const showEmptyState = messages.length === 0 && !isTyping && !historyLoading;
 
@@ -803,8 +808,8 @@ export default function ChatPanel({
     }
   };
 
-  const handleExport = (format: "md" | "txt" | "pdf") => {
-    setShowExportMenu(false);
+  const handleExport = async (format: "md" | "txt" | "pdf") => {
+    setExportMenuOpen(false);
     const token = localStorage.getItem("token");
     if (!token || token === "cookie") {
       toast.error("Sign in required to export chat");
@@ -813,7 +818,7 @@ export default function ChatPanel({
 
     // Chat is session-scoped; document export is only a fallback.
     const base = API_BASE || window.location.origin;
-    let url: string | null = null;
+    let url: string;
     if (activeSessionId) {
       url = `${base}/api/v1/chat/export/session/${activeSessionId}?format=${encodeURIComponent(format)}&token=${encodeURIComponent(token)}`;
     } else if (activeDoc) {
@@ -823,28 +828,41 @@ export default function ChatPanel({
       return;
     }
 
-    const a = document.createElement("a");
-    a.href = url;
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  // Close export dropdown on outside click
-  useEffect(() => {
-    if (!showExportMenu) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (
-        exportMenuRef.current &&
-        !exportMenuRef.current.contains(e.target as Node)
-      ) {
-        setShowExportMenu(false);
+    try {
+      // Fetch first so an auth/API error shows a toast instead of navigating
+      // the dashboard away to a JSON error page.
+      const response = await fetch(url, { credentials: "include" });
+      if (!response.ok) {
+        let message = "Could not export chat";
+        try {
+          const payload = await response.json();
+          message = payload?.error?.message ?? payload?.detail ?? message;
+        } catch {
+          // Response was not JSON; keep the generic message.
+        }
+        toast.error(message);
+        return;
       }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showExportMenu]);
+
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const filename =
+        /filename="?([^";]+)"?/.exec(disposition)?.[1] ??
+        `chat_history.${format}`;
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Give the browser a moment to start the download before revoking.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      toast.success("Chat exported");
+    } catch {
+      toast.error("Could not export chat");
+    }
+  };
 
   // Cleanup speech recognition on unmount
   useEffect(() => {
@@ -980,13 +998,6 @@ export default function ChatPanel({
     }
   }, [isAttachCommand]);
 
-  const handleExportMenuKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setShowExportMenu(false);
-    }
-  };
-
-  // ── NEW KEYBOARD SHORTCUTS ENGINE EFFECT ──────────────────────────
   // ── KEYBOARD SHORTCUTS ENGINE EFFECT ──────────────────────────
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -1013,8 +1024,6 @@ export default function ChatPanel({
         } else if (document.activeElement === textareaRef.current) {
           e.preventDefault();
           setInput("");
-        } else if (showExportMenu) {
-          setShowExportMenu(false);
         }
       }
 
@@ -1034,7 +1043,7 @@ export default function ChatPanel({
       if (isCmdOrCtrl && e.shiftKey && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
         if (messages.length > 0) {
-          setShowExportMenu((prev) => !prev);
+          setExportMenuOpen((prev) => !prev);
         }
       }
 
@@ -1052,7 +1061,7 @@ export default function ChatPanel({
       window.removeEventListener("keydown", handleGlobalKeyDown);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input, streaming, showExportMenu, messages]); // Dependencies updated to capture fresh state data
+  }, [input, streaming, messages]); // Dependencies updated to capture fresh state data
 
   return (
     <div className="h-full flex flex-col relative">
@@ -1302,67 +1311,57 @@ export default function ChatPanel({
 
               {messages.length > 0 && (
                 <div className="ml-auto flex items-center gap-0.5">
-                  {/* Export history */}
-                  <div className="relative" ref={exportMenuRef}>
-                    <Tooltip>
-                      <TooltipTrigger
-                        id="export-chat-btn"
-                        type="button"
-                        onClick={() => setShowExportMenu((v) => !v)}
-                        className={cn(
-                          buttonVariants({ variant: "ghost", size: "icon" }),
-                          "h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground",
-                        )}
-                        aria-label={t("chat.exportTitle")}
-                        aria-expanded={showExportMenu}
-                        aria-controls="chat-export-menu"
-                        aria-haspopup="menu"
+                  {/* Export history — portal-based menu so the composer's
+                      overflow-hidden card cannot clip it. */}
+                  <DropdownMenu
+                    open={exportMenuOpen}
+                    onOpenChange={setExportMenuOpen}
+                  >
+                    <DropdownMenuTrigger
+                      id="export-chat-btn"
+                      type="button"
+                      className={cn(
+                        buttonVariants({ variant: "ghost", size: "icon" }),
+                        "h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground",
+                      )}
+                      aria-label={t("chat.exportTitle")}
+                      title={t("chat.exportTitle")}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      id="chat-export-menu"
+                      align="end"
+                      side="top"
+                      aria-label="Export chat"
+                      className="min-w-[160px]"
+                    >
+                      <DropdownMenuItem
+                        id="export-md-btn"
+                        className="gap-2 px-3 py-2"
+                        onClick={() => handleExport("md")}
                       >
-                        <Download className="h-3.5 w-3.5" />
-                      </TooltipTrigger>
-                      <TooltipContent>{t("chat.exportTitle")}</TooltipContent>
-                    </Tooltip>
-                    {showExportMenu && (
-                      <div
-                        id="chat-export-menu"
-                        role="menu"
-                        aria-label="Export chat"
-                        onKeyDown={handleExportMenuKeyDown}
-                        className="absolute bottom-full right-0 z-50 mb-2 min-w-[160px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-bottom-2"
+                        <span className="text-base">📝</span>
+                        {t("chat.markdown")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        id="export-txt-btn"
+                        className="gap-2 px-3 py-2"
+                        onClick={() => handleExport("txt")}
                       >
-                        <button
-                          id="export-md-btn"
-                          type="button"
-                          role="menuitem"
-                          onClick={() => handleExport("md")}
-                          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-                        >
-                          <span className="text-base">📝</span>
-                          {t("chat.markdown")}
-                        </button>
-                        <button
-                          id="export-txt-btn"
-                          type="button"
-                          role="menuitem"
-                          onClick={() => handleExport("txt")}
-                          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-                        >
-                          <span className="text-base">📄</span>
-                          {t("chat.plainText")}
-                        </button>
-                        <button
-                          id="export-pdf-btn"
-                          type="button"
-                          role="menuitem"
-                          onClick={() => handleExport("pdf")}
-                          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-                        >
-                          <span className="text-base">📕</span>
-                          {t("chat.pdf")}
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                        <span className="text-base">📄</span>
+                        {t("chat.plainText")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        id="export-pdf-btn"
+                        className="gap-2 px-3 py-2"
+                        onClick={() => handleExport("pdf")}
+                      >
+                        <span className="text-base">📕</span>
+                        {t("chat.pdf")}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   {/* Clear history */}
                   <Tooltip>
                     <TooltipTrigger

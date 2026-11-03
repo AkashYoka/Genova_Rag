@@ -48,6 +48,14 @@ def _hard_delete_document(db, doc):
         logger.warning("Cleanup: error deleting file for %s: %s", doc_id, e)
 
     try:
+        from app.services import s3_storage
+
+        if s3_storage.is_configured():
+            s3_storage.delete_pdf(str(user_id), doc.filename)
+    except Exception as e:
+        logger.warning("Cleanup: error deleting S3 object for %s: %s", doc_id, e)
+
+    try:
         db.delete(doc)
         db.flush()
     except Exception as e:

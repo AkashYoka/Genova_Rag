@@ -184,7 +184,7 @@ def test_comparison_guidance_present_only_for_multiple_documents(monkeypatch):
         captured["template"] = prompt.template
         return "agent"
 
-    monkeypatch.setattr(agent, "get_llm_client", lambda hf_token=None: FakeLLM())
+    monkeypatch.setattr(agent, "_build_chat_llm", lambda hf_token=None: FakeLLM())
     monkeypatch.setattr(agent, "create_react_agent", capture_prompt)
     monkeypatch.setattr(agent, "AgentExecutor", lambda **kwargs: kwargs)
 

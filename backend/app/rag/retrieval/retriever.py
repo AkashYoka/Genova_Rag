@@ -144,8 +144,8 @@ def _generate_query_variants(query: str) -> List[str]:
         client = get_llm_client()  # OllamaChatClient, model settings.LLM_MODEL
                                   # default "qwen2.5:3b"
       except → log "Query rewrite skipped"; return []
-    else:
-        needs HF_TOKEN; else return []
+    Other providers (bedrock, huggingface) use the same provider-aware client;
+    the HuggingFace path needs a user token and otherwise returns [].
 
     Exact call
     ----------
@@ -162,19 +162,14 @@ def _generate_query_variants(query: str) -> List[str]:
 
     Fallback: no choices / bad parse → fewer or empty variants (original still kept).
     """
-    # HuggingFace path needs a token; Ollama path needs a reachable server.
-    if settings.uses_ollama_llm:
-        try:
-            from app.rag.llm.agent import get_llm_client
-            client = get_llm_client()
-        except Exception as exc:
-            logger.warning("Query rewrite skipped (Ollama unavailable): %s", exc)
-            return []
-    else:
-        if not settings.HF_TOKEN:
-            return []
-        from huggingface_hub import InferenceClient
-        client = InferenceClient(token=settings.HF_TOKEN)
+    # The provider-aware client handles Ollama and Bedrock. The HuggingFace
+    # provider needs a user-supplied token, so rewriting is skipped without one.
+    try:
+        from app.rag.llm.agent import get_llm_client
+        client = get_llm_client()
+    except Exception as exc:
+        logger.warning("Query rewrite skipped (%s): %s", settings.LLM_PROVIDER, exc)
+        return []
 
     prompt = (
         "Generate exactly 3 semantic variations of the user question below. "

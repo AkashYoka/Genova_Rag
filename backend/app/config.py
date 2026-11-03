@@ -79,6 +79,18 @@ class Settings(BaseSettings):
 
     }
 
+    # ── AWS S3 (per-user documents + sticky notes) ──────
+    # Layout: s3://<bucket>/{user_id}/pdfs/<file> and {user_id}/sticky_notes/notes.json
+    # Leave S3_BUCKET empty to keep everything on local disk only.
+    # Credentials come from the AWS provider chain (env vars, shared credentials
+    # file, IAM role) — never from this file.
+    S3_BUCKET: str = ""
+    S3_REGION: str = ""              # falls back to AWS_REGION/AWS_DEFAULT_REGION
+    S3_ENDPOINT_URL: str = ""        # optional: MinIO / LocalStack endpoint
+    S3_PDFS_PREFIX: str = "pdfs"
+    S3_NOTES_PREFIX: str = "sticky_notes"
+    S3_SERVER_SIDE_ENCRYPTION: str = ""  # set to "AES256" to enable SSE (KMS)
+
     # ── RAG Pipeline ─────────────────────────────────────
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
@@ -285,6 +297,7 @@ class Settings(BaseSettings):
         """Retrieve-then-generate path (Ollama or Bedrock)."""
         return self.LLM_PROVIDER in {"ollama", "bedrock"}
 
+    @property
     def uses_ollama_embeddings(self) -> bool:
         return self.EMBEDDING_PROVIDER == "ollama"
 
