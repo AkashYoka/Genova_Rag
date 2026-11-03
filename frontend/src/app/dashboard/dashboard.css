@@ -128,6 +128,32 @@
   background: var(--gd-ground);
   overflow: hidden;
   display: none;
+  transition:
+    width 200ms ease,
+    border-right-color 200ms ease;
+}
+
+/* Hidden from the chat header toggle — the conversation claims the space. */
+.genova-desk-sessions.is-collapsed {
+  width: 0;
+  border-right-width: 0;
+  border-right-color: transparent;
+}
+
+/* Keep the list at its natural width while the column animates open/closed. */
+.genova-desk-sessions > .dashboard-sessions-shell {
+  width: var(--gd-sessions);
+  /* Column flex parent: a pixel flex-basis would become a height. */
+  flex: 0 0 auto;
+  align-self: stretch;
+  max-width: none;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .genova-desk-sessions {
+    transition: none;
+  }
 }
 
 @media (min-width: 768px) {
@@ -138,17 +164,12 @@
 }
 
 /* Neutralize ChatSessionSidebar chrome so it sits on the open plane */
-.genova-desk-sessions > div,
-.genova-desk .dashboard-sessions-shell > div.md\:flex {
+.genova-desk-sessions .dashboard-sessions-shell > div.md\:flex {
   width: 100% !important;
   max-width: 100%;
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
-}
-
-.genova-desk-sessions .absolute.-right-3 {
-  display: none;
 }
 
 /* Achromatic nav: active = grey pill, not brand fill */
@@ -242,6 +263,18 @@
 .genova-desk-title .sub .data-hue {
   color: var(--gd-data);
   font-weight: 500;
+}
+
+.genova-desk-title-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.genova-desk-title-heading > button {
+  margin-top: -2px;
 }
 
 .genova-desk-title .actions {

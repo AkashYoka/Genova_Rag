@@ -610,7 +610,7 @@ export default function DocumentLibraryPage() {
   return (
     <div
       {...getRootProps()}
-      className="relative flex min-h-screen flex-col bg-background text-foreground"
+      className="relative flex h-dvh flex-col overflow-hidden bg-background text-foreground"
     >
       <input {...getInputProps()} />
 
@@ -652,9 +652,9 @@ export default function DocumentLibraryPage() {
       ) : null}
 
       {/* Main Workspace Body */}
-      <main className="flex-1 px-4 py-8 sm:px-6 lg:px-10 max-w-7xl mx-auto w-full">
+      <main className="mx-auto flex w-full min-h-0 max-w-7xl flex-1 flex-col overflow-hidden px-4 py-6 sm:px-6 lg:px-10">
         {/* Workspace Top Header */}
-        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-6 flex shrink-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
@@ -730,7 +730,7 @@ export default function DocumentLibraryPage() {
 
         {/* Upload in-progress banner */}
         {uploading && (
-          <div className="mb-6 rounded-xl border border-primary/30 bg-primary/5 p-4 transition-all">
+          <div className="mb-6 shrink-0 rounded-xl border border-primary/30 bg-primary/5 p-4 transition-all">
             <div className="flex items-center justify-between text-xs text-primary font-medium mb-2">
               <span className="flex items-center gap-1.5">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -744,7 +744,7 @@ export default function DocumentLibraryPage() {
 
         {/* Upload error banner */}
         {uploadError && (
-          <div className="mb-6 flex items-center justify-between rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+          <div className="mb-6 flex shrink-0 items-center justify-between rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 shrink-0" />
               <span>{uploadError}</span>
@@ -761,7 +761,7 @@ export default function DocumentLibraryPage() {
         )}
 
         {/* Search & Tabs Toolbar */}
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-6 flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -827,24 +827,26 @@ export default function DocumentLibraryPage() {
         </div>
 
         {/* Bulk Action Bar */}
-        <BulkActionBar
-          selectedCount={selectedIds.size}
-          onDelete={
-            activeTab === "trash"
-              ? handleBulkPermanentDelete
-              : handleBulkDelete
-          }
-          onRestore={handleBulkRestore}
-          onClear={clearSelection}
-          deleting={bulkDeleting || emptyingTrash}
-          restoring={bulkRestoring}
-          mode={activeTab}
-        />
+        <div className="shrink-0">
+          <BulkActionBar
+            selectedCount={selectedIds.size}
+            onDelete={
+              activeTab === "trash"
+                ? handleBulkPermanentDelete
+                : handleBulkDelete
+            }
+            onRestore={handleBulkRestore}
+            onClear={clearSelection}
+            deleting={bulkDeleting || emptyingTrash}
+            restoring={bulkRestoring}
+            mode={activeTab}
+          />
+        </div>
 
         {/* Documents Content View */}
-        <div className="rounded-xl border border-border bg-card/50 shadow-xs overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card/50 shadow-xs">
           {isLoading ? (
-            <div className="p-6 space-y-4" aria-busy="true">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6" aria-busy="true">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div
                   key={i}
@@ -867,7 +869,7 @@ export default function DocumentLibraryPage() {
               ))}
             </div>
           ) : filteredList.length === 0 ? (
-            <div className="py-20 text-center px-4">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-20 text-center">
               {searchQuery ? (
                 <>
                   <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-muted/60 text-muted-foreground mb-4">
@@ -925,11 +927,11 @@ export default function DocumentLibraryPage() {
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm border-collapse">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+              <table className="w-full table-fixed border-collapse text-left text-sm">
                 <thead>
-                  <tr className="border-b border-border bg-muted/40 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    <th className="py-3.5 pl-4 pr-2 w-10">
+                  <tr className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <th className="sticky top-0 z-10 border-b border-border w-10 bg-muted py-3.5 pl-4 pr-2">
                       <input
                         type="checkbox"
                         checked={isAllSelected}
@@ -938,13 +940,27 @@ export default function DocumentLibraryPage() {
                         className="h-4 w-4 rounded-sm border border-muted-foreground/40 accent-primary cursor-pointer"
                       />
                     </th>
-                    <th className="py-3.5 px-3 min-w-[240px]">Document Name</th>
-                    <th className="py-3.5 px-3 w-36">Status</th>
-                    <th className="py-3.5 px-3 w-28 text-right">File Size</th>
-                    <th className="py-3.5 px-3 w-24 text-right">Pages</th>
-                    <th className="py-3.5 px-3 w-24 text-right">Chunks</th>
-                    <th className="py-3.5 px-3 w-36">Upload Date</th>
-                    <th className="py-3.5 pl-3 pr-4 text-right w-44">Actions</th>
+                    <th className="sticky top-0 z-10 border-b border-border bg-muted py-3.5 px-3">
+                      Document Name
+                    </th>
+                    <th className="sticky top-0 z-10 border-b border-border w-[22%] bg-muted py-3.5 px-3 sm:w-[15%] md:w-[13%]">
+                      Status
+                    </th>
+                    <th className="sticky top-0 z-10 border-b border-border hidden w-[9%] bg-muted py-3.5 px-3 text-right sm:table-cell">
+                      File Size
+                    </th>
+                    <th className="sticky top-0 z-10 border-b border-border hidden w-[7%] bg-muted py-3.5 px-3 text-right md:table-cell">
+                      Pages
+                    </th>
+                    <th className="sticky top-0 z-10 border-b border-border hidden w-[8%] bg-muted py-3.5 px-3 text-right md:table-cell">
+                      Chunks
+                    </th>
+                    <th className="sticky top-0 z-10 border-b border-border hidden w-[11%] bg-muted py-3.5 px-3 lg:table-cell">
+                      Upload Date
+                    </th>
+                    <th className="sticky top-0 z-10 border-b border-border w-[26%] bg-muted py-3.5 pl-3 pr-4 text-right sm:w-[20%] lg:w-[15%]">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
@@ -1039,9 +1055,9 @@ export default function DocumentLibraryPage() {
                                   </Button>
                                 </div>
                               ) : (
-                                <div className="flex items-center gap-2">
+                                <div className="flex min-w-0 items-start gap-2">
                                   <p
-                                    className="text-xs font-semibold text-foreground truncate max-w-sm sm:max-w-md"
+                                    className="min-w-0 break-words text-xs font-semibold text-foreground"
                                     title={doc.original_name}
                                   >
                                     {doc.original_name}
@@ -1062,7 +1078,7 @@ export default function DocumentLibraryPage() {
 
                               {doc.summary ? (
                                 <p
-                                  className="mt-1 text-[11px] leading-relaxed text-muted-foreground line-clamp-1 max-w-md sm:max-w-lg"
+                                  className="mt-1 line-clamp-2 break-words text-[11px] leading-relaxed text-muted-foreground"
                                   title={doc.summary}
                                 >
                                   {doc.summary}
@@ -1096,7 +1112,7 @@ export default function DocumentLibraryPage() {
                           {doc.status === "ready" ? (
                             <Badge
                               variant="outline"
-                              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 gap-1.5 text-[11px] font-medium py-0.5 px-2"
+                              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 gap-1.5 max-w-full text-[11px] font-medium py-0.5 px-2"
                             >
                               <FileCheck className="h-3 w-3 shrink-0" />
                               Ready
@@ -1104,7 +1120,7 @@ export default function DocumentLibraryPage() {
                           ) : doc.status === "processing" ? (
                             <Badge
                               variant="outline"
-                              className="border-primary/30 bg-primary/10 text-primary gap-1.5 text-[11px] font-medium py-0.5 px-2 tabular-nums"
+                              className="border-primary/30 bg-primary/10 text-primary gap-1.5 max-w-full text-[11px] font-medium py-0.5 px-2 tabular-nums"
                               title={
                                 doc.processing_stage
                                   ? `${doc.processing_stage}${typeof doc.processing_progress === "number" ? ` (${doc.processing_progress}%)` : ""}`
@@ -1119,7 +1135,7 @@ export default function DocumentLibraryPage() {
                           ) : doc.status === "pending" ? (
                             <Badge
                               variant="outline"
-                              className="border-amber-500/30 bg-amber-500/10 text-amber-400 gap-1.5 text-[11px] font-medium py-0.5 px-2"
+                              className="border-amber-500/30 bg-amber-500/10 text-amber-400 gap-1.5 max-w-full text-[11px] font-medium py-0.5 px-2"
                             >
                               <Clock className="h-3 w-3 shrink-0" />
                               Queued
@@ -1127,7 +1143,7 @@ export default function DocumentLibraryPage() {
                           ) : (
                             <Badge
                               variant="destructive"
-                              className="gap-1.5 text-[11px] font-medium py-0.5 px-2"
+                              className="gap-1.5 max-w-full text-[11px] font-medium py-0.5 px-2"
                               title={doc.error_message || "Ingestion error"}
                             >
                               <AlertCircle className="h-3 w-3 shrink-0" />
@@ -1137,17 +1153,17 @@ export default function DocumentLibraryPage() {
                         </td>
 
                         {/* File size column */}
-                        <td className="py-3 px-3 text-right text-xs font-mono text-muted-foreground">
+                        <td className="hidden py-3 px-3 text-right text-xs font-mono text-muted-foreground sm:table-cell">
                           {formatBytes(doc.file_size)}
                         </td>
 
                         {/* Page count column */}
-                        <td className="py-3 px-3 text-right text-xs font-mono text-muted-foreground">
+                        <td className="hidden py-3 px-3 text-right text-xs font-mono text-muted-foreground md:table-cell">
                           {doc.page_count > 0 ? doc.page_count : "—"}
                         </td>
 
                         {/* Chunk count column */}
-                        <td className="py-3 px-3 text-right text-xs font-mono text-muted-foreground">
+                        <td className="hidden py-3 px-3 text-right text-xs font-mono text-muted-foreground md:table-cell">
                           {doc.chunk_count > 0 ? (
                             <span className="text-primary font-medium">
                               {doc.chunk_count}
@@ -1158,7 +1174,7 @@ export default function DocumentLibraryPage() {
                         </td>
 
                         {/* Upload date column */}
-                        <td className="py-3 px-3 text-xs text-muted-foreground whitespace-nowrap">
+                        <td className="hidden py-3 px-3 text-xs text-muted-foreground lg:table-cell">
                           {formatDate(doc.uploaded_at)}
                         </td>
 
@@ -1167,7 +1183,7 @@ export default function DocumentLibraryPage() {
                           className="py-3 pl-3 pr-4 text-right"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="flex items-center justify-end gap-1">
+                          <div className="flex flex-wrap items-center justify-end gap-1">
                             {activeTab === "active" ? (
                               <>
                                 <Button

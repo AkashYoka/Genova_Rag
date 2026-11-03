@@ -4,11 +4,24 @@ import { create } from "zustand";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { GenovaNotePayload } from "@/lib/notes-mime";
-import { normalizeNoteDocument } from "@/lib/notes-document";
+import {
+  createNotesEnvelope,
+  isNotesCollection,
+  normalizeNotesCollection,
+  type NormalizedNotesCollection,
+  type StickyNoteRecord,
+} from "@/lib/notes-document";
 
 /** CKEditor 5 data document (the object form of `editor.data.get()`). */
 export type CkEditorDocument = Record<string, unknown>;
 export type NotesStorage = "s3" | "local" | "unavailable";
+
+/** One independent sticky note. */
+export interface StickyNote {
+  id: string;
+  document: CkEditorDocument | null;
+  html: string;
+}
 
 const DRAFT_KEY_PREFIX = "genova-notes-draft:";
 const LEGACY_STORAGE_KEY = "genova-shared-notes";
@@ -22,10 +35,10 @@ interface NotesResponse {
 }
 
 interface NotesStore {
-  /** Editor JSON — the persisted representation. */
-  document: CkEditorDocument | null;
-  /** HTML mirror of the editor, used for exports/empty checks only. */
-  html: string;
+  /** Every sticky note, in tab order (Note 1, Note 2, …). */
+  notes: StickyNote[];
+  /** Note currently shown in the editor. Empty when all notes are closed. */
+  activeNoteId: string;
   notesOpen: boolean;
   /** Bumped when content is added so the desk can focus the Notes tab */
   focusToken: number;
@@ -41,13 +54,16 @@ interface NotesStore {
   saving: boolean;
   lastSavedAt: string | null;
   error: string | null;
-  /** Legacy localStorage notes need one save to become CKEditor JSON. */
+  /** Legacy HTML notes need one save to become CKEditor JSON. */
   pendingMigration: boolean;
   loadNotes: (userId: string) => Promise<void>;
   commitDocument: (document: CkEditorDocument, html: string) => void;
   syncDocument: (document: CkEditorDocument, html: string) => void;
   appendMessage: (payload: GenovaNotePayload) => void;
   appendsHandled: () => void;
+  addNote: () => string;
+  selectNote: (noteId: string) => void;
+  closeNote: (noteId: string) => void;
   clear: () => void;
   setNotesOpen: (open: boolean) => void;
   openNotes: () => void;
@@ -55,8 +71,8 @@ interface NotesStore {
 }
 
 const initialState = {
-  document: null as CkEditorDocument | null,
-  html: "",
+  notes: [] as StickyNote[],
+  activeNoteId: "",
   notesOpen: false,
   focusToken: 0,
   clearToken: 0,
@@ -72,6 +88,7 @@ const initialState = {
 };
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let noteSequence = 0;
 
 function cancelScheduledSave() {
   if (saveTimer !== null) {
@@ -80,22 +97,21 @@ function cancelScheduledSave() {
   }
 }
 
-function readDraft(userId: string): {
-  document: CkEditorDocument | null;
-  html: string;
-} | null {
+function createNoteId(): string {
+  noteSequence += 1;
+  return `note-${Date.now().toString(36)}-${noteSequence}`;
+}
+
+function createEmptyNote(id = createNoteId()): StickyNote {
+  return { id, document: null, html: "" };
+}
+
+function readDraft(userId: string): NormalizedNotesCollection | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(DRAFT_KEY_PREFIX + userId);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { document?: unknown; html?: unknown };
-    return {
-      document:
-        parsed.document && typeof parsed.document === "object"
-          ? (parsed.document as CkEditorDocument)
-          : null,
-      html: typeof parsed.html === "string" ? parsed.html : "",
-    };
+    return normalizeNotesCollection(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -103,14 +119,17 @@ function readDraft(userId: string): {
 
 function writeDraft(
   userId: string | null,
-  document: CkEditorDocument | null,
-  html: string,
+  notes: StickyNoteRecord[],
+  activeNoteId: string,
 ) {
   if (typeof window === "undefined" || !userId) return;
   try {
     window.localStorage.setItem(
       DRAFT_KEY_PREFIX + userId,
-      JSON.stringify({ document, html, savedAt: new Date().toISOString() }),
+      JSON.stringify({
+        ...createNotesEnvelope(notes, activeNoteId || null),
+        savedAt: new Date().toISOString(),
+      }),
     );
   } catch {
     // Quota exceeded / private mode — the S3 copy is still authoritative.
@@ -139,21 +158,42 @@ function clearLegacyHtml() {
   }
 }
 
+function asRecords(notes: StickyNote[]): StickyNoteRecord[] {
+  return notes.map((note) => ({
+    id: note.id,
+    document: note.document,
+    html: note.html,
+  }));
+}
+
+function updateActiveNote(
+  state: NotesStore,
+  patch: Partial<Pick<StickyNote, "document" | "html">>,
+): Pick<NotesStore, "notes"> {
+  let changed = false;
+  const notes = state.notes.map((note) => {
+    if (note.id !== state.activeNoteId) return note;
+    changed = true;
+    return { ...note, ...patch };
+  });
+  return { notes: changed ? notes : state.notes };
+}
+
 export const useNotesStore = create<NotesStore>((set, get) => {
   const persist = async () => {
-    const { userId, document, html, storage } = get();
+    const { userId, notes, activeNoteId, storage } = get();
     if (!userId) return;
 
-    writeDraft(userId, document, html);
+    writeDraft(userId, asRecords(notes), activeNoteId);
 
     // S3 not configured (local dev): keep the draft on this device only.
-    if (!document || storage === "unavailable") return;
+    if (storage === "unavailable") return;
 
     set({ saving: true, error: null });
     try {
       const response = await api.put<{ saved: boolean; updated_at: string | null }>(
         "/api/v1/notes",
-        { notes: document },
+        { notes: createNotesEnvelope(asRecords(notes), activeNoteId || null) },
       );
       clearLegacyHtml();
       set({
@@ -178,8 +218,8 @@ export const useNotesStore = create<NotesStore>((set, get) => {
   };
 
   const scheduleSave = () => {
-    const { userId, document, html } = get();
-    writeDraft(userId, document, html);
+    const { userId, notes, activeNoteId } = get();
+    writeDraft(userId, asRecords(notes), activeNoteId);
     cancelScheduledSave();
     saveTimer = setTimeout(() => {
       saveTimer = null;
@@ -193,46 +233,48 @@ export const useNotesStore = create<NotesStore>((set, get) => {
     async loadNotes(userId) {
       if (get().userId === userId && get().loaded) return;
       cancelScheduledSave();
+      // A chat message can be queued for notes while the initial load is still
+      // in flight (e.g. the notes panel was closed when Add to notes was
+      // pressed). Keep that queue and the panel state across the reset.
+      const { pendingAppends, notesOpen, focusToken } = get();
       set({
+        ...initialState,
         userId,
-        document: null,
-        html: "",
-        pendingAppends: [],
-        clearToken: 0,
         loading: true,
         loaded: false,
-        saving: false,
-        error: null,
-        lastSavedAt: null,
-        pendingMigration: false,
+        pendingAppends,
+        notesOpen,
+        focusToken,
       });
 
       try {
         const response = await api.get<NotesResponse>("/api/v1/notes");
         const storage = response.storage ?? "local";
-        const restored = normalizeNoteDocument(response.notes);
+        const cloud = normalizeNotesCollection(response.notes);
+        const hasCollection = isNotesCollection(response.notes);
 
-        if (restored.document) {
+        // A saved collection (even an empty one) is authoritative; its `notes`
+        // array may legitimately contain zero entries after closing them all.
+        if (hasCollection) {
           set({
-            document: restored.document,
-            html: restored.html ?? "",
+            notes: cloud.notes,
+            activeNoteId: cloud.activeId ?? cloud.notes[0]?.id ?? "",
             storage,
             lastSavedAt: response.updated_at ?? null,
+            pendingMigration: cloud.pendingMigration,
             loading: false,
             loaded: true,
           });
           return;
         }
 
-        if (restored.html) {
-          // Cloud copy predates structured JSON: seed the editor with HTML and
-          // let the first ready-sync rewrite it as model JSON.
+        if (cloud.notes.length > 0) {
           set({
-            document: null,
-            html: restored.html,
+            notes: cloud.notes,
+            activeNoteId: cloud.activeId ?? cloud.notes[0].id,
             storage,
             lastSavedAt: response.updated_at ?? null,
-            pendingMigration: true,
+            pendingMigration: cloud.pendingMigration,
             loading: false,
             loaded: true,
           });
@@ -241,13 +283,38 @@ export const useNotesStore = create<NotesStore>((set, get) => {
 
         // No cloud copy yet: prefer a local draft, then migrate legacy notes.
         const draft = readDraft(userId);
-        const legacyHtml = draft?.html ? "" : readLegacyHtml();
-        const htmlOnly = Boolean((draft?.html && !draft.document) || legacyHtml);
+        if (draft && draft.notes.length > 0) {
+          set({
+            notes: draft.notes,
+            activeNoteId: draft.activeId ?? draft.notes[0].id,
+            storage,
+            pendingMigration: draft.pendingMigration,
+            loading: false,
+            loaded: true,
+          });
+          return;
+        }
+
+        const legacyHtml = readLegacyHtml();
+        if (legacyHtml) {
+          const note: StickyNote = { id: "note-1", document: null, html: legacyHtml };
+          set({
+            notes: [note],
+            activeNoteId: note.id,
+            storage,
+            pendingMigration: true,
+            loading: false,
+            loaded: true,
+          });
+          return;
+        }
+
+        // Fresh account: start with one empty note (Note 1).
+        const note = createEmptyNote("note-1");
         set({
-          document: draft?.document ?? null,
-          html: draft?.html || legacyHtml,
+          notes: [note],
+          activeNoteId: note.id,
           storage,
-          pendingMigration: htmlOnly,
           loading: false,
           loaded: true,
         });
@@ -256,10 +323,25 @@ export const useNotesStore = create<NotesStore>((set, get) => {
         const message =
           err instanceof Error ? err.message : "Could not load notes";
         const draft = readDraft(userId);
+        const legacyHtml = draft?.notes.length ? "" : readLegacyHtml();
+        const notes =
+          draft && draft.notes.length > 0
+            ? draft.notes
+            : legacyHtml
+              ? [
+                  {
+                    id: "note-1",
+                    document: null,
+                    html: legacyHtml,
+                  } satisfies StickyNote,
+                ]
+              : [createEmptyNote("note-1")];
+
         set({
-          document: draft?.document ?? null,
-          html: draft?.html ?? readLegacyHtml(),
+          notes,
+          activeNoteId: draft?.activeId ?? notes[0]?.id ?? "",
           storage: "local",
+          pendingMigration: legacyHtml ? true : (draft?.pendingMigration ?? false),
           loading: false,
           loaded: true,
           error: message,
@@ -267,38 +349,99 @@ export const useNotesStore = create<NotesStore>((set, get) => {
         toast.message("Notes loaded from this device", {
           description: message,
         });
+      } finally {
+        // A message can be queued for notes while the cloud/local copy is still
+        // loading. If that copy has no notes (all were closed), keep a fresh
+        // note so the editor can consume the queued append.
+        const current = get();
+        if (current.pendingAppends.length > 0 && current.notes.length === 0) {
+          const note = createEmptyNote("note-1");
+          set({ notes: [note], activeNoteId: note.id });
+        }
       }
     },
 
     commitDocument(document, html) {
-      set({ document, html });
+      set((state) => updateActiveNote(state, { document, html }));
       scheduleSave();
     },
 
     syncDocument(document, html) {
-      const { pendingMigration, userId, loading } = get();
+      const { loading, pendingMigration, userId, notes, activeNoteId } = get();
       // The initial S3/local load is still in flight: don't clobber the stored
       // draft with the empty editor that mounted before the data arrived.
       if (loading) return;
-      set({ document, html, pendingMigration: false });
+      set((state) => updateActiveNote(state, { document, html }));
+
+      const next = get().notes;
       if (pendingMigration) {
         // Legacy HTML just became structured JSON — persist it now.
         scheduleSave();
+        // Once every note has a document, stop rewriting the file on each
+        // note switch; ordinary edits persist through commitDocument.
+        if (next.every((note) => note.document || !note.html)) {
+          set({ pendingMigration: false });
+        }
       } else {
-        writeDraft(userId, document, html);
+        writeDraft(userId, asRecords(next.length ? next : notes), activeNoteId);
       }
     },
 
     appendMessage(payload) {
-      set((state) => ({
-        pendingAppends: [...state.pendingAppends, payload],
-        notesOpen: true,
-        focusToken: state.focusToken + 1,
-      }));
+      set((state) => {
+        const notes =
+          state.notes.length > 0 ? state.notes : [createEmptyNote("note-1")];
+        return {
+          notes,
+          activeNoteId:
+            state.notes.length > 0 ? state.activeNoteId : notes[0].id,
+          pendingAppends: [...state.pendingAppends, payload],
+          notesOpen: true,
+          focusToken: state.focusToken + 1,
+        };
+      });
+      scheduleSave();
     },
 
     appendsHandled() {
       set({ pendingAppends: [] });
+    },
+
+    addNote() {
+      const note = createEmptyNote();
+      set((state) => ({
+        notes: [...state.notes, note],
+        activeNoteId: note.id,
+        notesOpen: true,
+        focusToken: state.focusToken + 1,
+      }));
+      scheduleSave();
+      return note.id;
+    },
+
+    selectNote(noteId) {
+      const { notes } = get();
+      if (!notes.some((note) => note.id === noteId)) return;
+      set((state) => ({
+        activeNoteId: noteId,
+        focusToken: state.focusToken + 1,
+      }));
+      // Keep the active tab in the persisted envelope as well as the draft.
+      scheduleSave();
+    },
+
+    closeNote(noteId) {
+      set((state) => {
+        const index = state.notes.findIndex((note) => note.id === noteId);
+        if (index === -1) return {};
+        const notes = state.notes.filter((note) => note.id !== noteId);
+        const activeNoteId =
+          state.activeNoteId === noteId
+            ? (notes[Math.min(index, notes.length - 1)]?.id ?? "")
+            : state.activeNoteId;
+        return { notes, activeNoteId };
+      });
+      scheduleSave();
     },
 
     clear() {

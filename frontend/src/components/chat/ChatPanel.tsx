@@ -1345,14 +1345,6 @@ export default function ChatPanel({
                         {t("chat.markdown")}
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        id="export-txt-btn"
-                        className="gap-2 px-3 py-2"
-                        onClick={() => handleExport("txt")}
-                      >
-                        <span className="text-base">📄</span>
-                        {t("chat.plainText")}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
                         id="export-pdf-btn"
                         className="gap-2 px-3 py-2"
                         onClick={() => handleExport("pdf")}

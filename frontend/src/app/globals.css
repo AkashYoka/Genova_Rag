@@ -372,9 +372,51 @@
 .prose-chat p { margin-bottom: 0.75em; line-height: 1.7; }
 .prose-chat ul, .prose-chat ol { padding-left: 1.5em; margin-bottom: 0.75em; }
 .prose-chat li { margin-bottom: 0.25em; }
-.prose-chat table { width: 100%; }
+.prose-chat table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: auto;
+}
 .prose-chat th,
-.prose-chat td { white-space: nowrap; }
+.prose-chat td {
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  vertical-align: top;
+}
+/* Tables wrap to the chat width — never clip or scroll horizontally. */
+.prose-chat .prose-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  container-type: inline-size;
+}
+/* Tables don't need the hover-action gutter; give them the full bubble width. */
+.genova-message-prose:has(.prose-table-wrap) {
+  padding-right: 0;
+}
+/* Very narrow chat panes: tighten spacing so columns keep readable widths. */
+@container (max-width: 480px) {
+  .prose-chat table {
+    font-size: 0.85em;
+  }
+  .prose-chat th,
+  .prose-chat td {
+    padding: 4px 6px;
+  }
+}
+/* Last resort below 260px: break words rather than overflow the card. */
+@container (max-width: 260px) {
+  .prose-chat th,
+  .prose-chat td {
+    overflow-wrap: anywhere;
+  }
+}
+/* A message that contains a table can use the full conversation width. */
+.genova-message-bubble:has(.prose-table-wrap) {
+  width: 100%;
+  max-width: 100%;
+}
 .prose-chat tbody tr:last-child td { border-bottom: 0; }
 .prose-chat code {
   background: oklch(1 0 0 / 8%);

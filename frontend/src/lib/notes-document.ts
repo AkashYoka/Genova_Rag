@@ -116,3 +116,157 @@ export function normalizeNoteDocument(raw: unknown): NormalizedNoteDocument {
 
   return { document: createNoteDocument(nodes), html: null };
 }
+
+/* ── Multiple sticky notes ──────────────────────────────────────────────── */
+
+/**
+ * The notes file can hold several independent notes. Each entry keeps its own
+ * CKEditor document (or legacy HTML), so closing/creating one never touches
+ * the others. Older files store a single document and are migrated on load.
+ */
+export const NOTES_COLLECTION_FORMAT = "genova-sticky-notes";
+export const NOTES_COLLECTION_VERSION = 1;
+
+/** A single persisted sticky note. */
+export interface StickyNoteRecord {
+  id: string;
+  /** CKEditor model JSON for this note. */
+  document: Record<string, unknown> | null;
+  /** HTML mirror, used for exports and as the pre-JSON fallback. */
+  html: string;
+}
+
+export interface NormalizedNotesCollection {
+  notes: StickyNoteRecord[];
+  activeId: string | null;
+  /** At least one note still needs its HTML upgraded to structured JSON. */
+  pendingMigration: boolean;
+}
+
+/** Build the object written to `{user_id}/sticky_notes/notes.json`. */
+export function createNotesEnvelope(
+  notes: StickyNoteRecord[],
+  activeId: string | null,
+): Record<string, unknown> {
+  return {
+    format: NOTES_COLLECTION_FORMAT,
+    version: NOTES_COLLECTION_VERSION,
+    activeId,
+    notes: notes.map((note) => ({
+      id: note.id,
+      document: note.document,
+      html: note.html,
+    })),
+  };
+}
+
+/** True when a stored value is the multi-note envelope (not a bare document). */
+export function isNotesCollection(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const record = raw as Record<string, unknown>;
+  return (
+    record.format === NOTES_COLLECTION_FORMAT && Array.isArray(record.notes)
+  );
+}
+
+function noteFrom(
+  value: unknown,
+  id: string,
+  /** Stored HTML mirror, kept alongside a structured document for exports. */
+  htmlMirror = "",
+  /**
+   * Keep an explicitly listed but still-empty note. Closing a note removes its
+   * entry, so an entry with no content is a real note the user has not typed in
+   * yet and must survive a reload.
+   */
+  allowEmpty = false,
+): { note: StickyNoteRecord; pendingMigration: boolean } | null {
+  const normalized = normalizeNoteDocument(value);
+  if (!normalized.document && !normalized.html) {
+    if (!allowEmpty) return null;
+    return {
+      note: { id, document: null, html: htmlMirror },
+      pendingMigration: false,
+    };
+  }
+
+  return {
+    note: {
+      id,
+      document: normalized.document as unknown as Record<string, unknown> | null,
+      html: normalized.html ?? htmlMirror,
+    },
+    // Pre-JSON HTML only becomes lossless once the editor rewrites it.
+    pendingMigration: !normalized.document && Boolean(normalized.html),
+  };
+}
+
+/**
+ * Accepts the current multi-note envelope, the previous single-note draft
+ * (`{ document, html }`), or a bare CKEditor document.
+ */
+export function normalizeNotesCollection(raw: unknown): NormalizedNotesCollection {
+  if (raw == null) return { notes: [], activeId: null, pendingMigration: false };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return { notes: [], activeId: null, pendingMigration: false };
+  }
+
+  const record = raw as Record<string, unknown>;
+
+  if (Array.isArray(record.notes)) {
+    const notes: StickyNoteRecord[] = [];
+    let pendingMigration = false;
+
+    record.notes.forEach((item, index) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return;
+      const entry = item as Record<string, unknown>;
+      const id =
+        typeof entry.id === "string" && entry.id
+          ? entry.id
+          : `note-${index + 1}`;
+      const wrapped = "document" in entry || "html" in entry;
+      const source = wrapped ? (entry.document ?? entry.html ?? null) : entry;
+      const htmlMirror =
+        typeof entry.html === "string" ? entry.html : "";
+      const parsed = noteFrom(source, id, htmlMirror, true);
+      if (!parsed) return;
+      notes.push(parsed.note);
+      pendingMigration = pendingMigration || parsed.pendingMigration;
+    });
+
+    const activeId =
+      typeof record.activeId === "string" &&
+      notes.some((note) => note.id === record.activeId)
+        ? record.activeId
+        : (notes[0]?.id ?? null);
+
+    return { notes, activeId, pendingMigration };
+  }
+
+  // Previous single-note draft shape: { document, html, savedAt }.
+  const legacyHtml = typeof record.html === "string" ? record.html : "";
+  const legacy = noteFrom(
+    record.document ?? record.html ?? null,
+    "note-1",
+    legacyHtml,
+  );
+  if (legacy) {
+    return {
+      notes: [legacy.note],
+      activeId: legacy.note.id,
+      pendingMigration: legacy.pendingMigration,
+    };
+  }
+
+  // Bare CKEditor document / HTML string.
+  const single = noteFrom(record, "note-1");
+  if (single) {
+    return {
+      notes: [single.note],
+      activeId: single.note.id,
+      pendingMigration: single.pendingMigration,
+    };
+  }
+
+  return { notes: [], activeId: null, pendingMigration: false };
+}

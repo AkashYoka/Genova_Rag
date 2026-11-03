@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Edit2, Trash2, MessageSquare, ChevronLeft, X } from "lucide-react";
+import { Plus, Edit2, Trash2, MessageSquare, X } from "lucide-react";
 import { useChatStore, type ChatSession } from "@/store/chat-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,6 @@ export default function ChatSessionSidebar() {
   const setActiveSessionId = useChatStore((state) => state.setActiveSessionId);
   const fetchSessionHistory = useChatStore((state) => state.fetchSessionHistory);
 
-  const [isOpen, setIsOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -204,35 +203,15 @@ export default function ChatSessionSidebar() {
 
   return (
     <>
-      <div
-        className={cn(
-          "relative hidden h-full border-r border-border/40 bg-sidebar/40 select-none transition-all duration-300 md:flex",
-          isOpen ? "w-64" : "w-0"
-        )}
-      >
-        <div
-          className={cn(
-            "flex h-full w-full flex-col overflow-hidden transition-opacity duration-200",
-            isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
-          )}
-        >
+      {/*
+        Desktop list. Collapsing is controlled by the dashboard header toggle:
+        the parent <aside class="genova-desk-sessions"> owns the width so the
+        chat column can claim the freed space.
+      */}
+      <div className="relative hidden h-full w-full select-none md:flex">
+        <div className="flex h-full w-full flex-col overflow-hidden">
           {sessionsContent()}
         </div>
-
-        {/* Collapse Toggle Button */}
-        <Button
-          onClick={() => setIsOpen(!isOpen)}
-          variant="ghost"
-          size="icon"
-          className={cn(
-            "absolute -right-3 top-1/2 -translate-y-1/2 z-40 h-6 w-6 rounded-full border border-border bg-background shadow-md hover:bg-accent hover:text-accent-foreground",
-            !isOpen && "right-auto -left-3 rotate-180"
-          )}
-          aria-label={isOpen ? "Collapse chat sessions sidebar" : "Expand chat sessions sidebar"}
-          aria-expanded={isOpen}
-        >
-          <ChevronLeft className="w-3.5 h-3.5" />
-        </Button>
       </div>
 
       {/*

@@ -78,6 +78,64 @@ describe("MessageBubble", () => {
     );
 
     expect(container.querySelectorAll(".katex").length).toBeGreaterThan(0);
+    // mhchem must actually process \ce{...}; an unregistered macro renders
+    // the command as literal red text.
+    expect(container.querySelector(".katex-error")).toBeNull();
+    expect(container.textContent).not.toContain("\\ce");
+  });
+
+  it("renders intro text, a wrapping table, then continuation text in order", () => {
+    const { container } = render(
+      <MessageBubble
+        message={makeMessage({
+          content:
+            "Here are the results\n| Metric | Value |\n| --- | --- |\n| Accuracy | 98% |\nThese results confirm the hypothesis.",
+        })}
+      />,
+    );
+
+    const prose = container.querySelector(".prose-chat") as HTMLElement;
+    const table = prose.querySelector("table") as HTMLTableElement;
+    const paragraphs = Array.from(prose.querySelectorAll("p"));
+    const intro = paragraphs[0];
+    const continuation = paragraphs[paragraphs.length - 1];
+
+    expect(table).not.toBeNull();
+    expect(table.textContent).toContain("98%");
+    expect(table.textContent).not.toContain("confirm");
+    expect(intro.textContent).toBe("Here are the results");
+    expect(continuation.textContent).toBe(
+      "These results confirm the hypothesis.",
+    );
+
+    // Document order: intro → table → continuation.
+    expect(
+      intro.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      table.compareDocumentPosition(continuation) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    const wrap = prose.querySelector(".prose-table-wrap") as HTMLElement;
+    expect(wrap.className).not.toContain("overflow-x-auto");
+    expect(wrap.className).toContain("w-full");
+    expect(table.className).toContain("w-full");
+  });
+
+  it("keeps the explanation after a display formula", () => {
+    const { container } = render(
+      <MessageBubble
+        message={makeMessage({
+          content:
+            "Compute the result\n\\[\nE = mc^2\n\\]\nThis confirms the relation.",
+        })}
+      />,
+    );
+
+    expect(container.querySelector(".katex-display")).not.toBeNull();
+    expect(container.textContent).toContain("Compute the result");
+    expect(container.textContent).toContain("This confirms the relation.");
   });
 
   it("renders matrices, summations, and multi-line display math", () => {

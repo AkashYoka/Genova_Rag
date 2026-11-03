@@ -1,10 +1,15 @@
 /**
  * Prepare LLM markdown for KaTeX-backed rendering.
- * Normalizes \( \) / \[ \] delimiters and holds back incomplete math while streaming.
+ * Normalizes \( \) / \[ \] delimiters, gives tables and display math their own
+ * block boundaries, and holds back incomplete math while streaming.
  */
 
 const CODE_FENCE = /```[\s\S]*?```/g;
 const INLINE_CODE = /`[^`\n]+`/g;
+
+/** GFM delimiter row, e.g. `| --- | :---: |` (leading/trailing pipes optional). */
+const TABLE_DELIMITER_ROW =
+  /^\s*\|?\s*:?-{1,}:?\s*(?:\|\s*:?-{1,}:?\s*)+\|?\s*$/;
 
 type PlaceholderStore = { token: string; value: string };
 
@@ -33,11 +38,99 @@ function restorePlaceholders(
   return result;
 }
 
-/** Convert TeX-style \( \) / \[ \] to remark-math $ / $$ delimiters. */
+/**
+ * Convert TeX-style delimiters to remark-math delimiters.
+ *
+ * Display math always becomes its own `$$` block so KaTeX renders it in
+ * display mode. The negative look-behinds keep LaTeX line breaks such as
+ * `\\[2pt]` from being mistaken for a `\[ ... \]` pair.
+ */
 function normalizeLatexDelimiters(text: string): string {
   return text
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner: string) => `$$${inner}$$`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner: string) => `$${inner}$`);
+    .replace(
+      /(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]/g,
+      (_m, inner: string) => `\n$$\n${inner.trim()}\n$$\n`,
+    )
+    .replace(
+      /(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g,
+      (_m, inner: string) => `$${inner}$`,
+    );
+}
+
+/** Expand `$$ ... $$` written on one line into a proper display block. */
+function blockifyInlineDisplayMath(text: string): string {
+  return text.replace(
+    /\$\$([^\n$]+?)\$\$/g,
+    (_m, inner: string) => `\n$$\n${inner.trim()}\n$$\n`,
+  );
+}
+
+function isTableRow(line: string): boolean {
+  return line.includes("|");
+}
+
+function isTableDelimiterRow(line: string): boolean {
+  return TABLE_DELIMITER_ROW.test(line);
+}
+
+/**
+ * Guarantee that tables and display-math blocks are separated from the prose
+ * around them with blank lines.
+ *
+ * Without this, GFM swallows the sentence that follows a table into a new
+ * table row, and a table placed directly after a list is not parsed at all.
+ * Keeping intro text before the block and explanation after it mirrors how
+ * ChatGPT lays out answers.
+ */
+function ensureBlockBreathingRoom(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const next = lines[i + 1];
+    const trimmed = line.trim();
+
+    // Display math: `$$` on its own line, body, closing `$$`.
+    if (trimmed === "$$") {
+      if (out.length > 0 && out[out.length - 1].trim() !== "") out.push("");
+      out.push(line);
+      i += 1;
+      while (i < lines.length) {
+        out.push(lines[i]);
+        if (lines[i].trim() === "$$") {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      if (i < lines.length && lines[i].trim() !== "") out.push("");
+      continue;
+    }
+
+    // GFM table: header row immediately followed by a delimiter row.
+    if (next !== undefined && isTableRow(line) && isTableDelimiterRow(next)) {
+      if (out.length > 0 && out[out.length - 1].trim() !== "") out.push("");
+      out.push(line, next);
+      i += 2;
+      while (
+        i < lines.length &&
+        lines[i].trim() !== "" &&
+        isTableRow(lines[i])
+      ) {
+        out.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length && lines[i].trim() !== "") out.push("");
+      continue;
+    }
+
+    out.push(line);
+    i += 1;
+  }
+
+  return out.join("\n");
 }
 
 /** Truncate from the start of an unclosed delimiter pair, if any. */
@@ -124,6 +217,9 @@ export function prepareMarkdownForMath(
 
   if (options.isStreaming) {
     text = stripIncompleteMath(text);
+  } else {
+    text = blockifyInlineDisplayMath(text);
+    text = ensureBlockBreathingRoom(text);
   }
 
   text = restorePlaceholders(text, inlined.placeholders);

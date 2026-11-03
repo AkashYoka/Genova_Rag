@@ -24,10 +24,6 @@ import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useSettingsStore } from "@/store/settings-store";
 import { useNotesStore } from "@/store/notes-store";
-import {
-  GENOVA_NOTE_MIME,
-  encodeNotePayload,
-} from "@/lib/notes-mime";
 import MarkdownContent from "@/components/chat/MarkdownContent";
 import StreamingText from "@/components/chat/StreamingText";
 import { prepareMarkdownForMath } from "@/lib/math-markdown";
@@ -145,17 +141,6 @@ export default function MessageBubble({ message }: Props) {
     toast.success("Added to notes");
   };
 
-  const handleDragStart = (e: React.DragEvent) => {
-    if (!message.content || message.isStreaming) {
-      e.preventDefault();
-      return;
-    }
-    const encoded = encodeNotePayload(notePayload);
-    e.dataTransfer.setData(GENOVA_NOTE_MIME, encoded);
-    e.dataTransfer.setData("text/plain", encoded);
-    e.dataTransfer.effectAllowed = "copy";
-  };
-
   return (
     <div
       className={`flex gap-3 py-3 animate-fade-in-up ${isUser ? "justify-end" : "justify-start"}`}
@@ -167,13 +152,11 @@ export default function MessageBubble({ message }: Props) {
       )}
 
       <div
-        draggable={Boolean(message.content) && !message.isStreaming}
-        onDragStart={handleDragStart}
-        className={`group relative max-w-[80%] rounded-2xl px-4 py-3 ${
+        className={`genova-message-bubble group relative max-w-[80%] select-text rounded-2xl px-4 py-3 ${
           isUser
             ? "bg-primary text-primary-foreground rounded-br-md shadow-lg shadow-primary/20"
             : "bg-card/80 border border-border/50 rounded-bl-md backdrop-blur-sm"
-        } ${message.content && !message.isStreaming ? "cursor-grab active:cursor-grabbing" : ""}`}
+        }`}
       >
         {isUser ? (
           <>
@@ -311,7 +294,7 @@ export default function MessageBubble({ message }: Props) {
             )}
 
             <div
-              className={`prose-chat ${fontSizeClass} ${message.content ? "pr-24" : ""}`}
+              className={`genova-message-prose prose-chat ${fontSizeClass} ${message.content ? "pr-24" : ""}`}
             >
               {message.content ? (
                 // While tokens arrive, paint plain text via StreamingText so the

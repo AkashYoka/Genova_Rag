@@ -26,6 +26,12 @@ router = APIRouter(prefix="/notes", tags=["Sticky Notes"])
 # keeps a single user from writing an unbounded object.
 MAX_NOTES_BYTES = 2 * 1024 * 1024
 
+# Multi-note envelopes written by the current client:
+#   {"format": "genova-sticky-notes", "version": 1, "activeId": "…",
+#    "notes": [{"id": "…", "document": {...CKEditor model...}, "html": "…"}]}
+# Older clients stored a single CKEditor document; both are accepted.
+NOTES_COLLECTION_FORMAT = "genova-sticky-notes"
+
 
 class NotesPayload(BaseModel):
     notes: Dict[str, Any] = Field(..., description="CKEditor 5 JSON document")
@@ -40,19 +46,53 @@ def _require_storage() -> None:
         )
 
 
+def _validate_collection(document: Dict[str, Any]) -> None:
+    """Validate the multi-note envelope (each note is an independent document)."""
+    notes = document.get("notes")
+    if not isinstance(notes, list):
+        raise ValidationException("Sticky notes collection 'notes' must be a list")
+
+    active_id = document.get("activeId")
+    if active_id is not None and not isinstance(active_id, str):
+        raise ValidationException("Sticky notes collection 'activeId' must be a string")
+
+    for index, note in enumerate(notes):
+        if not isinstance(note, dict):
+            raise ValidationException(f"Sticky note {index + 1} must be an object")
+
+        note_id = note.get("id")
+        if note_id is not None and not isinstance(note_id, str):
+            raise ValidationException(f"Sticky note {index + 1} 'id' must be a string")
+
+        note_document = note.get("document")
+        if note_document is not None and not isinstance(note_document, dict):
+            raise ValidationException(
+                f"Sticky note {index + 1} 'document' must be a JSON object"
+            )
+
+        note_html = note.get("html")
+        if note_html is not None and not isinstance(note_html, str):
+            raise ValidationException(
+                f"Sticky note {index + 1} 'html' must be a string"
+            )
+
+
 def _validate_document(document: Dict[str, Any]) -> None:
     """Reject payloads that cannot be a CKEditor data document."""
     if not isinstance(document, dict):
         raise ValidationException("Sticky notes must be a JSON object")
 
-    if "blocks" in document and not isinstance(document["blocks"], list):
-        raise ValidationException("Sticky notes 'blocks' must be a list")
-    if "main" in document and not isinstance(document["main"], (list, dict, str)):
-        raise ValidationException(
-            "Sticky notes 'main' must be a list of model nodes or an HTML string"
-        )
-    if "content" in document and not isinstance(document["content"], list):
-        raise ValidationException("Sticky notes 'content' must be a list")
+    if document.get("format") == NOTES_COLLECTION_FORMAT:
+        _validate_collection(document)
+    else:
+        if "blocks" in document and not isinstance(document["blocks"], list):
+            raise ValidationException("Sticky notes 'blocks' must be a list")
+        if "main" in document and not isinstance(document["main"], (list, dict, str)):
+            raise ValidationException(
+                "Sticky notes 'main' must be a list of model nodes or an HTML string"
+            )
+        if "content" in document and not isinstance(document["content"], list):
+            raise ValidationException("Sticky notes 'content' must be a list")
 
     try:
         encoded = json.dumps(document, ensure_ascii=False).encode("utf-8")

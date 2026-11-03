@@ -237,3 +237,117 @@ def test_delete_notes_clears_user_object(client, auth_headers, user, fake_s3):
     assert response.status_code == 200
     assert response.json()["deleted"] is True
     assert fake_s3["deleted"] == [str(user.id)]
+
+
+# ── multiple notes (collection envelope) ─────────────────────────────────────
+
+COLLECTION = {
+    "format": "genova-sticky-notes",
+    "version": 1,
+    "activeId": "note-2",
+    "notes": [
+        {
+            "id": "note-1",
+            "document": {
+                "format": "ckeditor5-model",
+                "version": 1,
+                "main": [{"name": "paragraph", "children": [{"data": "One"}]}],
+            },
+            "html": "<p>One</p>",
+        },
+        {
+            "id": "note-2",
+            "document": None,
+            "html": "<p>Two</p>",
+        },
+    ],
+}
+
+
+def test_put_notes_accepts_multi_note_collection(client, auth_headers, fake_s3):
+    response = client.put("/api/v1/notes", headers=auth_headers, json={"notes": COLLECTION})
+
+    assert response.status_code == 200, response.text
+    assert fake_s3["saved"] == [COLLECTION]
+
+
+def test_put_notes_accepts_empty_collection(client, auth_headers, fake_s3):
+    empty = {
+        "format": "genova-sticky-notes",
+        "version": 1,
+        "activeId": None,
+        "notes": [],
+    }
+
+    response = client.put("/api/v1/notes", headers=auth_headers, json={"notes": empty})
+
+    assert response.status_code == 200, response.text
+    assert fake_s3["saved"] == [empty]
+
+
+def test_put_notes_rejects_collection_notes_not_list(client, auth_headers, fake_s3):
+    invalid = {"format": "genova-sticky-notes", "notes": "nope"}
+
+    response = client.put("/api/v1/notes", headers=auth_headers, json={"notes": invalid})
+
+    assert response.status_code == 400
+    assert fake_s3["saved"] == []
+
+
+def test_put_notes_rejects_collection_note_not_object(client, auth_headers, fake_s3):
+    invalid = {"format": "genova-sticky-notes", "notes": ["nope"]}
+
+    response = client.put("/api/v1/notes", headers=auth_headers, json={"notes": invalid})
+
+    assert response.status_code == 400
+    assert fake_s3["saved"] == []
+
+
+def test_put_notes_rejects_collection_document_not_object(client, auth_headers, fake_s3):
+    invalid = {
+        "format": "genova-sticky-notes",
+        "notes": [{"id": "note-1", "document": "nope"}],
+    }
+
+    response = client.put("/api/v1/notes", headers=auth_headers, json={"notes": invalid})
+
+    assert response.status_code == 400
+    assert fake_s3["saved"] == []
+
+
+def test_put_notes_rejects_collection_html_not_string(client, auth_headers, fake_s3):
+    invalid = {
+        "format": "genova-sticky-notes",
+        "notes": [{"id": "note-1", "html": ["nope"]}],
+    }
+
+    response = client.put("/api/v1/notes", headers=auth_headers, json={"notes": invalid})
+
+    assert response.status_code == 400
+    assert fake_s3["saved"] == []
+
+
+def test_put_notes_rejects_collection_active_id_not_string(client, auth_headers, fake_s3):
+    invalid = {
+        "format": "genova-sticky-notes",
+        "activeId": 3,
+        "notes": [],
+    }
+
+    response = client.put("/api/v1/notes", headers=auth_headers, json={"notes": invalid})
+
+    assert response.status_code == 400
+    assert fake_s3["saved"] == []
+
+
+def test_put_notes_rejects_collection_note_id_not_string(client, auth_headers, fake_s3):
+    invalid = {
+        "format": "genova-sticky-notes",
+        "notes": [{"id": 1, "html": "<p>One</p>"}],
+    }
+
+    response = client.put("/api/v1/notes", headers=auth_headers, json={"notes": invalid})
+
+    assert response.status_code == 400
+    assert fake_s3["saved"] == []
+

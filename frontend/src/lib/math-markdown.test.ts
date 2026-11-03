@@ -8,7 +8,7 @@ describe("prepareMarkdownForMath", () => {
     );
     expect(
       prepareMarkdownForMath("Display:\n\\[\n\\frac{a}{b}\n\\]\nDone."),
-    ).toBe("Display:\n$$\n\\frac{a}{b}\n$$\nDone.");
+    ).toBe("Display:\n\n$$\n\\frac{a}{b}\n$$\n\nDone.");
   });
 
   it("leaves fenced code and inline code untouched", () => {
@@ -20,10 +20,15 @@ describe("prepareMarkdownForMath", () => {
     expect(out).toContain("$z$");
   });
 
+  it("does not reformat tables inside fenced code", () => {
+    const src = "```\n| A | B |\n|---|---|\n| 1 | 2 |\nAfter\n```";
+    expect(prepareMarkdownForMath(src)).toBe(src);
+  });
+
   it("preserves complete math while streaming", () => {
     const src = "Inline \\(a+b\\) and display \\[c+d\\] done.";
     expect(prepareMarkdownForMath(src, { isStreaming: true })).toBe(
-      "Inline $a+b$ and display $$c+d$$ done.",
+      "Inline $a+b$ and display \n$$\nc+d\n$$\n done.",
     );
   });
 
@@ -54,5 +59,32 @@ describe("prepareMarkdownForMath", () => {
     expect(prepareMarkdownForMath(medical)).toBe(
       "Clearance $CL = \\frac{Dose}{AUC}$ [Source: pk.pdf, Page 3].",
     );
+  });
+
+  it("separates a table from the intro text and the continuation", () => {
+    const src = "Intro\n| A | B |\n| --- | --- |\n| 1 | 2 |\nAfter";
+    expect(prepareMarkdownForMath(src)).toBe(
+      "Intro\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nAfter",
+    );
+  });
+
+  it("separates a table that directly follows a list", () => {
+    const src = "Items\n- a\n- b\n| A | B |\n|---|---|\n| 1 | 2 |";
+    expect(prepareMarkdownForMath(src)).toBe(
+      "Items\n- a\n- b\n\n| A | B |\n|---|---|\n| 1 | 2 |",
+    );
+  });
+
+  it("expands single-line display math into its own block", () => {
+    const out = prepareMarkdownForMath("Intro $$E = mc^2$$ after");
+    expect(out).toContain("$$\nE = mc^2\n$$");
+    expect(out.startsWith("Intro \n\n$$")).toBe(true);
+    expect(out.endsWith("$$\n\n after")).toBe(true);
+  });
+
+  it("keeps LaTeX line breaks inside display math intact", () => {
+    const out = prepareMarkdownForMath("\\[\na \\\\[2pt] b\n\\]");
+    expect(out).toContain("a \\\\[2pt] b");
+    expect(out.split("$$").length - 1).toBe(2);
   });
 });

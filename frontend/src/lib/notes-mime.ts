@@ -1,3 +1,5 @@
+import { markdownToNoteHtml } from "./notes-markdown";
+
 /** Custom drag payload so file-drop overlay ignores chat→notes drags. */
 export const GENOVA_NOTE_MIME = "application/x-genova-note";
 
@@ -30,14 +32,15 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** Convert a chat message into an HTML block appended to notes. */
+/**
+ * Convert a chat message into an HTML block appended to notes.
+ *
+ * Chat answers are Markdown (with GFM tables and LaTeX math). Notes are edited
+ * in CKEditor, so the content is converted into the HTML subset the editor's
+ * plugins understand rather than inserting the raw Markdown source.
+ */
 export function messageToNoteHtml(payload: GenovaNotePayload): string {
   const label = payload.role === "user" ? "You" : "Assistant";
-  const body = escapeHtml(payload.content).replace(/\n/g, "<br>");
-  return (
-    `<section class="genova-note-block" data-note-id="${escapeHtml(payload.id)}">` +
-    `<p><strong>${label}</strong></p>` +
-    `<p>${body}</p>` +
-    `</section><p>&nbsp;</p>`
-  );
+  const body = markdownToNoteHtml(payload.content) || "<p></p>";
+  return `<p><strong>${label}</strong></p>${body}<p>&nbsp;</p>`;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
@@ -17,7 +17,7 @@ import CompareView from "@/components/document/CompareView";
 import DashboardDropOverlay from "@/components/document/DashboardDropOverlay";
 import { useDashboardDrop } from "@/hooks/useDashboardDrop";
 import { Button } from "@/components/ui/button";
-import { Columns2, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Columns2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useNotesStore } from "@/store/notes-store";
 import "./dashboard.css";
 
@@ -93,6 +93,50 @@ function statusClass(status: string): string {
   return "";
 }
 
+const SESSIONS_OPEN_KEY = "genova:chat-sessions-open";
+
+/**
+ * Chat-session column visibility lives outside React so the preference can be
+ * read during the very first client render (via useSyncExternalStore) without
+ * a setState-in-effect and without a hydration mismatch.
+ */
+let sessionsOpenFallback = true;
+const sessionsOpenListeners = new Set<() => void>();
+
+function getDefaultSessionsOpen(): boolean {
+  return true;
+}
+
+function subscribeSessionsOpen(onStoreChange: () => void): () => void {
+  sessionsOpenListeners.add(onStoreChange);
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === SESSIONS_OPEN_KEY) onStoreChange();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    sessionsOpenListeners.delete(onStoreChange);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+function readSessionsOpen(): boolean {
+  try {
+    return window.localStorage.getItem(SESSIONS_OPEN_KEY) !== "false";
+  } catch {
+    return sessionsOpenFallback;
+  }
+}
+
+function writeSessionsOpen(open: boolean): void {
+  sessionsOpenFallback = open;
+  try {
+    window.localStorage.setItem(SESSIONS_OPEN_KEY, String(open));
+  } catch {
+    // Storage unavailable — the in-memory fallback keeps the toggle working.
+  }
+  sessionsOpenListeners.forEach((listener) => listener());
+}
+
 export default function DashboardPage() {
   const { user, initialized } = useAuth();
   const router = useRouter();
@@ -113,6 +157,11 @@ export default function DashboardPage() {
   } | null>(null);
   const [viewerOpen, setViewerOpen] = useState(true);
   const [graphOpen, setGraphOpen] = useState(false);
+  const sessionsOpen = useSyncExternalStore(
+    subscribeSessionsOpen,
+    readSessionsOpen,
+    getDefaultSessionsOpen,
+  );
   const [connectionError, setConnectionError] = useState("");
   const [compareOpen, setCompareOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<"notes" | "pdf">("notes");
@@ -125,6 +174,10 @@ export default function DashboardPage() {
       router.replace("/login");
     }
   }, [user, initialized, router]);
+
+  const toggleSessions = useCallback(() => {
+    writeSessionsOpen(!readSessionsOpen());
+  }, []);
 
   // Restore this user's sticky notes from S3 on login; drop them on logout so a
   // different account on the same browser never sees another user's notes.
@@ -361,7 +414,13 @@ export default function DashboardPage() {
 
       <div className="genova-desk-stage">
         {/* Region 2 — chat sessions (list) */}
-        <aside className="genova-desk-sessions" aria-label="Chat sessions">
+        <aside
+          id="chat-sessions-panel"
+          className={`genova-desk-sessions${sessionsOpen ? "" : " is-collapsed"}`}
+          aria-label="Chat sessions"
+          aria-hidden={!sessionsOpen}
+          {...(!sessionsOpen ? { inert: true } : {})}
+        >
           <div className="dashboard-sessions-shell h-full">
             <ChatSessionSidebar />
           </div>
@@ -370,32 +429,55 @@ export default function DashboardPage() {
         {/* Region 3 — open conversation */}
         <section className="genova-desk-chat" aria-label="Assistant">
           <div className="genova-desk-title">
-            <div className="min-w-0">
-              <h1>
-                {activeDoc?.original_name ?? "Document desk"}
-              </h1>
-              <p className="sub">
-                {activeDoc ? (
-                  <>
-                    <span className={statusClass(activeDoc.status)}>
-                      {activeDoc.status}
-                    </span>
-                    <span className="text-[var(--gd-faint)]">, </span>
-                    <span className="num">{formatBytes(activeDoc.file_size)}</span>
-                    <span className="text-[var(--gd-faint)]">, </span>
-                    <span className="num">{activeDoc.page_count || "–"}</span> pages
-                    <span className="text-[var(--gd-faint)]">, </span>
-                    <span className="num data-hue">
-                      {activeDoc.chunk_count || 0}
-                    </span>{" "}
-                    chunks
-                    <span className="text-[var(--gd-faint)]">. </span>
-                    {titleFinding}
-                  </>
+            <div className="genova-desk-title-heading">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden h-8 w-8 shrink-0 md:inline-flex"
+                onClick={toggleSessions}
+                aria-label={
+                  sessionsOpen ? "Hide chat sessions" : "Show chat sessions"
+                }
+                aria-expanded={sessionsOpen}
+                aria-controls="chat-sessions-panel"
+                title={
+                  sessionsOpen ? "Hide chat sessions" : "Show chat sessions"
+                }
+              >
+                {sessionsOpen ? (
+                  <PanelLeftClose className="h-4 w-4" />
                 ) : (
-                  titleFinding
+                  <PanelLeftOpen className="h-4 w-4" />
                 )}
-              </p>
+              </Button>
+              <div className="min-w-0">
+                <h1>{activeDoc?.original_name ?? "Document desk"}</h1>
+                <p className="sub">
+                  {activeDoc ? (
+                    <>
+                      <span className={statusClass(activeDoc.status)}>
+                        {activeDoc.status}
+                      </span>
+                      <span className="text-[var(--gd-faint)]">, </span>
+                      <span className="num">
+                        {formatBytes(activeDoc.file_size)}
+                      </span>
+                      <span className="text-[var(--gd-faint)]">, </span>
+                      <span className="num">{activeDoc.page_count || "–"}</span>{" "}
+                      pages
+                      <span className="text-[var(--gd-faint)]">, </span>
+                      <span className="num data-hue">
+                        {activeDoc.chunk_count || 0}
+                      </span>{" "}
+                      chunks
+                      <span className="text-[var(--gd-faint)]">. </span>
+                      {titleFinding}
+                    </>
+                  ) : (
+                    titleFinding
+                  )}
+                </p>
+              </div>
             </div>
             <div className="actions lg:hidden">
               <Button

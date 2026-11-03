@@ -13,8 +13,10 @@ import { prepareMarkdownForMath } from "@/lib/math-markdown";
 
 export const markdownComponents: Components = {
   table: ({ children }) => (
-    <div className="my-3 overflow-x-auto rounded-lg border border-border/70">
-      <table className="min-w-full border-collapse text-left text-sm">
+    // No overflow container: the table wraps to the chat width instead of
+    // scrolling or clipping columns. See `.prose-table-wrap` in globals.css.
+    <div className="prose-table-wrap my-3 w-full max-w-full rounded-lg border border-border/70">
+      <table className="w-full max-w-full border-collapse text-left text-sm">
         {children}
       </table>
     </div>
@@ -22,13 +24,19 @@ export const markdownComponents: Components = {
   thead: ({ children }) => (
     <thead className="bg-muted/60 text-foreground">{children}</thead>
   ),
-  th: ({ children }) => (
-    <th className="border-b border-border/70 px-3 py-2 font-semibold">
+  th: ({ children, style }) => (
+    <th
+      style={style}
+      className="border-b border-border/70 px-2 py-2 text-left align-top font-semibold break-words sm:px-3"
+    >
       {children}
     </th>
   ),
-  td: ({ children }) => (
-    <td className="border-b border-border/50 px-3 py-2 align-top">
+  td: ({ children, style }) => (
+    <td
+      style={style}
+      className="border-b border-border/50 px-2 py-2 align-top break-words sm:px-3"
+    >
       {children}
     </td>
   ),

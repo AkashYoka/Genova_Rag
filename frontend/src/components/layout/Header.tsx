@@ -317,18 +317,6 @@ export default function Header({
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                className="cursor-pointer"
-                onClick={() => {
-                  setHfToken(user?.hf_token ? "" : "");
-                  setHfError("");
-                  setHfSuccess("");
-                  setHfModalOpen(true);
-                }}
-              >
-                <KeyRound className="mr-2 h-4 w-4" />
-
-              </DropdownMenuItem>
-              <DropdownMenuItem
                 className="cursor-pointer text-destructive"
                 onClick={handleLogout}
               >

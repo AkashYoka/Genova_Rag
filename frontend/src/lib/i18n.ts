@@ -89,7 +89,6 @@ const resources = {
         selectPlaceholder: "Select a document first...",
         exportTitle: "Export chat history",
         markdown: "Markdown (.md)",
-        plainText: "Plain Text (.txt)",
         pdf: "PDF (.pdf)",
         startRecording: "Start recording",
         stopRecording: "Stop recording",
