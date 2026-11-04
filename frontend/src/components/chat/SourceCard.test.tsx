@@ -7,7 +7,7 @@ import type { SourceChunk } from "@/store/chat-store";
 const sources: SourceChunk[] = [
   {
     filename: "annual-report.pdf",
-    page: 2,
+    page: 3,
     text: "Revenue increased after the new pricing plan rolled out.",
     score: 0.91,
     confidence: 0.76,
@@ -15,9 +15,15 @@ const sources: SourceChunk[] = [
   },
   {
     filename: "board-notes.pdf",
-    page: 4,
+    page: 5,
     text: "Risk review notes mention customer concentration and renewal timing.",
     score: 0.42,
+  },
+  {
+    filename: "summary.txt",
+    page: 0,
+    text: "A".repeat(220),
+    score: 0.2,
   },
 ];
 
@@ -29,9 +35,9 @@ describe("SourceCard", () => {
     render(<SourceCard sources={sources} onPageClick={onPageClick} />);
 
     expect(
-      screen.getByRole("button", { name: "Expand 2 cited sources" }),
+      screen.getByRole("button", { name: "Expand 3 cited sources" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("2 sources cited")).toBeInTheDocument();
+    expect(screen.getByText("3 sources cited")).toBeInTheDocument();
     expect(
       screen.getByLabelText("Go to source page 3. Confidence Medium"),
     ).toHaveTextContent("p.3 - Medium");
@@ -45,19 +51,22 @@ describe("SourceCard", () => {
 
     expect(onPageClick).toHaveBeenCalledWith({
       page: 3,
+      filename: "annual-report.pdf",
+      excerpt: sources[0].text,
       highlightRects: sources[0].highlightRects,
     });
   });
 
-  it("expands to show source metadata and excerpts", async () => {
+  it("expands to show source metadata, View, and excerpt toggle", async () => {
+    const onPageClick = vi.fn();
     const user = userEvent.setup();
 
-    render(<SourceCard sources={sources} onPageClick={vi.fn()} />);
+    render(<SourceCard sources={sources} onPageClick={onPageClick} />);
 
-    await user.click(screen.getByRole("button", { name: "Expand 2 cited sources" }));
+    await user.click(screen.getByRole("button", { name: "Expand 3 cited sources" }));
 
     expect(
-      screen.getByRole("button", { name: "Collapse 2 cited sources" }),
+      screen.getByRole("button", { name: "Collapse 3 cited sources" }),
     ).toBeInTheDocument();
     expect(screen.getByText("annual-report.pdf")).toBeInTheDocument();
     expect(screen.getByText("Page 3")).toBeInTheDocument();
@@ -66,6 +75,22 @@ describe("SourceCard", () => {
     expect(
       screen.getByText("Revenue increased after the new pricing plan rolled out."),
     ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "View source page 3" }));
+    expect(onPageClick).toHaveBeenCalledWith({
+      page: 3,
+      filename: "annual-report.pdf",
+      excerpt: sources[0].text,
+      highlightRects: sources[0].highlightRects,
+    });
+
+    const showExcerpt = screen.getByRole("button", { name: "Show excerpt" });
+    expect(showExcerpt).toHaveAttribute("aria-expanded", "false");
+    await user.click(showExcerpt);
+    expect(screen.getByRole("button", { name: "Hide excerpt" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("does not render when there are no sources", () => {

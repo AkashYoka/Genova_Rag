@@ -14,6 +14,10 @@ import {
   RotateCw,
 } from "lucide-react";
 import { API_BASE } from "@/lib/api";
+import {
+  findPageForQuote,
+  findQuoteRectsInTextLayer,
+} from "@/lib/citation-highlight";
 import { usePdfSearch } from "@/hooks/usePdfSearch";
 import { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 
@@ -43,8 +47,11 @@ export interface PdfHighlightRect {
 }
 
 export interface PdfHighlightTarget {
+  /** 1-based page; 0 means locate via quote text. */
   page: number;
   rects?: PdfHighlightRect[];
+  /** Citation excerpt used when bbox/rects are missing. */
+  quote?: string;
 }
 
 interface Props {
@@ -77,8 +84,15 @@ export default function PDFViewer({
   const [pageInput, setPageInput] = useState(String(currentPage));
   const [pageInputError, setPageInputError] = useState(false);
   const [prevCurrentPage, setPrevCurrentPage] = useState(currentPage);
+  const [quoteRects, setQuoteRects] = useState<PdfHighlightRect[]>([]);
+  const [resolvedQuotePage, setResolvedQuotePage] = useState<number | null>(
+    null,
+  );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pageAnchorRef = useRef<HTMLDivElement>(null);
+  const quoteLocateGenRef = useRef(0);
+  const onPageChangeRef = useRef(onPageChange);
+  onPageChangeRef.current = onPageChange;
   // Keep auth header stable so <Document> does not remount / blink on parent re-renders
   const tokenRef = useRef<string | null>(null);
   if (typeof window !== "undefined" && tokenRef.current === null) {
@@ -120,21 +134,175 @@ export default function PDFViewer({
     setPdfDoc(pdf);
   }, []);
 
+  // When the citation has no page (or the page misses), locate the excerpt in the PDF.
+  useEffect(() => {
+    if (!highlightTarget?.quote || !pdfDoc) return;
+    if ((highlightTarget.rects?.length ?? 0) > 0) return;
+
+    const preferred =
+      highlightTarget.page >= 1 ? highlightTarget.page : undefined;
+    const gen = ++quoteLocateGenRef.current;
+    let cancelled = false;
+
+    void (async () => {
+      const found = await findPageForQuote(
+        pdfDoc,
+        highlightTarget.quote!,
+        preferred,
+      );
+      if (cancelled || gen !== quoteLocateGenRef.current) return;
+      if (!found) {
+        setResolvedQuotePage(null);
+        return;
+      }
+      setResolvedQuotePage((prev) => (prev === found ? prev : found));
+      if (found !== currentPage) {
+        onPageChangeRef.current(found);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // currentPage intentionally omitted: re-running on every page flip would
+    // restart full-document scans while the user navigates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    highlightTarget?.quote,
+    highlightTarget?.page,
+    highlightTarget?.rects,
+    pdfDoc,
+  ]);
+
+  // Derive highlight overlays from the rendered text layer so matches that
+  // span line breaks still light up accurately.
+  useEffect(() => {
+    setQuoteRects([]);
+    if (!highlightTarget?.quote) return;
+    if ((highlightTarget.rects?.length ?? 0) > 0) return;
+
+    const targetPage =
+      highlightTarget.page >= 1
+        ? highlightTarget.page
+        : (resolvedQuotePage ?? currentPage);
+    if (targetPage !== currentPage) return;
+
+    const container = pageAnchorRef.current;
+    if (!container) return;
+
+    let cancelled = false;
+    let observer: MutationObserver | null = null;
+
+    const apply = () => {
+      if (cancelled) return false;
+      const pageEl =
+        (container.querySelector(".react-pdf__Page") as HTMLElement | null) ??
+        container;
+      const textLayer = pageEl.querySelector(
+        ".react-pdf__Page__textContent, .textLayer",
+      );
+      if (!textLayer) return false;
+      const found = findQuoteRectsInTextLayer(
+        textLayer,
+        pageEl,
+        highlightTarget.quote!,
+      );
+      if (found.length === 0) return false;
+      setQuoteRects(found);
+
+      const scrollContainer = scrollContainerRef.current;
+      if (scrollContainer && found.length > 0) {
+        const pageHeight = container.offsetHeight || 1;
+        const pageWidth = container.offsetWidth || 1;
+        const first = found[0];
+        const top = Math.max(
+          0,
+          container.offsetTop + first.top * pageHeight - 48,
+        );
+        // Keep the full multi-line passage in view horizontally when the page
+        // is wider than the inspector pane.
+        const highlightLeft = Math.min(...found.map((r) => r.left)) * pageWidth;
+        const highlightRight =
+          Math.max(...found.map((r) => r.left + r.width)) * pageWidth;
+        const visibleLeft = scrollContainer.scrollLeft;
+        const visibleRight = visibleLeft + scrollContainer.clientWidth;
+        let nextLeft = visibleLeft;
+        if (highlightLeft < visibleLeft + 16) {
+          nextLeft = Math.max(0, highlightLeft - 24);
+        } else if (highlightRight > visibleRight - 16) {
+          nextLeft = Math.max(
+            0,
+            highlightRight - scrollContainer.clientWidth + 24,
+          );
+        }
+        scrollContainer.scrollTo({
+          top,
+          left: nextLeft,
+          behavior: "smooth",
+        });
+      }
+      return true;
+    };
+
+    const raf = window.requestAnimationFrame(() => {
+      if (apply()) return;
+      observer = new MutationObserver(() => {
+        if (apply() && observer) {
+          observer.disconnect();
+          observer = null;
+        }
+      });
+      observer.observe(container, { childList: true, subtree: true });
+      window.setTimeout(() => {
+        observer?.disconnect();
+        observer = null;
+      }, 4000);
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, [
+    highlightTarget?.quote,
+    highlightTarget?.page,
+    highlightTarget?.rects,
+    resolvedQuotePage,
+    currentPage,
+    scale,
+    rotation,
+    documentId,
+  ]);
+
   // Scroll the page into the viewer pane — never scrollIntoView the whole panel
   // (that fights the layout and can look like continuous blinking).
   useEffect(() => {
-    if (highlightTarget?.page !== currentPage) return;
+    const targetPage =
+      highlightTarget?.page && highlightTarget.page >= 1
+        ? highlightTarget.page
+        : resolvedQuotePage;
+    if (!targetPage || targetPage !== currentPage) return;
+    if (quoteRects.length > 0) return;
     const container = scrollContainerRef.current;
     const anchor = pageAnchorRef.current;
     if (!container || !anchor) return;
     const top = Math.max(0, anchor.offsetTop - 12);
     container.scrollTo({ top, behavior: "smooth" });
-  }, [currentPage, highlightTarget?.page]);
+  }, [currentPage, highlightTarget?.page, resolvedQuotePage, quoteRects.length]);
 
   // Reset captured doc when the file identity changes
   useEffect(() => {
     setPdfDoc(null);
+    setQuoteRects([]);
+    setResolvedQuotePage(null);
   }, [documentId]);
+
+  // Clear quote-derived state when the citation target changes identity.
+  useEffect(() => {
+    setQuoteRects([]);
+    setResolvedQuotePage(null);
+  }, [highlightTarget?.page, highlightTarget?.quote, highlightTarget?.rects]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -160,9 +328,20 @@ export default function PDFViewer({
   }, []);
 
   const overlayRects = useMemo(() => {
-    if (!highlightTarget || highlightTarget.page !== currentPage) return [];
+    if (!highlightTarget) return [];
 
-    return (highlightTarget.rects ?? []).map((rect) => {
+    const targetPage =
+      highlightTarget.page >= 1
+        ? highlightTarget.page
+        : (resolvedQuotePage ?? currentPage);
+    if (targetPage !== currentPage) return [];
+
+    const sourceRects =
+      (highlightTarget.rects?.length ?? 0) > 0
+        ? highlightTarget.rects!
+        : quoteRects;
+
+    return sourceRects.map((rect) => {
       // Percent-based rects scale naturally with the rendered page size
       if (rect.unit === "percent" || isNormalizedRect(rect)) {
         return {
@@ -187,7 +366,7 @@ export default function PDFViewer({
         height: `${rect.height}px`,
       };
     });
-  }, [highlightTarget, currentPage, scale]);
+  }, [highlightTarget, currentPage, scale, quoteRects, resolvedQuotePage]);
 
   // --- NEW: Search Highlights Logic ---
   const searchHighlights = useMemo(() => {
@@ -220,13 +399,13 @@ export default function PDFViewer({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
-      <div className="flex shrink-0 items-center justify-between border-b border-border/50 bg-card/50 px-3 py-2">
-        <div className="flex items-center gap-1">
+    <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col overflow-hidden bg-background">
+      <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-border/50 bg-card/50 px-2 py-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="h-7 w-7 shrink-0"
             onClick={() => {
               const newPage = Math.max(1, currentPage - 1);
               onPageChange(newPage);
@@ -239,10 +418,10 @@ export default function PDFViewer({
           </Button>
 
           {/* --- NEW: Search Integration --- */}
-          <div className="flex items-center gap-2 border-l pl-2">
+          <div className="flex min-w-0 items-center gap-1 border-l pl-2 sm:gap-2">
             <Input
               placeholder="Search..."
-              className="h-7 w-32 text-xs"
+              className="h-7 w-20 min-w-0 max-w-[8rem] flex-1 text-xs sm:w-28"
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value);
@@ -250,7 +429,7 @@ export default function PDFViewer({
               }}
             />
             {matches.length > 0 && (
-              <div className="flex items-center gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 <span className="text-[10px] text-muted-foreground">
                   {currentIndex + 1}/{matches.length}
                 </span>
@@ -291,10 +470,10 @@ export default function PDFViewer({
               event.preventDefault();
               handlePageJump(pageInput);
             }}
-            className="flex items-center gap-1 text-xs"
+            className="flex shrink-0 items-center gap-1 text-xs"
             aria-label="PDF page navigation"
           >
-            <span className="text-muted-foreground text-[10px] hidden sm:inline">
+            <span className="text-muted-foreground text-[10px] hidden xl:inline">
               Page
             </span>
             <Input
@@ -320,7 +499,7 @@ export default function PDFViewer({
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="h-7 w-7 shrink-0"
             onClick={() => {
               const newPage = Math.min(totalPages, currentPage + 1);
               onPageChange(newPage);
@@ -333,7 +512,7 @@ export default function PDFViewer({
           </Button>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
@@ -383,7 +562,7 @@ export default function PDFViewer({
       {/* ── PDF Render ──────────────────────────────── */}
       <div
         ref={scrollContainerRef}
-        className="relative flex min-h-0 w-full flex-1 items-start justify-center overflow-auto bg-muted/30 p-4"
+        className="genova-pdf-scroll relative flex min-h-0 min-w-0 w-full max-w-full flex-1 items-start overflow-auto bg-muted/30 p-4"
       >
         <Document
           key={documentId}
@@ -421,9 +600,11 @@ export default function PDFViewer({
               </p>
             </div>
           }
-          className="max-w-full border border-border bg-card shadow-md"
+          className="border border-border bg-card shadow-md"
         >
-          <div ref={pageAnchorRef} className="relative">
+          {/* w-max so the anchor matches the rendered page width — overlays are
+              percent-positioned against this box, not the narrower inspector pane. */}
+          <div ref={pageAnchorRef} className="relative w-max max-w-none">
             <Page
               pageNumber={currentPage}
               scale={scale}

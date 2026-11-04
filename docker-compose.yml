@@ -53,28 +53,7 @@ services:
   # ── Legacy PostgreSQL (opt-in, migration window only) ────
   # Kept so the pre-migration stack can still be started to dump/verify
   # existing data before MySQL is promoted. Not started by default:
-  #   docker compose --profile legacy-postgres up -d postgres
-  postgres:
-    image: postgres:16-alpine
-    container_name: pdf_rag_postgres
-    restart: unless-stopped
-    profiles: ["legacy-postgres"]
-    logging: *default-logging
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-pdf_rag}
-      POSTGRES_USER: ${POSTGRES_USER:-pdf_rag_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pdf_rag_pass}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pdf_rag_user} -d ${POSTGRES_DB:-pdf_rag}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+
 
   # ── Application (CPU profile) ────────────────────────────
   app:

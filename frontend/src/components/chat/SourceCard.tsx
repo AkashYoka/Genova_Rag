@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import type { SourceBoundingBox, SourceChunk } from "@/store/chat-store";
+import { resolveHighlightRects } from "@/lib/citation-highlight";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -66,11 +67,14 @@ const getPrimarySourceMetric = (source: SourceChunk) =>
 
 // Returns true only when the source has a real, usable page number.
 // Some document types (e.g. .txt, .md) have no page concept, and the
-// backend may send page as undefined/null/NaN in those cases.
+// backend may send page as undefined/null/NaN/0 in those cases.
 const hasValidPage = (source: SourceChunk) =>
   typeof source.page === "number" &&
   Number.isFinite(source.page) &&
-  source.page >= 0;
+  source.page >= 1;
+
+const canOpenInViewer = (source: SourceChunk) =>
+  hasValidPage(source) || Boolean(source.text?.trim());
 
 const MetricBadge = ({
   label,
@@ -92,29 +96,47 @@ const MetricBadge = ({
   );
 };
 
+export interface CitationClickPayload {
+  page: number;
+  filename?: string;
+  excerpt?: string;
+  highlightRects?: SourceBoundingBox[];
+}
+
 interface Props {
   sources: SourceChunk[];
-  onPageClick: (payload: {
-    page: number;
-    highlightRects?: SourceBoundingBox[];
-  }) => void;
+  onPageClick: (payload: CitationClickPayload) => void;
 }
 
 export default function SourceCard({ sources = [], onPageClick }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [excerptOpen, setExcerptOpen] = useState<Set<number>>(new Set());
   const sourceListId = useId();
+  const excerptBaseId = useId();
 
   if (sources.length === 0) return null;
 
   const toggleExcerpt = (index: number) => {
-    const next = new Set(excerptOpen);
-    if (next.has(index)) {
-      next.delete(index);
-    } else {
-      next.add(index);
-    }
-    setExcerptOpen(next);
+    setExcerptOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const openCitation = (src: SourceChunk) => {
+    if (!canOpenInViewer(src)) return;
+    onPageClick({
+      // Backend pages are already 1-based; 0 means "search by excerpt".
+      page: hasValidPage(src) ? src.page : 0,
+      filename: src.filename,
+      excerpt: src.text,
+      highlightRects: resolveHighlightRects(src),
+    });
   };
 
   return (
@@ -145,35 +167,32 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
               getPrimarySourceMetric(src),
             );
             const validPage = hasValidPage(src);
+            const canOpen = canOpenInViewer(src);
 
             return (
               <Tooltip key={i}>
                 <TooltipTrigger
                   type="button"
                   className="inline-flex"
-                  disabled={!validPage}
-                  onClick={() => {
-                    if (!validPage) return;
-                    onPageClick({
-                      page: src.page + 1,
-                      highlightRects: src.highlightRects,
-                    });
-                  }}
+                  disabled={!canOpen}
+                  onClick={() => openCitation(src)}
                   aria-label={
                     validPage
-                      ? `Go to source page ${src.page + 1}. Confidence ${badgeMeta.label}`
-                      : `Source from ${src.filename}. Page unavailable. Confidence ${badgeMeta.label}`
+                      ? `Go to source page ${src.page}. Confidence ${badgeMeta.label}`
+                      : canOpen
+                        ? `Open ${src.filename} and locate cited excerpt. Confidence ${badgeMeta.label}`
+                        : `Source from ${src.filename}. Page unavailable. Confidence ${badgeMeta.label}`
                   }
                 >
                   <Badge
                     variant="outline"
                     className={`text-[10px] h-5 transition-colors ${badgeMeta.className} ${
-                      validPage
+                      canOpen
                         ? "cursor-pointer hover:bg-primary/20"
                         : "cursor-default opacity-70"
                     }`}
                   >
-                    {validPage ? `p.${src.page + 1}` : "Page N/A"} -{" "}
+                    {validPage ? `p.${src.page}` : "Page N/A"} -{" "}
                     {badgeMeta.label}
                   </Badge>
                 </TooltipTrigger>
@@ -200,6 +219,9 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
         <div id={sourceListId} className="border-t border-border/30">
           {sources.map((src, i) => {
             const validPage = hasValidPage(src);
+            const canOpen = canOpenInViewer(src);
+            const excerptId = `${excerptBaseId}-excerpt-${i}`;
+            const isExcerptOpen = excerptOpen.has(i);
 
             return (
               <div
@@ -212,7 +234,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                       {src.filename}
                     </span>
                     <Badge variant="outline" className="h-5 px-1.5 text-[9px]">
-                      {validPage ? `Page ${src.page + 1}` : "Page N/A"}
+                      {validPage ? `Page ${src.page}` : "Page N/A"}
                     </Badge>
                     <MetricBadge label="Score" value={src.score} />
                     <MetricBadge label="Confidence" value={src.confidence} />
@@ -221,27 +243,24 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                     variant="ghost"
                     size="sm"
                     className="h-6 shrink-0 px-2 text-[10px]"
-                    disabled={!validPage}
-                    onClick={() => {
-                      if (!validPage) return;
-                      onPageClick({
-                        page: src.page + 1,
-                        highlightRects: src.highlightRects,
-                      });
-                    }}
+                    disabled={!canOpen}
+                    onClick={() => openCitation(src)}
                     aria-label={
                       validPage
-                        ? `View source page ${src.page + 1}`
-                        : "Page reference unavailable for this source"
+                        ? `View source page ${src.page}`
+                        : canOpen
+                          ? `View source in ${src.filename}`
+                          : "Page reference unavailable for this source"
                     }
                   >
                     <Eye className="w-3 h-3 mr-1" />
-                    {validPage ? "View" : "N/A"}
+                    {canOpen ? "View" : "N/A"}
                   </Button>
                 </div>
                 <p
+                  id={excerptId}
                   className={`text-[11px] text-muted-foreground leading-relaxed ${
-                    excerptOpen.has(i) ? "" : "line-clamp-3"
+                    isExcerptOpen ? "" : "line-clamp-3"
                   }`}
                 >
                   {src.text}
@@ -250,11 +269,12 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                   <button
                     type="button"
                     onClick={() => toggleExcerpt(i)}
-                    aria-expanded={excerptOpen.has(i)}
+                    aria-expanded={isExcerptOpen}
+                    aria-controls={excerptId}
                     className="mt-1.5 flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary transition-colors"
                   >
                     <TextQuote className="w-3 h-3" />
-                    {excerptOpen.has(i) ? "Hide excerpt" : "Show excerpt"}
+                    {isExcerptOpen ? "Hide excerpt" : "Show excerpt"}
                   </button>
                 )}
               </div>

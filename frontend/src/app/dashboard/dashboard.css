@@ -94,6 +94,8 @@
 
 .genova-desk-stage {
   display: flex;
+  min-width: 0;
+  width: 100%;
   min-height: 0;
   flex: 1;
   overflow: hidden;
@@ -120,8 +122,10 @@
 
 .genova-desk-sessions {
   width: var(--gd-sessions);
+  max-width: 100%;
   flex-shrink: 0;
   align-self: stretch;
+  min-width: 0;
   min-height: 0;
   height: 100%;
   border-right: 1px solid var(--gd-border);
@@ -330,8 +334,12 @@
 .genova-desk-chat .prose-chat pre code[data-language]::before { font-size: 0.84rem; }
 
 .genova-desk-inspector {
+  box-sizing: border-box;
+  /* Prefer the design width, but never push past the stage/viewport. */
+  flex: 0 1 var(--gd-inspector);
   width: var(--gd-inspector);
-  flex-shrink: 0;
+  max-width: 100%;
+  min-width: 0;
   align-self: stretch;
   min-height: 0;
   height: 100%;
@@ -348,12 +356,28 @@
   }
 }
 
+/* Keep notes/PDF/compare content inside the column; avoid intrinsic min-width blowout. */
+.genova-desk-inspector > * {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
 .genova-desk-inspector.is-compare {
+  flex-basis: min(52%, 640px);
   width: min(52%, 640px);
+  max-width: min(52%, 640px);
 }
 
 .genova-desk-inspector.is-notes {
+  flex-basis: min(420px, 40vw);
   width: min(420px, 40vw);
+  max-width: min(420px, 40vw);
+}
+
+/* Center the page when it fits; fall back to start so wide pages stay scrollable. */
+.genova-desk-inspector .genova-pdf-scroll {
+  justify-content: safe center;
 }
 
 .genova-desk-inspector-tabs {

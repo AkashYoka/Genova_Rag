@@ -127,6 +127,8 @@ interface WindowWithSpeech extends Window {
 
 interface CitationTarget {
   page: number;
+  filename?: string;
+  excerpt?: string;
   highlightRects?: SourceBoundingBox[];
 }
 

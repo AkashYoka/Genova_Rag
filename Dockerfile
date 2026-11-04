@@ -59,7 +59,7 @@ COPY backend/app ./app
 COPY backend/__init__.py ./backend/__init__.py
 
 # Create data directories with proper permissions
-RUN mkdir -p /app/data/uploads /app/data/chroma_db /app/data/graphs /app/data/huggingface && \
+RUN mkdir -p /app/data/uploads /app/data/chroma_db /app/data/graphs && \
     chown -R appuser:appuser /app
 
 # Switch to non-root user

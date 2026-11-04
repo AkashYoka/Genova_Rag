@@ -14,9 +14,12 @@ export interface SourceBoundingBox {
 export interface SourceChunk {
   text: string;
   filename: string;
+  /** 1-based PDF page from the backend; 0 means page unknown. */
   page: number;
   score?: number;
   confidence?: number;
+  /** JSON bbox string from the API (`[[x0,y0,x1,y1], ...]` normalized). */
+  bbox?: string | null;
   highlightRects?: SourceBoundingBox[];
 }
 

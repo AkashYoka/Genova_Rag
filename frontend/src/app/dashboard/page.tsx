@@ -154,6 +154,7 @@ export default function DashboardPage() {
       height: number;
       unit?: "percent" | "pixels" | "pdf";
     }[];
+    quote?: string;
   } | null>(null);
   const [viewerOpen, setViewerOpen] = useState(true);
   const [graphOpen, setGraphOpen] = useState(false);
@@ -512,12 +513,47 @@ export default function DashboardPage() {
               activeDoc={activeDoc}
               documents={documents}
               onCitationClick={(target) => {
-                setPdfPage(target.page);
+                const filename = target.filename?.trim();
+                const matchedDoc = filename
+                  ? documents.find(
+                      (doc) =>
+                        doc.original_name.toLowerCase() ===
+                          filename.toLowerCase() ||
+                        doc.original_name
+                          .toLowerCase()
+                          .endsWith(`/${filename.toLowerCase()}`),
+                    )
+                  : null;
+
+                if (filename && !matchedDoc) {
+                  toast.error(`Could not open PDF “${filename}”.`);
+                  return;
+                }
+
+                if (matchedDoc) {
+                  setActiveDoc(matchedDoc);
+                } else if (!activeDoc) {
+                  toast.error("Select a PDF document to view citations.");
+                  return;
+                }
+
+                const viewerDoc = matchedDoc ?? activeDoc;
+                const maxPage = Math.max(1, viewerDoc?.page_count || 1);
+                const citedPage =
+                  typeof target.page === "number" &&
+                  Number.isFinite(target.page) &&
+                  target.page >= 1
+                    ? Math.min(target.page, maxPage)
+                    : 0;
+
+                setPdfPage(citedPage >= 1 ? citedPage : 1);
                 setPdfHighlightTarget({
-                  page: target.page,
+                  page: citedPage,
                   rects: target.highlightRects,
+                  quote: target.excerpt?.trim() || undefined,
                 });
                 if (!viewerOpen) setViewerOpen(true);
+                setCompareOpen(false);
                 setInspectorTab("pdf");
               }}
             />
@@ -582,9 +618,19 @@ export default function DashboardPage() {
                     currentPage={pdfPage}
                     onPageChange={(page) => {
                       setPdfPage(page);
-                      if (pdfHighlightTarget?.page !== page) {
-                        setPdfHighlightTarget(null);
-                      }
+                      setPdfHighlightTarget((current) => {
+                        if (!current) return null;
+                        // Keep citation overlays while quote-search jumps pages,
+                        // or while the user is still on the cited page.
+                        if (
+                          current.page === 0 ||
+                          current.page === page ||
+                          Boolean(current.quote)
+                        ) {
+                          return current;
+                        }
+                        return null;
+                      });
                     }}
                     totalPages={activeDoc.page_count}
                     highlightTarget={pdfHighlightTarget}
