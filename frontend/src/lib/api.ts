@@ -194,6 +194,13 @@ class ApiClient {
       return messages.length > 0 ? messages.join(", ") : null;
     }
 
+    if (payload && typeof payload === "object") {
+      const obj = payload as { message?: unknown; code?: unknown };
+      if (typeof obj.message === "string" && obj.message.trim()) {
+        return obj.message;
+      }
+    }
+
     return null;
   }
 

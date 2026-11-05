@@ -31,6 +31,7 @@ from app.scheduler import start_scheduler, stop_scheduler
 from app.routes.profile import router as profile_router
 from app.routes.health import router as health_router
 from app.routes.notes import router as notes_router
+from app.routes.drive import router as drive_router
 
 # Configure logging using loguru structured JSON logging
 setup_logging()
@@ -263,6 +264,7 @@ app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(graph_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(notes_router, prefix="/api/v1")
+app.include_router(drive_router, prefix="/api/v1")
 
 setup_prometheus_metrics(app)
 

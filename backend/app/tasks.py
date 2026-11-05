@@ -1,14 +1,69 @@
-"""Celery tasks for document processing."""
+"""Celery tasks for document processing and Google Drive sync."""
 import logging
 import traceback
 from datetime import datetime, timezone
 
 from app.celery_app import celery_app
 from app.database import get_db_session
-from app.models import Document
+from app.models import Document, DriveConnection
 from app.services.document_ingestion import ingest_document as _ingest_document
 
 logger = logging.getLogger(__name__)
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.sync_drive_folder_task",
+    max_retries=2,
+    default_retry_delay=120,
+    autoretry_for=(IOError, TimeoutError, ConnectionError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=900,
+    retry_jitter=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=60 * 30,
+    time_limit=60 * 35,
+)
+def sync_drive_folder_task(self, connection_id: str, user_id: str) -> dict:
+    """
+    Synchronize one Drive folder connection in a Celery worker.
+
+    Opens its own DB session, loads the user refresh token securely from the
+    database, lists/downloads PDFs, and reuses ``ingest_document``.
+    """
+    from app.services.drive_sync import run_drive_sync_job
+
+    logger.info(
+        "Drive sync task started connection=%s user=%s attempt=%s",
+        connection_id,
+        user_id,
+        self.request.retries + 1,
+    )
+    try:
+        result = run_drive_sync_job(connection_id, user_id)
+    except Exception as exc:
+        logger.exception(
+            "Drive sync task failed connection=%s: %s", connection_id, exc
+        )
+        with get_db_session() as db:
+            conn = (
+                db.query(DriveConnection)
+                .filter(DriveConnection.id == connection_id)
+                .first()
+            )
+            if conn and self.request.retries >= (self.max_retries or 2) - 1:
+                conn.sync_status = "failed"
+                conn.last_error = str(exc)[:500]
+                db.commit()
+        raise
+
+    logger.info(
+        "Drive sync task finished connection=%s stats=%s",
+        connection_id,
+        {k: result.get(k) for k in ("discovered", "ingested", "updated", "failed")},
+    )
+    return result
 
 
 @celery_app.task(

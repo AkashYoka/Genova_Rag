@@ -31,7 +31,7 @@ def start_scheduler():
             sync_drive_pdfs_with_session,
             trigger=IntervalTrigger(minutes=settings.DRIVE_SYNC_INTERVAL_MINUTES),
             id="drive_pdf_sync",
-            name="Hourly Google Drive PDF sync",
+            name="Enqueue Google Drive PDF sync jobs",
             replace_existing=True,
             max_instances=1,
             coalesce=True,

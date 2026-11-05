@@ -35,6 +35,7 @@ import {
 
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import Logo from "./Logo";
+import GoogleDriveSettings from "@/components/settings/GoogleDriveSettings";
 
 interface HeaderProps {
   sidebarOpen?: boolean;
@@ -187,8 +188,8 @@ export default function Header({
             size="icon"
             className={toolBtn}
             onClick={() => setSettingsOpen(true)}
-            title="LLM Settings"
-            aria-label="Open LLM settings"
+            title="Settings"
+            aria-label="Open settings"
           >
             <Settings className="h-4 w-4" />
           </Button>
@@ -318,23 +319,31 @@ export default function Header({
       </aside>
 
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>LLM Settings</DialogTitle>
+            <DialogTitle>Settings</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <label className="text-sm">Temperature: {temperature}</label>
+          <div className="space-y-6">
+            <div className="space-y-4">
+              <p className="text-sm font-medium">LLM</p>
+              <label className="text-sm text-muted-foreground">
+                Temperature: {temperature}
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={temperature}
+                onChange={(e) => setTemperature(Number(e.target.value))}
+                className="w-full"
+              />
+            </div>
 
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.1"
-              value={temperature}
-              onChange={(e) => setTemperature(Number(e.target.value))}
-              className="w-full"
-            />
+            <div className="border-t border-border pt-4">
+              <GoogleDriveSettings />
+            </div>
           </div>
         </DialogContent>
       </Dialog>

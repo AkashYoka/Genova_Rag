@@ -229,6 +229,7 @@ def _migrate_schema():
         ("documents", "drive_file_id", "ALTER TABLE documents ADD COLUMN drive_file_id VARCHAR(255)"),
         ("documents", "drive_folder_id", "ALTER TABLE documents ADD COLUMN drive_folder_id VARCHAR(255)"),
         ("documents", "drive_synced_at", f"ALTER TABLE documents ADD COLUMN drive_synced_at {timestamp_type}"),
+        ("documents", "drive_modified_time", "ALTER TABLE documents ADD COLUMN drive_modified_time VARCHAR(64)"),
         ("documents", "processing_progress", "ALTER TABLE documents ADD COLUMN processing_progress INTEGER DEFAULT 0"),
         ("documents", "processing_stage", "ALTER TABLE documents ADD COLUMN processing_stage VARCHAR(20) DEFAULT 'queued'"),
         ("documents", "retry_count", "ALTER TABLE documents ADD COLUMN retry_count INTEGER DEFAULT 0"),
@@ -377,6 +378,90 @@ def _migrate_schema():
             logger.info("Migration: created table workspace_invitations")
         except Exception:
             logger.warning("Migration skipped (may already exist): workspace_invitations")
+
+
+    # ── Drive connections table + columns ──────────────────────────────────
+    existing_tables = set(inspector.get_table_names())
+    if "drive_connections" not in existing_tables:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"""
+                    CREATE TABLE drive_connections (
+                        id                   CHAR(36)     PRIMARY KEY,
+                        user_id              CHAR(36)     NOT NULL,
+                        folder_id            VARCHAR(255) NOT NULL,
+                        folder_name          VARCHAR(255),
+                        folder_url           VARCHAR(500),
+                        access_mode          VARCHAR(20)  NOT NULL DEFAULT 'public',
+                        credentials_json     {text_type},
+                        service_account_file VARCHAR(500),
+                        enabled              BOOLEAN      NOT NULL DEFAULT 1,
+                        sync_status          VARCHAR(20)  NOT NULL DEFAULT 'idle',
+                        celery_task_id       VARCHAR(255),
+                        last_error           {text_type},
+                        last_synced_at       {timestamp_type},
+                        created_at           {timestamp_type},
+                        updated_at           {timestamp_type},
+                        CONSTRAINT fk_drive_connections_user
+                            FOREIGN KEY (user_id) REFERENCES users (id)
+                    )
+                """))
+            _ensure_index(
+                "drive_connections", "ix_drive_connections_user_id", "user_id"
+            )
+            _ensure_index(
+                "drive_connections", "ix_drive_connections_folder_id", "folder_id"
+            )
+            logger.info("Migration: created table drive_connections")
+        except Exception as exc:
+            logger.warning("Migration skipped drive_connections: %s", exc)
+    else:
+        try:
+            drive_cols = {c["name"] for c in inspector.get_columns("drive_connections")}
+        except Exception:
+            drive_cols = set()
+        drive_migrations = [
+            (
+                "drive_connections",
+                "folder_name",
+                "ALTER TABLE drive_connections ADD COLUMN folder_name VARCHAR(255)",
+            ),
+            (
+                "drive_connections",
+                "folder_url",
+                "ALTER TABLE drive_connections ADD COLUMN folder_url VARCHAR(500)",
+            ),
+            (
+                "drive_connections",
+                "sync_status",
+                "ALTER TABLE drive_connections ADD COLUMN sync_status VARCHAR(20) DEFAULT 'idle' NOT NULL",
+            ),
+            (
+                "drive_connections",
+                "last_error",
+                f"ALTER TABLE drive_connections ADD COLUMN last_error {text_type}",
+            ),
+            (
+                "drive_connections",
+                "access_mode",
+                "ALTER TABLE drive_connections ADD COLUMN access_mode VARCHAR(20) DEFAULT 'public' NOT NULL",
+            ),
+            (
+                "drive_connections",
+                "celery_task_id",
+                "ALTER TABLE drive_connections ADD COLUMN celery_task_id VARCHAR(255)",
+            ),
+        ]
+        for table, column, ddl in drive_migrations:
+            if column not in drive_cols:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text(ddl))
+                    logger.info("Migration: added column %s.%s", table, column)
+                except Exception as exc:
+                    logger.warning(
+                        "Migration failed for %s.%s: %s", table, column, exc
+                    )
 
 
 def advisory_lock(lock_id: int, timeout_seconds: int = 30):

@@ -889,8 +889,26 @@ def disconnect_google_drive(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Remove the stored Google Drive refresh token for the current user."""
+    """Remove the stored Google Drive refresh token for the current user.
+
+    Attached folder connections are retained so they can sync again after
+    reconnecting OAuth; their sync_status is marked error until then.
+    """
     user.google_refresh_token = None
+    try:
+        from app.models import DriveConnection
+
+        connections = (
+            db.query(DriveConnection)
+            .filter(DriveConnection.user_id == user.id)
+            .all()
+        )
+        for connection in connections:
+            connection.sync_status = "error"
+            connection.last_error = "Google Drive disconnected — reconnect to sync"
+            connection.updated_at = datetime.now(timezone.utc)
+    except Exception:
+        logger.exception("Failed to mark Drive connections after disconnect")
     db.commit()
     return GoogleDriveStatusResponse(connected=False)
 

@@ -138,6 +138,75 @@ class GoogleDriveStatusResponse(BaseModel):
     connected: bool
 
 
+class DriveFolderCreateRequest(BaseModel):
+    url: str = Field(..., min_length=5, description="Google Drive folder URL or ID")
+
+
+class DriveFolderResponse(BaseModel):
+    id: str
+    folder_id: str
+    folder_name: Optional[str] = None
+    folder_url: Optional[str] = None
+    access_mode: str = "public"  # public | oauth
+    enabled: bool = True
+    sync_status: str = "idle"  # idle | queued | processing | completed | failed
+    task_id: Optional[str] = None
+    last_error: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    document_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class DriveFolderListResponse(BaseModel):
+    connected: bool
+    public_access_available: bool = True
+    folders: list[DriveFolderResponse]
+
+
+class DriveSyncStatusResponse(BaseModel):
+    """Lightweight poll payload for a single Drive folder sync."""
+
+    connection_id: str
+    folder_id: str
+    folder_name: Optional[str] = None
+    access_mode: str = "public"
+    sync_status: str
+    task_id: Optional[str] = None
+    last_error: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    document_count: int = 0
+
+
+class DriveSyncAcceptedResponse(BaseModel):
+    """Returned when a Drive sync job is accepted (HTTP 202)."""
+
+    message: str = "Drive sync queued"
+    sync_status: str = "queued"
+    connection_id: Optional[str] = None
+    task_id: Optional[str] = None
+    task_ids: list[str] = Field(default_factory=list)
+    connections: int = 0
+    already_running: bool = False
+    folders: list[DriveFolderResponse] = Field(default_factory=list)
+
+
+class DriveSyncResponse(BaseModel):
+    """Legacy sync summary shape (kept for Celery task result payloads)."""
+
+    connections: int = 0
+    discovered: int = 0
+    ingested: int = 0
+    updated: int = 0
+    skipped: int = 0
+    deleted: int = 0
+    failed: int = 0
+    error: Optional[str] = None
+    results: list[dict] = Field(default_factory=list)
+
+
 class ApiKeyResponse(BaseModel):
     id: str
     name: str

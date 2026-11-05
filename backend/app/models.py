@@ -359,6 +359,8 @@ class Document(Base):
     drive_file_id = Column(String(255), unique=True, nullable=True, index=True)
     drive_folder_id = Column(String(255), nullable=True, index=True)
     drive_synced_at = Column(Timestamp, nullable=True)
+    # ISO-8601 modifiedTime from Drive API — used to detect remote updates.
+    drive_modified_time = Column(String(64), nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
     deleted_at = Column(Timestamp, nullable=True)
     processing_progress = Column(Integer, default=0)
@@ -412,14 +414,33 @@ class ChatMessage(Base):
 
 
 class DriveConnection(Base):
+    """A Google Drive folder the user attached for PDF sync into RAG."""
+
     __tablename__ = "drive_connections"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "folder_id",
+            name="uq_drive_connection_user_folder",
+        ),
+    )
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
     folder_id = Column(String(255), nullable=False, index=True)
+    folder_name = Column(String(255), nullable=True)
+    folder_url = Column(String(500), nullable=True)
+    # public = Anyone-with-link (no user OAuth); oauth = private via user token
+    access_mode = Column(String(20), default="public", nullable=False)
+    # Legacy fields — user OAuth (User.google_refresh_token) is preferred.
     credentials_json = Column(LongText, nullable=True)
     service_account_file = Column(String(500), nullable=True)
     enabled = Column(Boolean, default=True, nullable=False)
+    # idle | queued | processing | completed | failed
+    # (legacy aliases still seen in older rows: syncing≈processing, ok≈completed, error≈failed)
+    sync_status = Column(String(20), default="idle", nullable=False)
+    celery_task_id = Column(String(255), nullable=True)
+    last_error = Column(LongText, nullable=True)
     last_synced_at = Column(Timestamp, nullable=True)
     created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))

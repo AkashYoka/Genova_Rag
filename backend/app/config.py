@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     METRICS_ACCESS_TOKEN: str = ""
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_DRIVE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google-drive/callback"
+    GOOGLE_DRIVE_REDIRECT_URI: str = "http://127.0.0.1:7860/api/v1/auth/google-drive/callback"
     FRONTEND_URL: str = "http://localhost:3000"
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
 
