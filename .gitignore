@@ -35,3 +35,6 @@ static/
 .pytest_tmp/
 backend/test_uploads/
 frontend/test-results/
+
+.freebuff/
+.taste-skill/

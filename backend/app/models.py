@@ -188,6 +188,11 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    llm_usage = relationship(
+        "LLMUsage",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class ApiKey(Base):
@@ -411,6 +416,58 @@ class ChatMessage(Base):
     user = relationship("User", back_populates="messages")
     document = relationship("Document", back_populates="messages")
     session = relationship("ChatSession", back_populates="messages")
+
+
+class LLMUsage(Base):
+    """Per-request AI usage ledger for authenticated users.
+
+    Token fields are nullable when the provider does not report them.
+    ``estimated_cost_usd`` is a calculated estimate from the pricing registry
+    (or provider-reported when available) — never an invented figure.
+    """
+
+    __tablename__ = "llm_usage"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    session_id = Column(
+        GUID,
+        ForeignKey("chat_sessions.id"),
+        nullable=True,
+        index=True,
+    )
+    message_id = Column(
+        GUID,
+        ForeignKey("chat_messages.id"),
+        nullable=True,
+        index=True,
+    )
+    document_id = Column(
+        GUID,
+        ForeignKey("documents.id"),
+        nullable=True,
+        index=True,
+    )
+    provider = Column(String(32), nullable=False, index=True)
+    model_id = Column(String(128), nullable=True, index=True)
+    usage_type = Column(String(64), nullable=False, default="chat", index=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    cache_read_tokens = Column(Integer, nullable=True)
+    cache_write_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    estimated_cost_usd = Column(Float, nullable=True)
+    # estimated | provider_reported | local_zero | unavailable
+    cost_type = Column(String(32), nullable=False, default="unavailable")
+    pricing_note = Column(String(512), nullable=True)
+    created_at = Column(
+        Timestamp,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+    user = relationship("User", back_populates="llm_usage")
 
 
 class DriveConnection(Base):

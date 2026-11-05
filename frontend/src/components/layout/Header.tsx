@@ -24,7 +24,9 @@ import {
   Moon,
   Settings,
   Network,
+  Shield,
 } from "lucide-react";
+import { isAdminUser } from "@/lib/admin";
 import { useTheme } from "next-themes";
 import {
   Dialog,
@@ -234,6 +236,23 @@ export default function Header({
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => router.push("/settings")}
+              >
+                <Settings className="mr-2 h-4 w-4" />
+                Settings & usage
+              </DropdownMenuItem>
+              {isAdminUser(user) ? (
+                <DropdownMenuItem
+                  className="cursor-pointer"
+                  onClick={() => router.push("/admin")}
+                >
+                  <Shield className="mr-2 h-4 w-4" />
+                  Admin dashboard
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
                 className="cursor-pointer text-destructive"
                 onClick={handleLogout}
               >
@@ -343,6 +362,23 @@ export default function Header({
 
             <div className="border-t border-border pt-4">
               <GoogleDriveSettings />
+            </div>
+
+            <div className="border-t border-border pt-4">
+              <p className="mb-2 text-sm font-medium">AI Usage</p>
+              <p className="mb-3 text-sm text-muted-foreground">
+                Review token consumption and estimated costs for your account.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSettingsOpen(false);
+                  router.push("/settings");
+                }}
+              >
+                Open usage dashboard
+              </Button>
             </div>
           </div>
         </DialogContent>

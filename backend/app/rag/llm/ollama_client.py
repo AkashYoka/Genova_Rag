@@ -133,6 +133,43 @@ class OllamaEmbeddings:
         return vectors[0] if vectors else []
 
 
+def usage_from_ollama(
+    data: dict | None, *, model_id: str | None = None
+) -> dict[str, Any]:
+    """Extract token counts from an Ollama /api/chat response body.
+
+    Ollama reports ``prompt_eval_count`` (input) and ``eval_count`` (output).
+    Cost is always $0 via the pricing registry (local_zero).
+    """
+    from app.pricing import enrich_usage_with_pricing
+
+    data = data or {}
+    input_tokens = data.get("prompt_eval_count")
+    output_tokens = data.get("eval_count")
+    if not isinstance(input_tokens, int):
+        input_tokens = None
+    if not isinstance(output_tokens, int):
+        output_tokens = None
+    total = None
+    if isinstance(input_tokens, int) and isinstance(output_tokens, int):
+        total = input_tokens + output_tokens
+    elif isinstance(input_tokens, int):
+        total = input_tokens
+    elif isinstance(output_tokens, int):
+        total = output_tokens
+    return enrich_usage_with_pricing(
+        {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total,
+            "provider": "ollama",
+            "model_id": model_id,
+        },
+        provider="ollama",
+        model_id=model_id,
+    )
+
+
 class OllamaChatClient:
     """Minimal InferenceClient-compatible wrapper around Ollama /api/chat."""
 
@@ -140,6 +177,7 @@ class OllamaChatClient:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self._timeout = httpx.Timeout(300.0, connect=10.0)
+        self.last_usage: dict[str, Any] = {}
 
     def chat_completion(
         self,
@@ -151,8 +189,9 @@ class OllamaChatClient:
         stream: bool = False,
         **_kwargs: Any,
     ):
+        used_model = model or self.model
         payload = {
-            "model": model or self.model,
+            "model": used_model,
             "messages": messages,
             "stream": stream,
             "keep_alive": "10m",
@@ -174,12 +213,14 @@ class OllamaChatClient:
                 f"Is Ollama running and is the model pulled? Try: ollama pull {payload['model']}"
             ) from exc
 
+        self.last_usage = usage_from_ollama(data, model_id=used_model)
         content = (data.get("message") or {}).get("content") or ""
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
         )
 
     def _stream(self, payload: dict) -> Generator[Any, None, None]:
+        used_model = payload.get("model") or self.model
         try:
             with httpx.Client(base_url=self.base_url, timeout=self._timeout) as client:
                 with client.stream("POST", "/api/chat", json=payload) as resp:
@@ -200,6 +241,10 @@ class OllamaChatClient:
                                 ]
                             )
                         if data.get("done"):
+                            # Final chunk carries prompt_eval_count / eval_count.
+                            self.last_usage = usage_from_ollama(
+                                data, model_id=used_model
+                            )
                             break
         except httpx.HTTPError as exc:
             raise RuntimeError(

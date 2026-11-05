@@ -200,6 +200,7 @@ def extract_from_chunks(
     batch_size: Optional[int] = None,
     min_confidence: Optional[float] = None,
     completer: Optional[Callable[[List[Dict[str, str]]], str]] = None,
+    user_id: Optional[str] = None,
 ) -> ExtractionResult:
     """Extract entities + relationships from document chunks.
 
@@ -216,6 +217,8 @@ def extract_from_chunks(
         return result
 
     chunk_lookup = {record["chunk_id"]: record for record in records}
+    tracked_client: Optional[Any] = client
+    tracked_provider: Optional[str] = None
 
     if completer is None:
         from app.rag.llm.agent import (
@@ -225,8 +228,10 @@ def extract_from_chunks(
         )
 
         provider = normalize_llm_provider(llm_provider)
+        tracked_provider = provider
         model = settings.GRAPH_EXTRACTION_MODEL or llm_model_for_provider(provider)
-        client = client or get_llm_client(llm_provider=provider)
+        tracked_client = client or get_llm_client(llm_provider=provider)
+        client = tracked_client
 
         def completer(messages: List[Dict[str, str]]) -> str:  # type: ignore[misc]
             return _chat(client, messages, model, max_tokens=2048)
@@ -250,6 +255,29 @@ def extract_from_chunks(
                 min_confidence=min_confidence,
                 default_chunk_id=batch[0]["chunk_id"],
             )
+            if user_id and tracked_client is not None:
+                usage = getattr(tracked_client, "last_usage", None)
+                if isinstance(usage, dict) and usage:
+                    try:
+                        from app.database import get_db_session
+                        from app.services.usage_tracker import record_llm_usage
+
+                        with get_db_session() as usage_db:
+                            record_llm_usage(
+                                usage_db,
+                                user_id=str(user_id),
+                                usage=usage,
+                                usage_type="graph_extraction",
+                                provider=usage.get("provider") or tracked_provider,
+                                model_id=usage.get("model_id"),
+                                document_id=str(document_id),
+                                commit=True,
+                            )
+                    except Exception:
+                        logger.exception(
+                            "Failed to record graph extraction usage for %s",
+                            document_id,
+                        )
         except Exception as exc:  # malformed output, timeout, provider error
             result.failed_batches += 1
             last_error = str(exc)[:300]

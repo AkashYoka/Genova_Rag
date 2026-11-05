@@ -16,6 +16,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Generator, List, Optional
 
+from app.pricing import estimate_cost_usd, lookup_pricing
+
 logger = logging.getLogger(__name__)
 
 # Prevent accidental DEBUG dumps of Authorization headers from AWS SDK.
@@ -24,14 +26,13 @@ for _noisy in ("botocore", "boto3", "urllib3"):
 
 DEFAULT_NOVA_2_LITE_PROFILE = "us.amazon.nova-2-lite-v1:0"
 
-# Published on-demand list prices (USD per 1M tokens) for us.amazon.nova-2-lite-v1:0.
-# Used only for estimated cost in the UI; not a billing guarantee.
-NOVA_2_LITE_INPUT_USD_PER_1M = 0.33
-NOVA_2_LITE_OUTPUT_USD_PER_1M = 2.75
-
 BEDROCK_TOKEN_ENV = "AWS_BEARER_TOKEN_BEDROCK"
 
-PRICING_NOTE = (
+# Back-compat aliases — rates live in app.pricing registry.
+_nova_rates = lookup_pricing("bedrock", DEFAULT_NOVA_2_LITE_PROFILE) or {}
+NOVA_2_LITE_INPUT_USD_PER_1M = float(_nova_rates.get("input_usd_per_1m") or 0.33)
+NOVA_2_LITE_OUTPUT_USD_PER_1M = float(_nova_rates.get("output_usd_per_1m") or 2.75)
+PRICING_NOTE = _nova_rates.get("pricing_note") or (
     f"Estimated cost using US on-demand list rates "
     f"${NOVA_2_LITE_INPUT_USD_PER_1M}/1M input + "
     f"${NOVA_2_LITE_OUTPUT_USD_PER_1M}/1M output for {DEFAULT_NOVA_2_LITE_PROFILE}. "
@@ -63,29 +64,47 @@ class BedrockProviderError(RuntimeError):
 def estimate_nova2_lite_cost_usd(
     input_tokens: int | None, output_tokens: int | None
 ) -> float | None:
-    if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
-        return None
-    return (
-        input_tokens / 1_000_000 * NOVA_2_LITE_INPUT_USD_PER_1M
-        + output_tokens / 1_000_000 * NOVA_2_LITE_OUTPUT_USD_PER_1M
+    """Back-compat helper; prefer the shared pricing registry."""
+    result = estimate_cost_usd(
+        provider="bedrock",
+        model_id=DEFAULT_NOVA_2_LITE_PROFILE,
+        input_tokens=input_tokens if isinstance(input_tokens, int) else None,
+        output_tokens=output_tokens if isinstance(output_tokens, int) else None,
     )
+    return result.get("estimated_cost_usd")
 
 
-def usage_from_bedrock(usage: dict | None) -> dict[str, Any]:
+def usage_from_bedrock(
+    usage: dict | None, *, model_id: str | None = None
+) -> dict[str, Any]:
     usage = usage or {}
     input_tokens = usage.get("inputTokens", usage.get("input_tokens"))
     output_tokens = usage.get("outputTokens", usage.get("output_tokens"))
+    cache_read = usage.get("cacheReadInputTokens", usage.get("cache_read_tokens"))
+    cache_write = usage.get("cacheWriteInputTokens", usage.get("cache_write_tokens"))
     total = usage.get("totalTokens", usage.get("total_tokens"))
+    mid = model_id or DEFAULT_NOVA_2_LITE_PROFILE
     if total is None and isinstance(input_tokens, int) and isinstance(output_tokens, int):
-        total = input_tokens + output_tokens
+        extra = cache_read if isinstance(cache_read, int) else 0
+        total = input_tokens + output_tokens + extra
+    estimate = estimate_cost_usd(
+        provider="bedrock",
+        model_id=mid,
+        input_tokens=input_tokens if isinstance(input_tokens, int) else None,
+        output_tokens=output_tokens if isinstance(output_tokens, int) else None,
+        cache_read_tokens=cache_read if isinstance(cache_read, int) else None,
+        cache_write_tokens=cache_write if isinstance(cache_write, int) else None,
+    )
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read,
+        "cache_write_tokens": cache_write,
         "total_tokens": total,
-        "estimated_cost_usd": estimate_nova2_lite_cost_usd(input_tokens, output_tokens),
-        "pricing_note": PRICING_NOTE,
-        "cost_type": "estimated",
-        "model_id": DEFAULT_NOVA_2_LITE_PROFILE,
+        "estimated_cost_usd": estimate.get("estimated_cost_usd"),
+        "pricing_note": estimate.get("pricing_note") or PRICING_NOTE,
+        "cost_type": estimate.get("cost_type") or "estimated",
+        "model_id": mid,
         "provider": "bedrock",
     }
 
@@ -173,8 +192,10 @@ class BedrockNovaChatClient:
         except Exception as exc:
             raise self._map_error(exc) from exc
 
-        self.last_usage = usage_from_bedrock(response.get("usage"))
-        self.last_usage["model_id"] = model or self.model_id
+        used_model = model or self.model_id
+        self.last_usage = usage_from_bedrock(
+            response.get("usage"), model_id=used_model
+        )
         content = _text_from_converse(response)
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=content))]

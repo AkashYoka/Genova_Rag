@@ -602,5 +602,174 @@ class WorkspaceMemberRoleUpdate(BaseModel):
     role: WorkspaceRole
 
 
+# ── AI Usage ──────────────────────────────────────────
+
+class UsagePeriodTotals(BaseModel):
+    request_count: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+class UsageProviderBreakdown(BaseModel):
+    provider: str
+    request_count: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+class UsageModelBreakdown(BaseModel):
+    provider: str
+    model_id: Optional[str] = None
+    request_count: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+class UsageTypeBreakdown(BaseModel):
+    usage_type: str
+    request_count: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+class UsageUserBreakdown(BaseModel):
+    user_id: str
+    request_count: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+class UsageSummaryResponse(BaseModel):
+    start: str
+    end: str
+    request_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    today: UsagePeriodTotals
+    month_to_date: UsagePeriodTotals
+    by_provider: List[UsageProviderBreakdown] = []
+    by_model: List[UsageModelBreakdown] = []
+    by_usage_type: List[UsageTypeBreakdown] = []
+    by_user: List[UsageUserBreakdown] = []
+    cost_disclaimer: str
+
+
+class UsageDailyPoint(BaseModel):
+    date: str
+    request_count: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class UsageDailyResponse(BaseModel):
+    start: str
+    end: str
+    points: List[UsageDailyPoint] = []
+
+
+class UsageEventResponse(BaseModel):
+    id: str
+    created_at: str
+    provider: str
+    model_id: Optional[str] = None
+    usage_type: str
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    estimated_cost_usd: Optional[float] = None
+    cost_type: str
+    pricing_note: Optional[str] = None
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    message_id: Optional[str] = None
+    document_id: Optional[str] = None
+
+
+class UsageEventsResponse(BaseModel):
+    total: int
+    page: int
+    limit: int
+    pages: int
+    items: List[UsageEventResponse] = []
+
+
+class AdminDocumentItem(BaseModel):
+    id: str
+    user_id: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
+    original_name: str
+    status: str
+    page_count: Optional[int] = None
+    chunk_count: Optional[int] = None
+    error_message: Optional[str] = None
+    processing_stage: Optional[str] = None
+    retry_count: Optional[int] = None
+    uploaded_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class AdminDocumentsResponse(BaseModel):
+    total: int
+    status_counts: dict = {}
+    items: List[AdminDocumentItem] = []
+
+
+class AdminDriveConnectionItem(BaseModel):
+    id: str
+    user_id: str
+    username: Optional[str] = None
+    email: Optional[str] = None
+    folder_id: str
+    folder_name: Optional[str] = None
+    access_mode: Optional[str] = None
+    enabled: bool = True
+    sync_status: str
+    last_error: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class AdminDriveConnectionsResponse(BaseModel):
+    total: int
+    items: List[AdminDriveConnectionItem] = []
+
+
+class AdminWorkspaceItem(BaseModel):
+    id: str
+    name: str
+    created_by: str
+    creator_username: Optional[str] = None
+    member_count: int = 0
+    created_at: Optional[datetime] = None
+
+
+class AdminWorkspacesResponse(BaseModel):
+    total: int
+    items: List[AdminWorkspaceItem] = []
+
+
+class AdminApiKeyUserSummary(BaseModel):
+    user_id: str
+    username: Optional[str] = None
+    email: Optional[str] = None
+    total_keys: int = 0
+    active_keys: int = 0
+    last_used_at: Optional[datetime] = None
+
+
+class AdminApiKeySummaryResponse(BaseModel):
+    total_keys: int = 0
+    active_keys: int = 0
+    by_user: List[AdminApiKeyUserSummary] = []
+
+
 # Rebuild models for forward references
 TokenResponse.model_rebuild()

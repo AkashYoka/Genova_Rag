@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { isAdminUser } from "@/lib/admin";
 
 interface RequireAuthProps {
   children: React.ReactNode;
@@ -17,6 +18,7 @@ interface RequireAuthProps {
 export function RequireAuth({ children, requireAdmin = false }: RequireAuthProps) {
   const { user, initialized } = useAuth();
   const router = useRouter();
+  const adminOk = !requireAdmin || isAdminUser(user);
 
   useEffect(() => {
     if (!initialized) return;
@@ -24,12 +26,12 @@ export function RequireAuth({ children, requireAdmin = false }: RequireAuthProps
       router.replace("/login");
       return;
     }
-    if (requireAdmin && !user.is_admin) {
+    if (requireAdmin && !isAdminUser(user)) {
       router.replace("/dashboard");
     }
   }, [initialized, user, requireAdmin, router]);
 
-  if (!initialized || !user || (requireAdmin && !user.is_admin)) {
+  if (!initialized || !user || !adminOk) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div

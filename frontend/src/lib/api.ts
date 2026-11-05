@@ -10,7 +10,7 @@ const CONNECTION_ERROR_MESSAGE = "Could not connect to the server. Please try ag
 const CONNECTION_ERROR_BANNER_MESSAGE = `⚠️ ${CONNECTION_ERROR_MESSAGE}`;
 
 const AUTH_MARKER_COOKIE = "genova_auth";
-const PROTECTED_PATH_PREFIXES = ["/dashboard", "/documents", "/admin"];
+const PROTECTED_PATH_PREFIXES = ["/dashboard", "/documents", "/admin", "/settings"];
 
 interface FetchOptions extends RequestInit {
   token?: string;
@@ -21,7 +21,8 @@ interface FetchOptions extends RequestInit {
 function setAuthMarkerCookie(present: boolean): void {
   if (typeof document === "undefined") return;
   if (present) {
-    // Readable by Next.js middleware for soft route gating. Not the JWT itself.
+    // Session marker cookie (not the JWT). Soft client hint only — RequireAuth
+    // and API get_current_user remain authoritative under static export.
     document.cookie = `${AUTH_MARKER_COOKIE}=1; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 7}`;
   } else {
     document.cookie = `${AUTH_MARKER_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0`;
@@ -267,6 +268,34 @@ class ApiClient {
     }
 
     return res.json();
+  }
+
+  /** Download binary/file responses (e.g. admin DB export). */
+  async getBlob(path: string, options?: FetchOptions): Promise<Blob> {
+    const res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
+      method: "GET",
+      headers: this.getHeaders(options?.token),
+      ...options,
+    });
+
+    if (res.status === 401 && !options?._skipRefresh) {
+      const retried = await this.handleAuthFailure(
+        (newToken) =>
+          this.getBlob(path, { ...options, token: newToken, _skipRefresh: true }),
+        options?._skipRefresh,
+      );
+      if (retried !== null) return retried;
+      if (this.getRefreshToken()) {
+        throw new Error(CONNECTION_ERROR_MESSAGE);
+      }
+      throw new Error(await this.getErrorMessage(res, "Unauthorized"));
+    }
+
+    if (!res.ok) {
+      throw new Error(await this.getErrorMessage(res, res.statusText || "Request failed"));
+    }
+
+    return res.blob();
   }
 
   async post<T>(path: string, body?: unknown, options?: FetchOptions): Promise<T> {

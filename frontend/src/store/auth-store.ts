@@ -8,6 +8,8 @@ export interface AuthUser {
   username: string;
   email: string;
   is_admin: boolean;
+  role?: string;
+  is_verified?: boolean;
   created_at: string;
 }
 

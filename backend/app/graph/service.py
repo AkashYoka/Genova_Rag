@@ -231,6 +231,7 @@ def index_document(
                 str(document_id),
                 llm_provider=llm_provider,
                 completer=completer,
+                user_id=str(user_id),
             )
         except Exception as exc:
             logger.warning("Graph extraction failed for %s: %s", document_id, exc)

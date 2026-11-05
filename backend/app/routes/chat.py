@@ -46,6 +46,57 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
+def _infer_usage_type(usage: Optional[dict], quiz=None) -> str:
+    if quiz:
+        return "quiz"
+    if isinstance(usage, dict):
+        explicit = usage.get("usage_type")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip().lower()
+    return "chat"
+
+
+def _record_assistant_usage(
+    db: Session,
+    *,
+    user_id: str,
+    usage: Optional[dict],
+    session_id: Optional[str] = None,
+    message_id=None,
+    document_id: Optional[str] = None,
+    llm_provider: Optional[str] = None,
+    quiz=None,
+) -> None:
+    """Persist a ledger row for an assistant turn (own-user scoped)."""
+    if not usage:
+        return
+    try:
+        from app.pricing import enrich_usage_with_pricing
+        from app.services.usage_tracker import record_llm_usage
+
+        provider = llm_provider
+        if isinstance(usage, dict) and usage.get("provider"):
+            provider = usage.get("provider")
+        enriched = enrich_usage_with_pricing(
+            usage if isinstance(usage, dict) else {},
+            provider=provider,
+        )
+        record_llm_usage(
+            db,
+            user_id=str(user_id),
+            usage=enriched,
+            usage_type=_infer_usage_type(enriched, quiz=quiz),
+            provider=enriched.get("provider") or provider,
+            model_id=enriched.get("model_id"),
+            session_id=session_id,
+            message_id=str(message_id) if message_id else None,
+            document_id=document_id,
+            commit=True,
+        )
+    except Exception:
+        logger.exception("AI usage recording failed for user %s", user_id)
+
+
 def _parse_message_sources_json(
     raw: Optional[str],
 ) -> tuple[list, Optional[dict], Optional[str], Optional[int], Optional[dict], list]:
@@ -171,12 +222,30 @@ def _enriched_sources_payload(
         and not graph
     ):
         return sources
+    enriched_usage = usage
+    if isinstance(usage, dict) and usage:
+        try:
+            from app.pricing import enrich_usage_with_pricing
+
+            enriched_usage = enrich_usage_with_pricing(
+                usage, provider=llm_provider or usage.get("provider")
+            )
+        except Exception:
+            enriched_usage = usage
     payload = {
         "chunks": sources if isinstance(sources, list) else [],
-        "usage": usage,
+        "usage": enriched_usage,
         "llm_provider": llm_provider
-        or ((usage or {}).get("provider") if isinstance(usage, dict) else None),
-        "model_id": (usage or {}).get("model_id") if isinstance(usage, dict) else None,
+        or (
+            (enriched_usage or {}).get("provider")
+            if isinstance(enriched_usage, dict)
+            else None
+        ),
+        "model_id": (
+            (enriched_usage or {}).get("model_id")
+            if isinstance(enriched_usage, dict)
+            else None
+        ),
         "response_time_ms": response_time_ms,
     }
     if quiz:
@@ -438,6 +507,16 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                     full_answer,
                     save_sources,
                     session_id=session_id,
+                )
+                _record_assistant_usage(
+                    db,
+                    user_id=user.id,
+                    usage=last_usage,
+                    session_id=session_id,
+                    message_id=assistant_message_id,
+                    document_id=document_id,
+                    llm_provider=llm_provider,
+                    quiz=quiz_payload,
                 )
 
             # Notify client (include Bedrock usage when present)
@@ -880,7 +959,7 @@ def ask_question(
             sources=user_sources,
             session_id=session_id,
         )
-        _save_message(
+        assistant_message_id = _save_message(
             db,
             user.id,
             msg_doc_id,
@@ -888,6 +967,16 @@ def ask_question(
             result["answer"],
             save_sources,
             session_id=session_id,
+        )
+        _record_assistant_usage(
+            db,
+            user_id=user.id,
+            usage=result.get("usage"),
+            session_id=session_id,
+            message_id=assistant_message_id,
+            document_id=msg_doc_id,
+            llm_provider=payload.llm_provider,
+            quiz=quiz_data,
         )
 
         safe_sources = []
@@ -1173,6 +1262,16 @@ def ask_question_stream(
                     full_answer,
                     save_sources,
                     session_id=session_id,
+                )
+                _record_assistant_usage(
+                    save_db,
+                    user_id=user.id,
+                    usage=last_usage,
+                    session_id=session_id,
+                    message_id=assistant_message_id,
+                    document_id=msg_doc_id,
+                    llm_provider=payload.llm_provider,
+                    quiz=quiz_payload,
                 )
 
             # Log streaming response RAG completion
