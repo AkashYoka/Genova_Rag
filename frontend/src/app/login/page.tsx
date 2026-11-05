@@ -24,15 +24,24 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const postLoginPath = useCallback(() => {
+    if (typeof window === "undefined") return "/dashboard";
+    const next = new URLSearchParams(window.location.search).get("next");
+    if (next && next.startsWith("/") && !next.startsWith("//")) {
+      return next;
+    }
+    return "/dashboard";
+  }, []);
+
   useEffect(() => {
     if (initialized && user) {
-      router.replace("/dashboard");
+      router.replace(postLoginPath());
     }
-  }, [user, initialized, router]);
+  }, [user, initialized, router, postLoginPath]);
 
   const handleGoogleSuccess = useCallback(() => {
-    router.replace("/dashboard");
-  }, [router]);
+    router.replace(postLoginPath());
+  }, [router, postLoginPath]);
 
   if (!initialized || user) {
     return (
@@ -49,7 +58,7 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      router.replace("/dashboard");
+      router.replace(postLoginPath());
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : t("login.fallbackError");

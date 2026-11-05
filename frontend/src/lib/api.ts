@@ -9,10 +9,23 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:7860";
 const CONNECTION_ERROR_MESSAGE = "Could not connect to the server. Please try again later.";
 const CONNECTION_ERROR_BANNER_MESSAGE = `⚠️ ${CONNECTION_ERROR_MESSAGE}`;
 
+const AUTH_MARKER_COOKIE = "genova_auth";
+const PROTECTED_PATH_PREFIXES = ["/dashboard", "/documents", "/admin"];
+
 interface FetchOptions extends RequestInit {
   token?: string;
   /** Skip auto-refresh for this request (used internally for the refresh call itself) */
   _skipRefresh?: boolean;
+}
+
+function setAuthMarkerCookie(present: boolean): void {
+  if (typeof document === "undefined") return;
+  if (present) {
+    // Readable by Next.js middleware for soft route gating. Not the JWT itself.
+    document.cookie = `${AUTH_MARKER_COOKIE}=1; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 7}`;
+  } else {
+    document.cookie = `${AUTH_MARKER_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0`;
+  }
 }
 
 class ApiClient {
@@ -32,6 +45,11 @@ class ApiClient {
   private getRefreshToken(): string | null {
     if (typeof window === "undefined") return null;
     return localStorage.getItem("refresh_token");
+  }
+
+  /** Public accessor for components that need a fresh access token (PDF, WS). */
+  getAccessToken(): string | null {
+    return this.getToken();
   }
 
   private getHeaders(token?: string): HeadersInit {
@@ -68,6 +86,9 @@ class ApiClient {
    * Attempt to refresh the access token using the stored refresh token.
    * Uses a mutex so only one refresh happens at a time — concurrent
    * 401s all wait on the same promise.
+   *
+   * Network failures do NOT clear tokens (avoids unexpected logout).
+   * Only definitive auth failures (401/403 from refresh) clear the session.
    */
   private async tryRefreshToken(): Promise<string | null> {
     // If a refresh is already in-flight, wait for it
@@ -87,19 +108,20 @@ class ApiClient {
         });
 
         if (!res.ok) {
-          // Refresh token is also expired/invalid — force logout
-          this.clearTokens();
+          // Only force logout when the refresh token is genuinely invalid
+          if (res.status === 401 || res.status === 403) {
+            this.clearTokens();
+          }
           return null;
         }
 
         const data = await res.json();
-        // Store the new tokens
         localStorage.setItem("token", data.access_token);
         if (data.refresh_token) {
           localStorage.setItem("refresh_token", data.refresh_token);
         }
+        setAuthMarkerCookie(true);
 
-        // Dispatch a custom event so AuthProvider can update its state
         window.dispatchEvent(
           new CustomEvent("auth:tokens-refreshed", {
             detail: { accessToken: data.access_token, refreshToken: data.refresh_token, user: data.user },
@@ -108,7 +130,7 @@ class ApiClient {
 
         return data.access_token as string;
       } catch {
-        this.clearTokens();
+        // Network / transient failure — keep existing tokens so the user is not logged out
         return null;
       } finally {
         this.refreshPromise = null;
@@ -118,11 +140,17 @@ class ApiClient {
     return this.refreshPromise;
   }
 
+  private isProtectedPath(pathname: string): boolean {
+    return PROTECTED_PATH_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+    );
+  }
+
   private handleUnauthorized(): void {
     this.clearTokens();
     if (typeof window === "undefined") return;
-    
-    if (window.location.pathname.startsWith("/dashboard")) {
+
+    if (this.isProtectedPath(window.location.pathname)) {
       window.location.href = "/login";
     }
   }
@@ -130,8 +158,21 @@ class ApiClient {
   private clearTokens(): void {
     localStorage.removeItem("token");
     localStorage.removeItem("refresh_token");
-    // Notify AuthProvider to update state
+    localStorage.removeItem("auth_user");
+    setAuthMarkerCookie(false);
+    // Notify AuthProvider (same tab) and other tabs via storage event on token keys
     window.dispatchEvent(new CustomEvent("auth:logged-out"));
+  }
+
+  /** Persist session tokens after login/register flows outside this client. */
+  persistSession(accessToken: string, refreshToken: string): void {
+    localStorage.setItem("token", accessToken);
+    localStorage.setItem("refresh_token", refreshToken);
+    setAuthMarkerCookie(true);
+  }
+
+  clearSession(): void {
+    this.clearTokens();
   }
 
   private getPayloadMessage(payload: unknown): string | null {
@@ -172,6 +213,28 @@ class ApiClient {
     return this.getPayloadMessage(payload) || fallback;
   }
 
+  /**
+   * On 401: try refresh once. Logout only when the session is definitively gone
+   * (no refresh token, or refresh returned 401/403 and cleared tokens).
+   */
+  private async handleAuthFailure<T>(
+    retry: (newToken: string) => Promise<T>,
+    skipRefresh?: boolean,
+  ): Promise<T | null> {
+    if (skipRefresh) return null;
+
+    const newToken = await this.tryRefreshToken();
+    if (newToken) {
+      return retry(newToken);
+    }
+
+    // Definitive auth loss: tokens cleared by refresh, or never had a refresh token
+    if (!this.getRefreshToken()) {
+      this.handleUnauthorized();
+    }
+    return null;
+  }
+
   async get<T>(path: string, options?: FetchOptions): Promise<T> {
     const res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
       method: "GET",
@@ -179,13 +242,17 @@ class ApiClient {
       ...options,
     });
 
-    // Auto-refresh on 401
     if (res.status === 401 && !options?._skipRefresh) {
-      const newToken = await this.tryRefreshToken();
-      if (newToken) {
-        return this.get<T>(path, { ...options, token: newToken, _skipRefresh: true });
+      const retried = await this.handleAuthFailure(
+        (newToken) => this.get<T>(path, { ...options, token: newToken, _skipRefresh: true }),
+        options?._skipRefresh,
+      );
+      if (retried !== null) return retried;
+      // Tokens still present ⇒ refresh failed transiently (network) — do not treat as logout
+      if (this.getRefreshToken()) {
+        throw new Error(CONNECTION_ERROR_MESSAGE);
       }
-      this.handleUnauthorized();
+      throw new Error(await this.getErrorMessage(res, "Unauthorized"));
     }
 
     if (!res.ok) {
@@ -203,13 +270,13 @@ class ApiClient {
       ...options,
     });
 
-    // Auto-refresh on 401
     if (res.status === 401 && !options?._skipRefresh) {
-      const newToken = await this.tryRefreshToken();
-      if (newToken) {
-        return this.post<T>(path, body, { ...options, token: newToken, _skipRefresh: true });
-      }
-      this.handleUnauthorized();
+      const retried = await this.handleAuthFailure(
+        (newToken) => this.post<T>(path, body, { ...options, token: newToken, _skipRefresh: true }),
+        options?._skipRefresh,
+      );
+      if (retried !== null) return retried;
+      throw new Error(await this.getErrorMessage(res, "Unauthorized"));
     }
 
     if (!res.ok) {
@@ -227,13 +294,13 @@ class ApiClient {
       ...options,
     });
 
-    // Auto-refresh on 401
     if (res.status === 401 && !options?._skipRefresh) {
-      const newToken = await this.tryRefreshToken();
-      if (newToken) {
-        return this.put<T>(path, body, { ...options, token: newToken, _skipRefresh: true });
-      }
-      this.handleUnauthorized();
+      const retried = await this.handleAuthFailure(
+        (newToken) => this.put<T>(path, body, { ...options, token: newToken, _skipRefresh: true }),
+        options?._skipRefresh,
+      );
+      if (retried !== null) return retried;
+      throw new Error(await this.getErrorMessage(res, "Unauthorized"));
     }
 
     if (!res.ok) {
@@ -251,13 +318,13 @@ class ApiClient {
       ...options,
     });
 
-    // Auto-refresh on 401
     if (res.status === 401 && !options?._skipRefresh) {
-      const newToken = await this.tryRefreshToken();
-      if (newToken) {
-        return this.patch<T>(path, body, { ...options, token: newToken, _skipRefresh: true });
-      }
-      this.handleUnauthorized();
+      const retried = await this.handleAuthFailure(
+        (newToken) => this.patch<T>(path, body, { ...options, token: newToken, _skipRefresh: true }),
+        options?._skipRefresh,
+      );
+      if (retried !== null) return retried;
+      throw new Error(await this.getErrorMessage(res, "Unauthorized"));
     }
 
     if (!res.ok) {
@@ -277,7 +344,6 @@ class ApiClient {
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
-    // Don't set Content-Type — browser sets multipart boundary automatically
 
     const res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
       method: "POST",
@@ -286,13 +352,13 @@ class ApiClient {
       ...options,
     });
 
-    // Auto-refresh on 401
     if (res.status === 401 && !options?._skipRefresh) {
-      const newToken = await this.tryRefreshToken();
-      if (newToken) {
-        return this.postForm<T>(path, formData, { ...options, token: newToken, _skipRefresh: true });
-      }
-      this.handleUnauthorized();
+      const retried = await this.handleAuthFailure(
+        (newToken) => this.postForm<T>(path, formData, { ...options, token: newToken, _skipRefresh: true }),
+        options?._skipRefresh,
+      );
+      if (retried !== null) return retried;
+      throw new Error(await this.getErrorMessage(res, "Unauthorized"));
     }
 
     if (!res.ok) {
@@ -310,20 +376,19 @@ class ApiClient {
       headers: this.getHeaders(token),
     });
 
-    // Auto-refresh on 401
     if (res.status === 401 && !_skipRefresh) {
-      const newToken = await this.tryRefreshToken();
-      if (newToken) {
-        return this.delete<T>(path, { ...options, token: newToken, _skipRefresh: true });
-      }
-      this.handleUnauthorized();
+      const retried = await this.handleAuthFailure(
+        (newToken) => this.delete<T>(path, { ...options, token: newToken, _skipRefresh: true }),
+        _skipRefresh,
+      );
+      if (retried !== null) return retried;
+      throw new Error(await this.getErrorMessage(res, "Unauthorized"));
     }
 
     if (!res.ok) {
       throw new Error(await this.getErrorMessage(res, res.statusText || "Delete failed"));
     }
 
-    // 204/205 and empty bodies are valid delete responses — do not call res.json()
     if (res.status === 204 || res.status === 205) {
       return undefined as T;
     }
@@ -346,16 +411,17 @@ class ApiClient {
       signal,
     });
 
-    // Auto-refresh on 401
     if (res.status === 401) {
       const newToken = await this.tryRefreshToken();
       if (newToken) {
-       res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
+        res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
           method: "POST",
           headers: this.getHeaders(newToken),
           body: JSON.stringify(body),
           signal,
         });
+      } else if (!this.getRefreshToken()) {
+        this.handleUnauthorized();
       }
     }
 
@@ -390,11 +456,42 @@ class ApiClient {
     }
   }
 
+  /**
+   * Download a protected resource with Authorization header (avoids JWT in URL).
+   */
+  async downloadAuthenticated(path: string): Promise<{ blob: Blob; filename: string | null }> {
+    let res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
+      method: "GET",
+      headers: this.getHeaders(),
+    });
+
+    if (res.status === 401) {
+      const newToken = await this.tryRefreshToken();
+      if (newToken) {
+        res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
+          method: "GET",
+          headers: this.getHeaders(newToken),
+        });
+      } else if (!this.getRefreshToken()) {
+        this.handleUnauthorized();
+      }
+    }
+
+    if (!res.ok) {
+      throw new Error(await this.getErrorMessage(res, "Download failed"));
+    }
+
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const filename = /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? null;
+    const blob = await res.blob();
+    return { blob, filename };
+  }
+
+  /** @deprecated Prefer Authorization header fetches; kept for legacy callers. */
   getPdfUrl(documentId: string): string {
-    const token = this.getToken();
-    return `${this.baseUrl}/api/v1/documents/${documentId}/pdf?token=${token}`;
+    return `${this.baseUrl}/api/v1/documents/${documentId}/pdf`;
   }
 }
 
 export const api = new ApiClient(API_BASE);
-export { API_BASE, CONNECTION_ERROR_BANNER_MESSAGE, CONNECTION_ERROR_MESSAGE };
+export { API_BASE, CONNECTION_ERROR_BANNER_MESSAGE, CONNECTION_ERROR_MESSAGE, setAuthMarkerCookie };

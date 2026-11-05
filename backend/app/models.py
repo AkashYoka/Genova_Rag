@@ -152,9 +152,10 @@ class User(Base):
 
     created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
     last_login = Column(Timestamp, nullable=True, index=True)
-    hf_token = Column(EncryptedString, nullable=True)
     display_name = Column(String(120), nullable=True)
     avatar_url = Column(String(500), nullable=True)
+    # Bumped on logout / password change to invalidate outstanding JWTs
+    token_version = Column(Integer, default=0, nullable=False, server_default="0")
 
     # Relationships
     documents = relationship(

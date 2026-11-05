@@ -2,7 +2,7 @@
 Ollama HTTP clients for embeddings and chat.
 
 Talks to a local Ollama server (default http://localhost:11434) using httpx —
-same approach as a typical local RAG stack. No HuggingFace token required.
+same approach as a typical local RAG stack.
 """
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 JWT authentication — register, login, and token verification.
 """
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Any
+from typing import Optional, Any, Tuple
 
 import jwt
 import bcrypt
@@ -36,41 +36,78 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 # ── JWT Token ────────────────────────────────────────
 
-def create_access_token(user_id) -> str:
+def _token_version_for(user_id, token_version: Optional[int] = None) -> int:
+    if token_version is not None:
+        return int(token_version)
+    return 0
+
+
+def create_access_token(user_id, token_version: Optional[int] = None) -> str:
     """Create a JWT access token with user_id as the subject."""
     payload = {
         "sub": str(user_id),
         "type": "access",
+        "tv": _token_version_for(user_id, token_version),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_ACCESS_EXPIRY_MINUTES),
         "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id) -> str:
+def create_refresh_token(user_id, token_version: Optional[int] = None) -> str:
     """Create a JWT refresh token with user_id as the subject."""
     payload = {
         "sub": str(user_id),
         "type": "refresh",
+        "tv": _token_version_for(user_id, token_version),
         "exp": datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_EXPIRY_DAYS),
         "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def decode_token(token: str, token_type: str = "access") -> Optional[str]:
-    """Decode JWT and return user_id, or None if invalid."""
+def decode_token_payload(token: str, token_type: str = "access") -> Optional[dict[str, Any]]:
+    """Decode JWT and return the full payload, or None if invalid."""
     if settings.JWT_ALGORITHM not in ALLOWED_JWT_ALGORITHMS:
         raise ValueError(f"JWT algorithm {settings.JWT_ALGORITHM} is not in the allowed whitelist")
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         if payload.get("type") != token_type:
             return None
-        return payload.get("sub")
+        return payload
     except jwt.ExpiredSignatureError:
         return None
     except jwt.InvalidTokenError:
         return None
+
+
+def decode_token(token: str, token_type: str = "access") -> Optional[str]:
+    """Decode JWT and return user_id, or None if invalid."""
+    payload = decode_token_payload(token, token_type=token_type)
+    if not payload:
+        return None
+    return payload.get("sub")
+
+
+def decode_token_with_version(token: str, token_type: str = "access") -> Optional[Tuple[str, int]]:
+    """Decode JWT and return (user_id, token_version), or None if invalid."""
+    payload = decode_token_payload(token, token_type=token_type)
+    if not payload:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    # Missing tv (legacy tokens) treated as version 0
+    return str(user_id), int(payload.get("tv", 0))
+
+
+def bump_token_version(user: User, db: Session) -> User:
+    """Invalidate all outstanding JWTs for this user by bumping token_version."""
+    user.token_version = int(getattr(user, "token_version", 0) or 0) + 1
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def create_invite_token(inviter_id: str, email: str, workspace_name: str) -> str:
@@ -152,22 +189,30 @@ def get_current_user(
         user_id_var.set(user.id)
         return user
 
-    # Otherwise, process as JWT
-    user_id = decode_token(token)
-
-    if not user_id:
+    # Otherwise, process as JWT (with token_version check for revocation)
+    decoded = decode_token_with_version(token)
+    if not decoded:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    user_id, token_tv = decoded
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
+        )
+
+    current_tv = int(getattr(user, "token_version", 0) or 0)
+    if token_tv != current_tv:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     # Store user ID on request state and set context variable

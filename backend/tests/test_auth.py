@@ -166,47 +166,33 @@ def test_refresh_token_success(client, refresh_token):
     assert payload["token_type"] == "bearer"
 
 
-def test_update_hf_token_success(client, auth_headers):
-    response = client.put(
-        "/api/v1/auth/hf-token",
-        json={"hf_token": "hf_new_token_value"},
-        headers=auth_headers,
+def test_logout_invalidates_tokens(client, user):
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": user.email, "password": "password123"},
     )
+    assert login.status_code == 200
+    tokens = login.json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["hf_token"] == "hf_new_token_value"
+    me_ok = client.get("/api/v1/auth/me", headers=headers)
+    assert me_ok.status_code == 200
 
-
-def test_update_hf_token_requires_auth(client):
-    response = client.put(
-        "/api/v1/auth/hf-token",
-        json={"hf_token": "hf_unauth"},
+    logout = client.post(
+        "/api/v1/auth/logout",
+        json={"refresh_token": tokens["refresh_token"]},
+        headers=headers,
     )
+    assert logout.status_code == 200
 
-    assert response.status_code in (401, 403)
+    me_after = client.get("/api/v1/auth/me", headers=headers)
+    assert me_after.status_code == 401
 
-
-def test_hf_token_appears_in_user_response(client, auth_headers, user, db_session):
-    # First update the token
-    put_resp = client.put(
-        "/api/v1/auth/hf-token",
-        json={"hf_token": "hf_persist_token"},
-        headers=auth_headers,
+    refresh = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": tokens["refresh_token"]},
     )
-    assert put_resp.status_code == 200
-
-    # Then verify it shows up in GET /me
-    me_resp = client.get("/api/v1/auth/me", headers=auth_headers)
-    assert me_resp.status_code == 200
-    assert me_resp.json()["hf_token"] == "hf_persist_token"
-
-    # Verify encryption at rest in the database directly
-    from sqlalchemy import text
-    row = db_session.execute(text("SELECT hf_token FROM users WHERE id = :id"), {"id": user.id}).fetchone()
-    stored_token = row[0]
-    assert stored_token is not None
-    assert stored_token != "hf_persist_token"
+    assert refresh.status_code == 401
 
 def test_update_user_info_rejects_duplicate_email(client, auth_headers, other_user):
     response = client.put(

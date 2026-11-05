@@ -81,6 +81,7 @@ class UserUpdateResponse(BaseModel):
 class UpdatePassword(BaseModel):
     password: str
     confirm_password: str
+    current_password: Optional[str] = None
 
     @field_validator("password")
     @classmethod
@@ -129,10 +130,6 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-class HFTokenUpdate(BaseModel):
-    hf_token: str = Field(..., min_length=1, max_length=500)
-
-
 class GoogleDriveAuthUrlResponse(BaseModel):
     auth_url: str
 
@@ -169,7 +166,6 @@ class UserResponse(BaseModel):
     role: UserRole
     is_admin: bool
     is_verified: bool
-    hf_token: Optional[str] = None
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
     created_at: datetime

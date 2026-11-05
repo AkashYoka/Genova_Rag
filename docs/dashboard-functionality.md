@@ -151,7 +151,7 @@ Every endpoint listed in the API Documentation section is protected by `get_curr
 
 | Entity | Storage | Key fields (dashboard-relevant) | Relationships |
 |---|---|---|---|
-| `User` | SQLite `/ MySQL` | `id`, `username`, `email`, `is_admin`, `is_deleted`, `drive_folder_id`, `last_login`, `hf_token` (encrypted) | — owns — `documents`, `chat_messages`, `chat_sessions`, `drive_connections` |
+| `User` | SQLite `/ MySQL` | `id`, `username`, `email`, `is_admin`, `is_deleted`, `drive_folder_id`, `last_login` | — owns — `documents`, `chat_messages`, `chat_sessions`, `drive_connections` |
 | `Document` | SQLite `/ MySQL` | `id`, `user_id`, `original_name`, `filename`, `file_size`, `page_count`, `chunk_count`, `status` | `user_id → User.id`; `one → many chat_messages` |
 | `ChatSession` | SQLite `/ MySQL` | `id`, `title`, `created_at` | `one → many chat_messages` |
 | `ChatMessage` | SQLite `/ MySQL` | `id`, `user_id`, `document_id`, `session_id`, `role`, `content`, `sources_json` | `user_id → User.id`; `document_id → Document.id`; `session_id → ChatSession.id` |
@@ -449,7 +449,7 @@ Each message: `id`, `role`, `content`, `sources: SourceChunk[]`, `attachments`, 
 
 **Request:** No request body.
 
-**Response:** `UserResponse` — `id`, `username`, `email`, `is_admin`, `hf_token` (optional), `created_at`.
+**Response:** `UserResponse` — `id`, `username`, `email`, `is_admin`, `created_at`.
 
 ```json
 {
@@ -457,7 +457,6 @@ Each message: `id`, `role`, `content`, `sources: SourceChunk[]`, `attachments`, 
   "username": "user",
   "email": "user@example.com",
   "is_admin": false,
-  "hf_token": null,
   "created_at": "2026-01-01T00:00:00Z"
 }
 ```
@@ -527,26 +526,6 @@ Each message: `id`, `role`, `content`, `sources: SourceChunk[]`, `attachments`, 
 **Request:** No request body.
 
 **Response:** `{ message: "Successfully logged out" }`.
-
-### API: PUT /api/v1/auth/hf-token
-
-**Method:** PUT
-
-**Endpoint:** `/api/v1/auth/hf-token`
-
-**Frontend caller:** `Header` HF-token dialog / `auth-store.setHfToken()` — `frontend/src/components/layout/Header.tsx`, `frontend/src/store/auth-store.ts`
-
-**Backend handler:** `update_hf_token` — `backend/app/routes/auth.py`
-
-**Purpose:** Save or remove the user's HuggingFace access token (encrypted at rest via `EncryptedString`). Used for gated HF models.
-
-**Authentication:** Required.
-
-**Request body:** `{ "hf_token": "hf_..." }` or `{ "hf_token": "" }` to remove.
-
-**Response:** `UserResponse` (updated user record).
-
-**Error responses:** 401 unauthenticated; 400 validation.
 
 ### API: GET /api/v1/auth/google-drive/status
 
@@ -897,7 +876,7 @@ All endpoints below are mounted under the `/api/v1` prefix in `backend/app/main.
 | `backend/app/rag/llm/ollama_client.py` | `OllamaChatClient.chat_completion` | POST `/api/chat` to Ollama | agent direct path |
 | `backend/app/rag/llm/ollama_client.py` | `OllamaEmbeddings` | LangChain-compatible Ollama embeddings via `/api/embed` | `get_embedding_model` |
 | `backend/app/cache.py` | `get_cached_payload` / `set_cached_response` | Redis/LRU cache of RAG answers | `ask_question_stream` |
-| `backend/app/routes/auth.py` | `read_users_me` / `dev_login` / `refresh_token` / `update_hf_token` / google-drive endpoints | Auth + profile + Drive status | Frontend auth store / DocumentSidebar |
+| `backend/app/routes/auth.py` | `read_users_me` / `dev_login` / `refresh_token` / google-drive endpoints | Auth + profile + Drive status | Frontend auth store / DocumentSidebar |
 | `backend/app/exceptions.py` | `AppException` hierarchy | Typed errors (401/403/404/409/429/502) with `code`/`message`/`details` | Route handlers raise; global handler renders `ErrorResponse` |
 
 
@@ -935,7 +914,6 @@ All endpoints below are mounted under the `/api/v1` prefix in `backend/app/main.
 | `POST /auth/dev-login` | `routes/auth.py` | `dev_login` | auth-store dev bypass |
 | `POST /auth/refresh` | `routes/auth.py` | `refresh_token` | ApiClient auto-refresh on 401 |
 | `POST /auth/logout` | `routes/auth.py` | `logout` | auth-store logout / Header |
-| `PUT /auth/hf-token` | `routes/auth.py` | `update_hf_token` | Header HF dialog / auth-store `setHfToken` |
 | `GET /auth/google-drive/status` | `routes/auth.py` | `google_drive_status` | DocumentSidebar |
 | `POST /auth/google-drive/connect` | `routes/auth.py` | `google_drive_connect` | DocumentSidebar |
 | `DELETE /auth/google-drive/disconnect` | `routes/auth.py` | `google_drive_disconnect` | DocumentSidebar |
@@ -1007,7 +985,6 @@ All endpoints below are mounted under the `/api/v1` prefix in `backend/app/main.
 | Workspace switcher | personal / company | Select → `setWorkspace` |
 | Theme toggle | light/dark/ocean/forest/sunset | Click → `setTheme` |
 | Logout button | Sign out | Click → `logout()` + router replace |
-| HF token dialog | Save/remove HuggingFace token | Input + Save/Remove → `PUT /api/v1/auth/hf-token` |
 
 ### Empty / error / loading states (verified)
 
@@ -1163,7 +1140,7 @@ All elements below are verified in `frontend/src/app/dashboard/page.tsx` and its
 ```
 DashboardPage (page.tsx, client)
 ├── AuthProvider (context) — user, initialized state from localStorage
-├── Header — workspace switcher, theme, logout, HF token dialog
+├── Header — workspace switcher, theme, logout
 ├── genova-desk stage
 │   ├── DocumentSidebar — docs list, upload, trash, drive status
 │   ├── ChatSessionSidebar — sessions
@@ -1181,7 +1158,7 @@ DashboardPage (page.tsx, client)
 |---|---|---|
 | `frontend/src/app/dashboard/page.tsx` | Main dashboard page component; document list state, upload, selection, chat/inspector orchestration | Primary route component; mounts all child UI |
 | `frontend/src/app/dashboard/dashboard.css` | Dashboard visual design tokens and layout | Styles all dashboard regions |
-| `frontend/src/components/layout/Header.tsx` | Top bar: auth user, workspace, theme, logout, HF token | Persistent shell of the dashboard |
+| `frontend/src/components/layout/Header.tsx` | Top bar: auth user, workspace, theme, logout | Persistent shell of the dashboard |
 | `frontend/src/components/document/DocumentSidebar.tsx` | Document library: list, upload, rename, soft-delete, restore, permanent delete, trash, Google Drive status | Left sidebar document management |
 | `frontend/src/components/document/DocumentCard.tsx` | Individual document row with status badge and actions | Row within DocumentSidebar |
 | `frontend/src/components/document/BulkActionBar.tsx` | Bulk delete/restore/permanent-delete controls | Multi-select toolbar in DocumentSidebar |
@@ -1204,7 +1181,7 @@ DashboardPage (page.tsx, client)
 | `frontend/src/lib/api.ts` | `ApiClient`: GET/POST/PUT/DELETE/postForm/streamPost, Bearer token from localStorage, auto 401 refresh, SSE parsing | All dashboard API calls |
 | `frontend/src/lib/auth.tsx` | `AuthProvider` + `useAuth` (Zustand auth store wrapper) | Authentication gate on the page |
 | `frontend/src/lib/dev-auth.ts` | `isDevAuthBypass()` — localhost auto sign-in gate | Controls dev-login path |
-| `frontend/src/store/auth-store.ts` | Zustand auth store: login, dev-login, /me, refresh, logout, hf-token | `user`, `initialized` consumed by page |
+| `frontend/src/store/auth-store.ts` | Zustand auth store: login, dev-login, /me, refresh, logout | `user`, `initialized` consumed by page |
 | `frontend/src/store/chat-store.ts` | Zustand chat store: sessions, messages, history, SSE message types | ChatPanel state |
 | `frontend/src/store/notes-store.ts` | Zustand notes store (persist: localStorage `genova-shared-notes`) | NotesPanel state |
 | `frontend/src/store/workspace-store.ts` | Workspace selector (personal/company) | Header workspace switcher |
@@ -1216,7 +1193,7 @@ DashboardPage (page.tsx, client)
 
 - **Route definition:** Next.js App Router static route `/dashboard` implemented in `frontend/src/app/dashboard/page.tsx` (`"use client"`). Next config `frontend/next.config.ts` sets `output: "export"` (static export).
 - **Page component:** `DashboardPage` in `frontend/src/app/dashboard/page.tsx`. Imported layout/child components:
-  - `Header` (`@/components/layout/Header`) — top strip: workspace switcher, theme toggle, logout, HF token dialog
+  - `Header` (`@/components/layout/Header`) — top strip: workspace switcher, theme toggle, logout
   - `DocumentSidebar` (`@/components/document/DocumentSidebar`) — document library + upload + trash
   - `ChatSessionSidebar` (`@/components/chat/ChatSessionSidebar`) — chat session list
   - `ChatPanel` (`@/components/chat/ChatPanel`) — RAG chat with streaming + sources

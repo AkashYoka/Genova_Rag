@@ -14,7 +14,10 @@ vi.mock("@/lib/api", () => ({
     post: vi.fn(),
     get: vi.fn(),
     put: vi.fn(),
+    getAccessToken: vi.fn(() => localStorage.getItem("token")),
   },
+  CONNECTION_ERROR_MESSAGE: "Could not connect to the server. Please try again later.",
+  setAuthMarkerCookie: vi.fn(),
 }));
 
 vi.mock("@/lib/dev-auth", () => ({
@@ -294,13 +297,16 @@ describe("useAuthStore", () => {
     });
 
     it("calls the logout endpoint", async () => {
+      localStorage.setItem("refresh_token", "refresh-xyz");
       vi.mocked(api.post).mockResolvedValueOnce({});
 
       await act(async () => {
         await useAuthStore.getState().logout();
       });
 
-      expect(api.post).toHaveBeenCalledWith("/api/v1/auth/logout");
+      expect(api.post).toHaveBeenCalledWith("/api/v1/auth/logout", {
+        refresh_token: "refresh-xyz",
+      });
     });
   });
 
@@ -428,43 +434,4 @@ describe("useAuthStore", () => {
     });
   });
 
-  // ── setHfToken ──────────────────────────────────────────────────────────────
-
-  describe("setHfToken", () => {
-    it("updates user in state with the response from api.put", async () => {
-      const updatedUser: AuthUser = { ...mockUser, hf_token: "hf_newtoken123" };
-      useAuthStore.setState({ user: mockUser, token: "access-abc" });
-
-      vi.mocked(api.put).mockResolvedValueOnce(updatedUser);
-
-      await act(async () => {
-        await useAuthStore.getState().setHfToken("hf_newtoken123");
-      });
-
-      expect(useAuthStore.getState().user).toEqual(updatedUser);
-    });
-
-    it("calls api.put with the correct endpoint and payload", async () => {
-      const updatedUser: AuthUser = { ...mockUser, hf_token: "hf_abc" };
-      vi.mocked(api.put).mockResolvedValueOnce(updatedUser);
-
-      await act(async () => {
-        await useAuthStore.getState().setHfToken("hf_abc");
-      });
-
-      expect(api.put).toHaveBeenCalledWith("/api/v1/auth/hf-token", {
-        hf_token: "hf_abc",
-      });
-    });
-
-    it("throws when api.put rejects", async () => {
-      vi.mocked(api.put).mockRejectedValueOnce(new Error("Server error"));
-
-      await expect(
-        act(async () => {
-          await useAuthStore.getState().setHfToken("bad-token");
-        }),
-      ).rejects.toThrow("Server error");
-    });
-  });
 });

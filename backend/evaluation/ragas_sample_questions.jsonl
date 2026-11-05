@@ -38,7 +38,7 @@
 {"id":"q038","question":"What is the purpose of CHUNK_OVERLAP?","reference":"CHUNK_OVERLAP controls how much text overlaps between adjacent chunks to preserve boundary context."}
 {"id":"q039","question":"Which HuggingFace setting controls answer length?","reference":"LLM_MAX_NEW_TOKENS controls the maximum number of generated tokens for answers."}
 {"id":"q040","question":"Which HuggingFace setting controls answer randomness?","reference":"LLM_TEMPERATURE controls sampling randomness during answer generation."}
-{"id":"q041","question":"How are HuggingFace tokens configured?","reference":"HuggingFace tokens are configured per user in the app profile menu instead of server environment variables."}
+{"id":"q041","question":"How is the HuggingFace LLM provider selected?","reference":"Set LLM_PROVIDER to huggingface to use HuggingFace Inference for answer generation."}
 {"id":"q042","question":"Why should DEBUG not be enabled in production?","reference":"DEBUG enables detailed behavior intended for development and should not be enabled in production."}
 {"id":"q043","question":"How are production CORS origins configured?","reference":"Production CORS origins are configured through ALLOWED_ORIGINS."}
 {"id":"q044","question":"What database is used by default for local development?","reference":"The default database URL points to a local SQLite database at ./data/app.db."}

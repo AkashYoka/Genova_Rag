@@ -14,6 +14,7 @@ import {
 
 import { api, CONNECTION_ERROR_MESSAGE } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -105,19 +106,13 @@ function AdminSkeleton() {
   );
 }
 
-export default function AdminPage() {
-  const { user, loading } = useAuth();
+function AdminPageContent() {
+  const { user } = useAuth();
   const router = useRouter();
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-
-  useEffect(() => {
-    if (loading) return;
-    if (!user) router.replace("/login");
-    else if (!user.is_admin) router.replace("/dashboard");
-  }, [loading, router, user]);
 
   const loadStats = useCallback(async () => {
     try {
@@ -152,14 +147,6 @@ export default function AdminPage() {
     const disk = stats.disk_space_usage;
     return `${formatBytes(disk.used_bytes)} used of ${formatBytes(disk.total_bytes)}`;
   }, [stats]);
-
-  if (loading || !user || !user.is_admin) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse-glow w-12 h-12 rounded-full bg-primary/20" />
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -279,5 +266,13 @@ export default function AdminPage() {
         ) : null}
       </main>
     </div>
+  );
+}
+
+export default function AdminPage() {
+  return (
+    <RequireAuth requireAdmin>
+      <AdminPageContent />
+    </RequireAuth>
   );
 }

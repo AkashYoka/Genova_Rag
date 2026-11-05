@@ -57,17 +57,35 @@ APP_PROCESS_RSS_BYTES.set_function(_get_process_rss_bytes)
 
 
 def setup_prometheus_metrics(app: FastAPI) -> Instrumentator:
-    """Expose process and HTTP metrics on ``/metrics`` for Prometheus."""
+    """Expose process and HTTP metrics on ``/metrics`` for Prometheus.
+
+    In production the scrape endpoint is registered but gated by a middleware
+    dependency via ``METRICS_ACCESS_TOKEN`` (or disabled when unset). Local /
+    non-production environments keep ``/metrics`` open for convenience.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
     instrumentator = Instrumentator(
         should_group_status_codes=True,
         should_ignore_untemplated=True,
         excluded_handlers=["/metrics"],
     )
-    instrumentator.instrument(app).expose(
-        app,
-        endpoint="/metrics",
-        include_in_schema=False,
-    )
+    instrumentator.instrument(app)
+
+    # Only expose publicly when not in production, or when a scrape token is set
+    # and checked by the metrics auth middleware in main.py.
+    expose_publicly = settings.ENVIRONMENT != "production"
+    if expose_publicly or getattr(settings, "METRICS_ACCESS_TOKEN", None):
+        instrumentator.expose(
+            app,
+            endpoint="/metrics",
+            include_in_schema=False,
+        )
+    else:
+        # Production without a scrape token: do not mount /metrics at all.
+        pass
+
     app.state.prometheus_instrumentator = instrumentator
     return instrumentator
 

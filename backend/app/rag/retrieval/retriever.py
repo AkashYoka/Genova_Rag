@@ -144,8 +144,7 @@ def _generate_query_variants(query: str) -> List[str]:
         client = get_llm_client()  # OllamaChatClient, model settings.LLM_MODEL
                                   # default "qwen2.5:3b"
       except → log "Query rewrite skipped"; return []
-    Other providers (bedrock, huggingface) use the same provider-aware client;
-    the HuggingFace path needs a user token and otherwise returns [].
+    Other providers (bedrock, huggingface) use the same provider-aware client.
 
     Exact call
     ----------
@@ -162,8 +161,7 @@ def _generate_query_variants(query: str) -> List[str]:
 
     Fallback: no choices / bad parse → fewer or empty variants (original still kept).
     """
-    # The provider-aware client handles Ollama and Bedrock. The HuggingFace
-    # provider needs a user-supplied token, so rewriting is skipped without one.
+    # The provider-aware client handles Ollama, Bedrock, and HuggingFace.
     try:
         from app.rag.llm.agent import get_llm_client
         client = get_llm_client()

@@ -197,21 +197,21 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
     """
     await websocket.accept()
 
-    # Simple DB-backed auth similar to get_current_user
+    # DB-backed auth mirroring get_current_user (incl. token_version)
     from app.database import SessionLocal
-    from app.auth import decode_token
+    from app.auth import decode_token_with_version
     from app.models import ApiKey, User
 
     db = SessionLocal()
     user = None
 
     try:
-        # Try token from query param
+        # Prefer first-message token (keeps JWT out of URL/proxy logs).
+        # Query ?token= remains as a deprecated fallback.
         if token:
             tok = token
             initial_payload = None
         else:
-            # Expect first message to contain token and the payload
             msg = await websocket.receive_json()
             tok = msg.get("token")
             initial_payload = msg
@@ -221,7 +221,6 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             await websocket.close()
             return
 
-        # API key check
         if tok.startswith("pdf_rag_"):
             import hashlib
             hashed = hashlib.sha256(tok.encode("utf-8")).hexdigest()
@@ -232,12 +231,17 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 return
             user = api_key.user
         else:
-            user_id = decode_token(tok)
-            if not user_id:
+            decoded = decode_token_with_version(tok, token_type="access")
+            if not decoded:
                 await websocket.send_json({"type": "error", "data": "Invalid or expired token"})
                 await websocket.close()
                 return
+            user_id, token_tv = decoded
             user = db.query(User).filter(User.id == user_id).first()
+            if user and int(getattr(user, "token_version", 0) or 0) != token_tv:
+                await websocket.send_json({"type": "error", "data": "Invalid or expired token"})
+                await websocket.close()
+                return
 
         if not user:
             await websocket.send_json({"type": "error", "data": "User not found"})
@@ -390,7 +394,6 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 user_id=user.id,
                 document_id=document_id,
                 document_ids=document_ids,
-                hf_token=user.hf_token,
                 chat_history=chat_history,
                 llm_provider=llm_provider,
             ):
@@ -627,7 +630,6 @@ def generate_answer(
     user_id: str,
     document_id: Optional[str] = None,
     document_ids: Optional[List[str]] = None,
-    hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
     llm_provider: Optional[str] = None,
@@ -639,7 +641,6 @@ def generate_answer(
         user_id=user_id,
         document_id=document_id,
         document_ids=document_ids,
-        hf_token=hf_token,
         top_k=top_k,
         chat_history=chat_history,
         llm_provider=llm_provider,
@@ -651,7 +652,6 @@ def generate_answer_stream(
     user_id: str,
     document_id: Optional[str] = None,
     document_ids: Optional[List[str]] = None,
-    hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
     llm_provider: Optional[str] = None,
@@ -663,7 +663,6 @@ def generate_answer_stream(
         user_id=user_id,
         document_id=document_id,
         document_ids=document_ids,
-        hf_token=hf_token,
         top_k=top_k,
         chat_history=chat_history,
         llm_provider=llm_provider,
@@ -820,7 +819,6 @@ def ask_question(
             user_id=user.id,
             document_id=payload.document_id,
             document_ids=payload.document_ids,
-            hf_token=user.hf_token,
             top_k=payload.top_k,
             chat_history=chat_history,
             llm_provider=payload.llm_provider,
@@ -1113,7 +1111,6 @@ def ask_question_stream(
                 user_id=user.id,
                 document_id=None if payload.document_ids else payload.document_id,
                 document_ids=payload.document_ids,
-                hf_token=user.hf_token,
                 top_k=payload.top_k,
                 chat_history=chat_history,
                 llm_provider=payload.llm_provider,
@@ -1232,19 +1229,6 @@ def get_chat_history(
     return ChatHistoryResponse(messages=formatted, document_id=document_id)
 
 
-def _resolve_export_user(token: Optional[str], db: Session) -> User:
-    """Resolve the user for browser download links that pass ?token=."""
-    from app.auth import decode_token as _decode
-
-    if token:
-        user_id = _decode(token)
-        if user_id:
-            resolved = db.query(User).filter(User.id == user_id).first()
-            if resolved:
-                return resolved
-    raise UnauthorizedException("Authentication required")
-
-
 def _export_response(title: str, messages, format: str) -> Response:
     """Build a downloadable chat export Response for md/txt/pdf."""
     from types import SimpleNamespace
@@ -1288,23 +1272,21 @@ def _export_response(title: str, messages, format: str) -> Response:
     summary="Export session chat history",
     description=(
         "Downloads one chat session as Markdown, plain text, or PDF. "
-        "The browser download flow authenticates with a query token."
+        "Prefer Authorization: Bearer. Query ?token= is deprecated."
     ),
 )
 def export_session_chat_history(
     session_id: str,
     format: str = "md",
-    token: Optional[str] = None,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Export chat history for a session as a downloadable file."""
-    resolved_user = _resolve_export_user(token, db)
-
     session = (
         db.query(ChatSession)
         .filter(
             ChatSession.id == session_id,
-            ChatSession.user_id == resolved_user.id,
+            ChatSession.user_id == user.id,
         )
         .first()
     )
@@ -1314,7 +1296,7 @@ def export_session_chat_history(
     messages = (
         db.query(ChatMessage)
         .filter(
-            ChatMessage.user_id == resolved_user.id,
+            ChatMessage.user_id == user.id,
             ChatMessage.session_id == session_id,
         )
         .order_by(ChatMessage.created_at.asc())
@@ -1329,22 +1311,19 @@ def export_session_chat_history(
     summary="Export document chat history",
     description=(
         "Downloads one document's chat history as Markdown, plain text, or PDF. "
-        "The browser download flow authenticates with a query token."
+        "Prefer Authorization: Bearer. Query ?token= is deprecated."
     ),
 )
 def export_chat_history(
     document_id: str,
     format: str = "md",
-    token: Optional[str] = None,
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Export the chat history for a document as a downloadable file."""
-    resolved_user = _resolve_export_user(token, db)
-
-    # Verify document exists and belongs to user
     doc = db.query(Document).filter(
         Document.id == document_id,
-        Document.user_id == resolved_user.id,
+        Document.user_id == user.id,
         Document.is_deleted.is_(False),
     ).first()
 
@@ -1354,7 +1333,7 @@ def export_chat_history(
     messages = (
         db.query(ChatMessage)
         .filter(
-            ChatMessage.user_id == resolved_user.id,
+            ChatMessage.user_id == user.id,
             ChatMessage.document_id == document_id,
         )
         .order_by(ChatMessage.created_at.asc())

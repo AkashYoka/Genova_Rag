@@ -507,9 +507,9 @@ export default function ChatPanel({
     };
 
     try {
-      // Try WebSocket first for real-time agentic thought streaming
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      // Try WebSocket first for real-time agentic thought streaming.
+      // Send JWT in the first message (not the URL) to avoid leaking tokens in logs/Referer.
+      const token = api.getAccessToken();
       const base = API_BASE || window.location.origin;
       const wsScheme = base.startsWith("https")
         ? "wss"
@@ -517,7 +517,7 @@ export default function ChatPanel({
           ? "ws"
           : "wss";
       const host = base.replace(/^https?:/, "");
-      const wsUrl = `${wsScheme}:${host}/api/v1/chat/ws${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+      const wsUrl = `${wsScheme}:${host}/api/v1/chat/ws`;
 
       const ws = new WebSocket(wsUrl);
 
@@ -539,6 +539,7 @@ export default function ChatPanel({
           // Attachments → restrict retrieval to those document_ids only.
           ws.send(
             JSON.stringify({
+              token,
               question,
               document_id: null,
               document_ids: documentIds,
@@ -812,57 +813,38 @@ export default function ChatPanel({
 
   const handleExport = async (format: "md" | "txt" | "pdf") => {
     setExportMenuOpen(false);
-    const token = localStorage.getItem("token");
+    const token = api.getAccessToken();
     if (!token || token === "cookie") {
       toast.error("Sign in required to export chat");
       return;
     }
 
     // Chat is session-scoped; document export is only a fallback.
-    const base = API_BASE || window.location.origin;
-    let url: string;
+    // Use Authorization header via api.downloadAuthenticated — never put JWT in the URL.
+    let path: string;
     if (activeSessionId) {
-      url = `${base}/api/v1/chat/export/session/${activeSessionId}?format=${encodeURIComponent(format)}&token=${encodeURIComponent(token)}`;
+      path = `/api/v1/chat/export/session/${activeSessionId}?format=${encodeURIComponent(format)}`;
     } else if (activeDoc) {
-      url = `${base}/api/v1/chat/export/${activeDoc.id}?format=${encodeURIComponent(format)}&token=${encodeURIComponent(token)}`;
+      path = `/api/v1/chat/export/${activeDoc.id}?format=${encodeURIComponent(format)}`;
     } else {
       toast.error("Select a chat session to export");
       return;
     }
 
     try {
-      // Fetch first so an auth/API error shows a toast instead of navigating
-      // the dashboard away to a JSON error page.
-      const response = await fetch(url, { credentials: "include" });
-      if (!response.ok) {
-        let message = "Could not export chat";
-        try {
-          const payload = await response.json();
-          message = payload?.error?.message ?? payload?.detail ?? message;
-        } catch {
-          // Response was not JSON; keep the generic message.
-        }
-        toast.error(message);
-        return;
-      }
-
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition") ?? "";
-      const filename =
-        /filename="?([^";]+)"?/.exec(disposition)?.[1] ??
-        `chat_history.${format}`;
+      const { blob, filename } = await api.downloadAuthenticated(path);
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = objectUrl;
-      a.download = filename;
+      a.download = filename ?? `chat_history.${format}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      // Give the browser a moment to start the download before revoking.
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
       toast.success("Chat exported");
-    } catch {
-      toast.error("Could not export chat");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not export chat";
+      toast.error(message);
     }
   };
 

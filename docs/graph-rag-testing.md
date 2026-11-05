@@ -97,7 +97,7 @@ Frontend:
 
 ## 5. Known failures
 
-None. The two tests that previously failed on `HEAD` — `tests/test_chat.py::test_agent_dynamic_token` (per-request HuggingFace token) and `tests/test_batch_upload.py::test_batch_upload_document_persisted_in_db` (eager-mode ingestion) — now pass; the suite is green apart from unrelated pre-existing lint findings.
+None. The suite is green apart from unrelated pre-existing lint findings.
 
 ## 6. Not covered by automated tests
 

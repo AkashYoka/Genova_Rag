@@ -347,7 +347,7 @@ Genova_Rag/
 - Embeddings: `nomic-embed-text` (768-d)
 - Chroma persist dir: `./data/chroma_db_ollama_nomic` (separate from any MiniLM 384-d index)
 
-A `.env` file is **not required**. HuggingFace tokens are optional and set per user in the app.
+A `.env` file is **not required**.
 
 ---
 
@@ -416,8 +416,7 @@ $env:NEXT_PUBLIC_API_URL = "http://localhost:7860"
 
 ### 3. Optional: HuggingFace Inference instead of Ollama
 
-Set the provider below, then add your HuggingFace token in the app's profile menu.
-The token is stored per user; no server-side token variable is used.
+Set the provider below. HuggingFace credentials are resolved from the standard HF environment / cached login (not stored in the app).
 
 ```powershell
 $env:LLM_PROVIDER = "huggingface"

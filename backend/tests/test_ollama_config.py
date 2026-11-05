@@ -41,22 +41,6 @@ def test_ollama_settings_defaults_without_env(monkeypatch):
         get_settings.cache_clear()
 
 
-def test_huggingface_provider_requires_user_token(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "huggingface")
-    get_settings.cache_clear()
-    try:
-        from app.rag.llm import agent as agent_mod
-
-        # Reload settings on the module
-        agent_mod.settings = Settings()
-        with pytest.raises(ValueError, match="Hugging Face API token"):
-            agent_mod.get_llm_client()
-    finally:
-        get_settings.cache_clear()
-        from app.rag.llm import agent as agent_mod
-        agent_mod.settings = get_settings()
-
-
 def test_check_ollama_reachable_error_message():
     with patch("app.rag.llm.ollama_client.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
@@ -171,7 +155,7 @@ def test_ollama_direct_rag_uses_retrieve_and_sources(monkeypatch):
             )
 
     monkeypatch.setattr(agent_mod, "retrieve", lambda **kwargs: fake_chunks)
-    monkeypatch.setattr(agent_mod, "get_llm_client", lambda hf_token=None, llm_provider=None: FakeClient())
+    monkeypatch.setattr(agent_mod, "get_llm_client", lambda llm_provider=None: FakeClient())
     monkeypatch.setattr(agent_mod, "get_agent_executor", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ReAct should not run")))
 
     result = agent_mod.generate_answer("What is the capital of Averia?", "user1", "doc1")

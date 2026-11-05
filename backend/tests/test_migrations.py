@@ -119,14 +119,6 @@ def _setup_all_minimal_tables(engine):
 
 # ── users migrations ──────────────────────────────────────────────────────────
 
-def test_migrate_adds_hf_token_to_users():
-    engine = _make_engine()
-    _setup_all_minimal_tables(engine)
-    assert "hf_token" not in _columns(engine, "users")
-    _run_migrate(engine)
-    assert "hf_token" in _columns(engine, "users")
-
-
 def test_migrate_adds_role_to_users():
     engine = _make_engine()
     _setup_all_minimal_tables(engine)
@@ -402,7 +394,6 @@ def test_migrate_on_fully_migrated_schema_is_safe():
     # Second pass should run safely as a complete no-op
     _run_migrate(engine)
     # Verify nothing was lost
-    assert "hf_token" in _columns(engine, "users")
     assert "extracted_urls" in _columns(engine, "documents")
     assert "is_active" in _columns(engine, "api_keys")
     assert "feedback" in _columns(engine, "chat_messages")

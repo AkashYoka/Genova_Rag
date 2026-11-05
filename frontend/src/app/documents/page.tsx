@@ -33,6 +33,7 @@ import {
   CONNECTION_ERROR_BANNER_MESSAGE,
   CONNECTION_ERROR_MESSAGE,
 } from "@/lib/api";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import Header from "@/components/layout/Header";
 import DocumentSettings from "@/components/document/DocumentSettings";
 import BulkActionBar from "@/components/document/BulkActionBar";
@@ -67,8 +68,8 @@ function formatDate(dateStr: string): string {
   }
 }
 
-export default function DocumentLibraryPage() {
-  const { user, initialized } = useAuth();
+function DocumentLibraryPageContent() {
+  const { user } = useAuth();
   const router = useRouter();
   const [, startTransition] = useTransition();
 
@@ -107,13 +108,6 @@ export default function DocumentLibraryPage() {
   // ── Status tracker ref ─────────────────────────────────────────────────────
   const prevDocsRef = useRef<Record<string, string>>({});
 
-  // ── Auth guard ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (initialized && !user) {
-      router.replace("/login");
-    }
-  }, [user, initialized, router]);
-
   // ── Fetch active documents ────────────────────────────────────────────────
   const loadDocuments = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -139,10 +133,9 @@ export default function DocumentLibraryPage() {
         const message =
           err instanceof Error ? err.message : CONNECTION_ERROR_MESSAGE;
         if (
-          
-          (message.includes("Invalid or expired token") ||
-            message.includes("Unauthorized") ||
-            message.includes("User not found"))
+          message.includes("Invalid or expired token") ||
+          message.includes("Unauthorized") ||
+          message.includes("User not found")
         ) {
           router.replace("/login");
           return;
@@ -588,18 +581,6 @@ export default function DocumentLibraryPage() {
       router.push(`/dashboard?docId=${encodeURIComponent(doc.id)}`);
     });
   };
-
-  // ── Loading state ─────────────────────────────────────────────────────────
-  if (!initialized) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div
-          className="h-8 w-8 animate-pulse rounded-full bg-muted"
-          aria-label="Loading application"
-        />
-      </div>
-    );
-  }
 
   const isLoading = activeTab === "active" ? documentsLoading : trashLoading;
   const readyCount = documents.filter((d) => d.status === "ready").length;
@@ -1290,5 +1271,13 @@ export default function DocumentLibraryPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function DocumentLibraryPage() {
+  return (
+    <RequireAuth>
+      <DocumentLibraryPageContent />
+    </RequireAuth>
   );
 }

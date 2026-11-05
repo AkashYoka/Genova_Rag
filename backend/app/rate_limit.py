@@ -10,6 +10,8 @@ from slowapi.util import get_remote_address
  
  
 CHAT_QUERY_RATE_LIMIT = "15/minute"
+AUTH_RATE_LIMIT = "30/minute"
+AUTH_LOGIN_RATE_LIMIT = "10/minute"
  
  
 def rate_limit_key_func(request: Request) -> str:

@@ -78,7 +78,7 @@ def llm_model_for_provider(provider: Optional[str] = None) -> str:
     return settings.LLM_MODEL
 
 
-def get_llm_client(hf_token: Optional[str] = None, llm_provider: Optional[str] = None):
+def get_llm_client(llm_provider: Optional[str] = None):
     """Return InferenceClient-compatible chat client for the active LLM provider.
 
     Exact default branch
@@ -130,13 +130,7 @@ def get_llm_client(hf_token: Optional[str] = None, llm_provider: Optional[str] =
 
     from huggingface_hub import InferenceClient
 
-    token = hf_token
-    if not token:
-        raise ValueError(
-            "Hugging Face API token is missing. Add your token in the profile menu, "
-            "or switch to local Ollama with LLM_PROVIDER=ollama (the default)."
-        )
-    return InferenceClient(token=token)
+    return InferenceClient()
 
 
 def _format_chat_history(messages: List[Dict[str, str]], *, max_turns: int = 6, max_chars: int = 500) -> str:
@@ -171,7 +165,7 @@ def _format_chat_history(messages: List[Dict[str, str]], *, max_turns: int = 6, 
     return "\n".join(lines)
 
 
-def _build_chat_llm(hf_token: Optional[str] = None):
+def _build_chat_llm():
     """
     What: Build a LangChain chat model for the ReAct agent (HF path).
     Why:  ``create_react_agent`` needs a LangChain-compatible LLM, not raw HTTP.
@@ -199,16 +193,8 @@ def _build_chat_llm(hf_token: Optional[str] = None):
     from langchain_huggingface import HuggingFaceEndpoint
     from langchain_huggingface.chat_models import ChatHuggingFace
 
-    token = hf_token
-    if not token:
-        raise ValueError(
-            "Hugging Face API token is missing. Add your token in the profile menu, "
-            "or switch to local Ollama with LLM_PROVIDER=ollama (the default)."
-        )
-
     llm = HuggingFaceEndpoint(
         repo_id=settings.LLM_MODEL,
-        huggingfacehub_api_token=token,
         max_new_tokens=settings.LLM_MAX_NEW_TOKENS,
         temperature=settings.LLM_TEMPERATURE,
         timeout=300,
@@ -220,7 +206,6 @@ def get_agent_executor(
     user_id: str,
     document_id: Optional[str] = None,
     document_ids: Optional[List[str]] = None,
-    hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ):
@@ -239,7 +224,7 @@ def get_agent_executor(
     pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, document_ids=document_ids, top_k=top_k)
     tools = [pdf_tool, MathTool(), WebSearchTool()]
 
-    chat_llm = _build_chat_llm(hf_token)
+    chat_llm = _build_chat_llm()
 
     # Setup Agent
     agent_prompt_text = AGENT_SYSTEM_PROMPT
@@ -678,14 +663,13 @@ def _capability_answer(
     question: str,
     *,
     llm_provider: Optional[str] = None,
-    hf_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Answer product/capability questions without retrieving documents."""
     provider = normalize_llm_provider(llm_provider)
     answer = ""
     client = None
     try:
-        client = get_llm_client(hf_token=hf_token, llm_provider=provider)
+        client = get_llm_client(llm_provider=provider)
         response = client.chat_completion(
             messages=[
                 {
@@ -705,8 +689,8 @@ def _capability_answer(
         if response and getattr(response, "choices", None):
             answer = (response.choices[0].message.content or "").strip()
     except Exception:
-        # Missing provider credentials (e.g. no HuggingFace user token) must not
-        # turn a greeting into an error — fall back to the static answer below.
+        # Provider failures must not turn a greeting into an error —
+        # fall back to the static answer below.
         answer = ""
     if not answer:
         answer = (
@@ -726,7 +710,6 @@ def _chat_memory_answer(
     chat_history: Optional[List[Dict[str, str]]] = None,
     *,
     llm_provider: Optional[str] = None,
-    hf_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Answer from chat history only — no corpus retrieval / no document sources."""
     provider = normalize_llm_provider(llm_provider)
@@ -741,7 +724,7 @@ def _chat_memory_answer(
     answer = ""
     client = None
     try:
-        client = get_llm_client(hf_token=hf_token, llm_provider=provider)
+        client = get_llm_client(llm_provider=provider)
         response = client.chat_completion(
             messages=[
                 {
@@ -1025,7 +1008,6 @@ def generate_answer(
     user_id: str,
     document_id: Optional[str] = None,
     document_ids: Optional[List[str]] = None,
-    hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     llm_provider: Optional[str] = None,
@@ -1074,10 +1056,10 @@ def generate_answer(
 
     # ── Handle greetings / capability (no document retrieve) ─────────────────
     if is_capability_question(question) and not (document_id or document_ids):
-        return _capability_answer(question, llm_provider=provider, hf_token=hf_token)
+        return _capability_answer(question, llm_provider=provider)
     if is_chat_memory_question(question) and not (document_id or document_ids):
         return _chat_memory_answer(
-            question, chat_history, llm_provider=provider, hf_token=hf_token
+            question, chat_history, llm_provider=provider
         )
 
     # Local Ollama / Bedrock: direct retrieve-then-generate
@@ -1101,7 +1083,13 @@ def generate_answer(
 
     # ── Run HuggingFace ReAct Agent ──────────────────
     try:
-        executor, pdf_tool, formatted_history = get_agent_executor(user_id, document_id, document_ids, hf_token, top_k, chat_history)
+        executor, pdf_tool, formatted_history = get_agent_executor(
+            user_id,
+            document_id=document_id,
+            document_ids=document_ids,
+            top_k=top_k,
+            chat_history=chat_history,
+        )
         result = executor.invoke({"input": question, "chat_history": formatted_history})
 
         raw_answer = result.get("output", "")
@@ -1147,7 +1135,6 @@ def generate_answer_stream(
     user_id: str,
     document_id: Optional[str] = None,
     document_ids: Optional[List[str]] = None,
-    hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     llm_provider: Optional[str] = None,
@@ -1195,10 +1182,10 @@ def generate_answer_stream(
         is_capability_question(question) or is_chat_memory_question(question)
     ):
         result = (
-            _capability_answer(question, llm_provider=provider, hf_token=hf_token)
+            _capability_answer(question, llm_provider=provider)
             if is_capability_question(question)
             else _chat_memory_answer(
-                question, chat_history, llm_provider=provider, hf_token=hf_token
+                question, chat_history, llm_provider=provider
             )
         )
         yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
@@ -1225,7 +1212,13 @@ def generate_answer_stream(
 
     # ── Run HuggingFace ReAct Agent ──────────────────
     try:
-        executor, pdf_tool, formatted_history = get_agent_executor(user_id, document_id, document_ids, hf_token, top_k, chat_history)
+        executor, pdf_tool, formatted_history = get_agent_executor(
+            user_id,
+            document_id=document_id,
+            document_ids=document_ids,
+            top_k=top_k,
+            chat_history=chat_history,
+        )
 
         sources_sent = False
 

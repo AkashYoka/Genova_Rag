@@ -82,11 +82,15 @@ async def lifespan(app: FastAPI):
 
 
 # ── Create App ───────────────────────────────────────
+_disable_docs = settings.ENVIRONMENT == "production"
 app = FastAPI(
     title=settings.APP_NAME,
     description="Enterprise Agentic RAG System — Upload PDFs and chat with AI",
     version="2.0.0",
     lifespan=lifespan,
+    docs_url=None if _disable_docs else "/docs",
+    redoc_url=None if _disable_docs else "/redoc",
+    openapi_url=None if _disable_docs else "/openapi.json",
 )
 
 app.state.limiter = limiter
@@ -261,6 +265,24 @@ app.include_router(health_router, prefix="/api/v1")
 app.include_router(notes_router, prefix="/api/v1")
 
 setup_prometheus_metrics(app)
+
+
+@app.middleware("http")
+async def protect_metrics_endpoint(request: Request, call_next):
+    """Require METRICS_ACCESS_TOKEN for /metrics when running in production."""
+    if request.url.path == "/metrics" and settings.ENVIRONMENT == "production":
+        expected = (settings.METRICS_ACCESS_TOKEN or "").strip()
+        if not expected:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        auth = request.headers.get("authorization", "")
+        provided = ""
+        if auth.lower().startswith("bearer "):
+            provided = auth.split(" ", 1)[1].strip()
+        else:
+            provided = request.headers.get("x-metrics-token", "").strip()
+        if provided != expected:
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    return await call_next(request)
 
 
 # ── Health Check ─────────────────────────────────────

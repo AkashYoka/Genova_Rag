@@ -7,6 +7,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const initializeAuth = useAuthStore((state) => state.initializeAuth);
   const syncTokensRefreshed = useAuthStore((state) => state.syncTokensRefreshed);
   const syncLoggedOut = useAuthStore((state) => state.syncLoggedOut);
+  const syncFromStorage = useAuthStore((state) => state.syncFromStorage);
 
   useEffect(() => {
     void initializeAuth();
@@ -21,14 +22,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       syncLoggedOut();
     };
 
+    /** Cross-tab: login/logout/refresh in another tab updates localStorage. */
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key !== "token" && e.key !== "refresh_token" && e.key !== "auth_user") {
+        return;
+      }
+      syncFromStorage();
+    };
+
     window.addEventListener("auth:tokens-refreshed", handleTokensRefreshed);
     window.addEventListener("auth:logged-out", handleLoggedOut);
+    window.addEventListener("storage", handleStorage);
 
     return () => {
       window.removeEventListener("auth:tokens-refreshed", handleTokensRefreshed);
       window.removeEventListener("auth:logged-out", handleLoggedOut);
+      window.removeEventListener("storage", handleStorage);
     };
-  }, [syncLoggedOut, syncTokensRefreshed]);
+  }, [syncLoggedOut, syncTokensRefreshed, syncFromStorage]);
 
   return <>{children}</>;
 }

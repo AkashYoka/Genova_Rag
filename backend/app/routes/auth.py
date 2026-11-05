@@ -10,7 +10,7 @@ from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import APIRouter, Depends, Query, status, Response, Body
+from fastapi import APIRouter, Depends, Query, Request, status, Response, Body
 from fastapi.responses import HTMLResponse
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
 from google_auth_oauthlib.flow import Flow
@@ -33,7 +33,6 @@ from app.schemas import (
     GoogleLoginRequest,
     GoogleDriveAuthUrlResponse,
     GoogleDriveStatusResponse,
-    HFTokenUpdate,
     RefreshRequest,
     TokenResponse,
     UpdatePassword,
@@ -50,7 +49,16 @@ from app.schemas import (
     MessageResponse,
     RegistrationResponse,
 )
-from app.auth import hash_password, verify_password, create_access_token, create_refresh_token, get_current_user, decode_token
+from app.auth import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    create_refresh_token,
+    get_current_user,
+    decode_token_with_version,
+    bump_token_version,
+)
+from app.rate_limit import limiter, AUTH_RATE_LIMIT, AUTH_LOGIN_RATE_LIMIT
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 settings = get_settings()
@@ -129,8 +137,9 @@ GOOGLE_DRIVE_STATE_TOKEN_TYPE = "google_drive_oauth_state"
 
 
 def _create_token_response(user: User) -> TokenResponse:
-    access_token = create_access_token(user.id)
-    refresh_token = create_refresh_token(user.id)
+    tv = int(getattr(user, "token_version", 0) or 0)
+    access_token = create_access_token(user.id, token_version=tv)
+    refresh_token = create_refresh_token(user.id, token_version=tv)
 
     return TokenResponse(
         access_token=access_token,
@@ -181,7 +190,8 @@ def _unique_google_username(email: str, db: Session) -> str:
 
 
 @router.post("/register", response_model=RegistrationResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: UserRegister, db: Session = Depends(get_db)):
+@limiter.limit(AUTH_RATE_LIMIT)
+async def register(request: Request, payload: UserRegister, db: Session = Depends(get_db)):
     """
     Register a new user account and send a verification email.
 
@@ -239,7 +249,8 @@ async def register(payload: UserRegister, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit(AUTH_LOGIN_RATE_LIMIT)
+def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
     """
     Authenticate a user with email and password.
 
@@ -295,7 +306,8 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
 
 
 @router.post("/dev-login", response_model=TokenResponse)
-def dev_login(db: Session = Depends(get_db)):
+@limiter.limit(AUTH_LOGIN_RATE_LIMIT)
+def dev_login(request: Request, db: Session = Depends(get_db)):
     """Auto sign-in for local development only.
 
     Creates a verified ``localdev`` user if needed and returns JWTs so the
@@ -349,7 +361,8 @@ def dev_login(db: Session = Depends(get_db)):
 
 
 @router.post("/google", response_model=TokenResponse)
-def login_with_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
+@limiter.limit(AUTH_LOGIN_RATE_LIMIT)
+def login_with_google(request: Request, payload: GoogleLoginRequest, db: Session = Depends(get_db)):
     """
     Authenticate with a Google Identity Services ID token.
 
@@ -412,7 +425,8 @@ def verify_email(token: str, db: Session = Depends(get_db)):
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
-async def resend_verification(payload: EmailVerificationRequest, db: Session = Depends(get_db)):
+@limiter.limit(AUTH_RATE_LIMIT)
+async def resend_verification(request: Request, payload: EmailVerificationRequest, db: Session = Depends(get_db)):
     """Resend an email verification link for an unverified user."""
     user = db.query(User).filter(User.email == payload.email).first()
     if user and not user.is_verified:
@@ -425,37 +439,28 @@ async def resend_verification(payload: EmailVerificationRequest, db: Session = D
 
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)):
+@limiter.limit(AUTH_RATE_LIMIT)
+def refresh_token(request: Request, payload: RefreshRequest, db: Session = Depends(get_db)):
     """
     Refresh both access and refresh tokens using a valid refresh token.
 
     Decodes the provided refresh token to extract the user ID. If the token
-    is valid and the user still exists in the database, a new pair of access
-    and refresh tokens is generated and returned.
-
-    Args:
-        payload (RefreshRequest): An object containing the refresh token to be used for generating new tokens
-        db (Session, optional): Database session dependency. Defaults to Depends(get_db).
-
-    Returns:
-        TokenResponse: A fresh set of credentials containing:
-            - access_token: New JWT access token.
-            - refresh_token: New JWT refresh token.
-            - user: UserResponse object with the user's public details.
-    
-    Raises:
-        HTTPException: 401 Unauthorized if:
-            - The refresh token is invalid or expired.
-            - The user associated with the token no longer exists.
+    is valid, the token_version matches, and the user still exists, a new
+    pair of access and refresh tokens is generated and returned.
     """
-    user_id = decode_token(payload.refresh_token, token_type="refresh")
-    if not user_id:
+    decoded = decode_token_with_version(payload.refresh_token, token_type="refresh")
+    if not decoded:
         raise UnauthorizedException("Invalid or expired refresh token")
-    
+
+    user_id, token_tv = decoded
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise UnauthorizedException("User not found")
-        
+
+    current_tv = int(getattr(user, "token_version", 0) or 0)
+    if token_tv != current_tv:
+        raise UnauthorizedException("Invalid or expired refresh token")
+
     return _create_token_response(user)
 
 
@@ -480,32 +485,6 @@ def get_me(user: User = Depends(get_current_user)):
         token is missing, invalid, or expired. Therefore, this function
         itself does not need to raise any HTTP exceptions.
     """
-    return UserResponse.model_validate(user)
-
-@router.put("/hf-token", response_model=UserResponse)
-def update_hf_token(
-    payload: HFTokenUpdate,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Update the HuggingFace token for the authenticated user.
-
-    Stores the provided HF token in the user's profile so HuggingFace API calls
-    use that user's credentials. Tokens are never read from server settings.
-
-    Args:
-        payload: HFTokenUpdate object containing the new ``hf_token`` value.
-        user: The currently authenticated user, obtained from the
-            ``get_current_user`` dependency.
-        db: SQLAlchemy database session, obtained from the dependency.
-
-    Returns:
-        UserResponse: The updated user profile including the new ``hf_token``
-        field.
-    """
-    user.hf_token = payload.hf_token
-    db.commit()
-    db.refresh(user)
     return UserResponse.model_validate(user)
 
 
@@ -600,11 +579,19 @@ def update_password(payload:UpdatePassword,
         raise ValidationException("Password and confirm_password are required")
     if payload.password != payload.confirm_password:
         raise ValidationException("Password and confirm_password are different")
+    # Harden legacy endpoint: require proving the current password via the
+    # dedicated change-password flow. Accept payload.current_password if present
+    # on UpdatePassword; otherwise reject to prevent session-only takeover.
+    current_password = getattr(payload, "current_password", None)
+    if not current_password or not verify_password(current_password, user.hashed_password):
+        raise UnauthorizedException(
+            "Current password is required. Use POST /auth/change-password."
+        )
+
     try:
         hashed_password = hash_password(payload.password)
         user.hashed_password = hashed_password
-        db.commit()
-        db.refresh(user)
+        bump_token_version(user, db)
         return user
     except SQLAlchemyError:
         db.rollback()
@@ -622,27 +609,15 @@ def change_password(
     Validates that the provided current password matches the stored hash
     before updating to the new password. This is the secure, recommended
     way for users to change their own password since it confirms the
-    requester actually knows the existing credentials.
-
-    Args:
-        payload: ChangePasswordRequest containing `current_password` and `new_password`.
-        user: The currently authenticated user, obtained from the `get_current_user` dependency.
-        db: SQLAlchemy database session, obtained from the dependency.
-
-    Returns:
-        MessageResponse: Confirmation message on success.
-
-    Raises:
-        HTTPException: 401 if `current_password` does not match the stored hash.
-        HTTPException: 400 if a database error occurs during commit.
+    requester actually knows the existing credentials. Also invalidates
+    all outstanding JWTs by bumping token_version.
     """
     if not verify_password(payload.current_password, user.hashed_password):
         raise UnauthorizedException("Current password is incorrect")
 
     try:
         user.hashed_password = hash_password(payload.new_password)
-        db.commit()
-        db.refresh(user)
+        bump_token_version(user, db)
     except SQLAlchemyError:
         db.rollback()
         raise ValidationException("Database error")
@@ -921,10 +896,48 @@ def disconnect_google_drive(
 
 
 @router.post("/logout")
-def logout(response: Response):
+def logout(
+    response: Response,
+    request: Request,
+    payload: Optional[RefreshRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+):
     """
-    Logs out the user by clearing the secure session cookies.
+    Invalidate the caller's session.
+
+    Prefers Authorization bearer access token; falls back to refresh_token in
+    the body. Bumps ``token_version`` so outstanding JWTs stop working, then
+    clears legacy cookies if present.
     """
+    user: Optional[User] = None
+
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        raw = auth_header.split(" ", 1)[1].strip()
+        if not raw.startswith("pdf_rag_"):
+            decoded = decode_token_with_version(raw, token_type="access")
+            if decoded:
+                user_id, token_tv = decoded
+                candidate = db.query(User).filter(User.id == user_id).first()
+                if candidate and int(getattr(candidate, "token_version", 0) or 0) == token_tv:
+                    user = candidate
+
+    if user is None and payload and payload.refresh_token:
+        decoded = decode_token_with_version(payload.refresh_token, token_type="refresh")
+        if decoded:
+            user_id, token_tv = decoded
+            candidate = db.query(User).filter(User.id == user_id).first()
+            if candidate and int(getattr(candidate, "token_version", 0) or 0) == token_tv:
+                user = candidate
+
+    if user is not None:
+        bump_token_version(user, db)
+        audit_log(
+            action="user.logout",
+            user_id=str(user.id),
+            result="success",
+        )
+
     response.delete_cookie(key="access_token")
     response.delete_cookie(key="refresh_token")
     return {"message": "Successfully logged out"}

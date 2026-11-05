@@ -196,7 +196,6 @@ def extract_from_chunks(
     *,
     client: Optional[Any] = None,
     llm_provider: Optional[str] = None,
-    hf_token: Optional[str] = None,
     max_chunks: Optional[int] = None,
     batch_size: Optional[int] = None,
     min_confidence: Optional[float] = None,
@@ -227,7 +226,7 @@ def extract_from_chunks(
 
         provider = normalize_llm_provider(llm_provider)
         model = settings.GRAPH_EXTRACTION_MODEL or llm_model_for_provider(provider)
-        client = client or get_llm_client(hf_token=hf_token, llm_provider=provider)
+        client = client or get_llm_client(llm_provider=provider)
 
         def completer(messages: List[Dict[str, str]]) -> str:  # type: ignore[misc]
             return _chat(client, messages, model, max_tokens=2048)

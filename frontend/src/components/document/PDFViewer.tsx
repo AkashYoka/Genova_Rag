@@ -93,11 +93,40 @@ export default function PDFViewer({
   const quoteLocateGenRef = useRef(0);
   const onPageChangeRef = useRef(onPageChange);
   onPageChangeRef.current = onPageChange;
-  // Keep auth header stable so <Document> does not remount / blink on parent re-renders
+  // Auth header: seed from localStorage, then follow silent token refreshes
   const tokenRef = useRef<string | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("token");
+  });
   if (typeof window !== "undefined" && tokenRef.current === null) {
-    tokenRef.current = localStorage.getItem("token");
+    tokenRef.current = authToken;
   }
+
+  useEffect(() => {
+    const syncToken = (token: string | null) => {
+      tokenRef.current = token;
+      setAuthToken(token);
+    };
+
+    const onRefreshed = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { accessToken?: string } | undefined;
+      if (detail?.accessToken) syncToken(detail.accessToken);
+    };
+    const onLoggedOut = () => syncToken(null);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "token") syncToken(e.newValue);
+    };
+
+    window.addEventListener("auth:tokens-refreshed", onRefreshed);
+    window.addEventListener("auth:logged-out", onLoggedOut);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("auth:tokens-refreshed", onRefreshed);
+      window.removeEventListener("auth:logged-out", onLoggedOut);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
 
   // --- NEW: Search State ---
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
@@ -119,15 +148,15 @@ export default function PDFViewer({
 
   const pdfUrl = `${API_BASE}/api/v1/documents/${documentId}/pdf`;
 
-  // Configure file object with Authorization headers (memoized to prevent remounts)
+  // Configure file object with Authorization headers (memoized; updates after refresh)
   const fileConfig = useMemo(
     () => ({
       url: pdfUrl,
-      httpHeaders: tokenRef.current
-        ? { Authorization: `Bearer ${tokenRef.current}` }
+      httpHeaders: authToken
+        ? { Authorization: `Bearer ${authToken}` }
         : undefined,
     }),
-    [pdfUrl],
+    [pdfUrl, authToken],
   );
 
   const handleDocumentLoad = useCallback((pdf: PDFDocumentProxy) => {

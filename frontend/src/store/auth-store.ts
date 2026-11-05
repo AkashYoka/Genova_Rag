@@ -1,14 +1,13 @@
 "use client";
 
 import { create } from "zustand";
-import { api } from "@/lib/api";
+import { api, CONNECTION_ERROR_MESSAGE, setAuthMarkerCookie } from "@/lib/api";
 
 export interface AuthUser {
   id: string;
   username: string;
   email: string;
   is_admin: boolean;
-  hf_token?: string;
   created_at: string;
 }
 
@@ -24,20 +23,49 @@ interface AuthStore {
     email: string,
     password: string
   ) => Promise<{ message: string; email: string; verification_url?: string | null }>;
-  logout: () => void;
+  logout: () => Promise<void>;
   initializeAuth: () => Promise<void>;
   syncTokensRefreshed: (detail?: { accessToken?: string; user?: AuthUser | null }) => void;
   syncLoggedOut: () => void;
-  setHfToken: (hfToken: string) => Promise<void>;
+  syncFromStorage: () => void;
 }
 
 const getStoredToken = () =>
   typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
+const getCachedUser = (): AuthUser | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("auth_user");
+    if (!raw) return null;
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    return null;
+  }
+};
+
+const cacheUser = (user: AuthUser | null) => {
+  if (typeof window === "undefined") return;
+  if (user) {
+    localStorage.setItem("auth_user", JSON.stringify(user));
+  } else {
+    localStorage.removeItem("auth_user");
+  }
+};
+
 const clearStoredTokens = () => {
   if (typeof window === "undefined") return;
   localStorage.removeItem("token");
   localStorage.removeItem("refresh_token");
+  localStorage.removeItem("auth_user");
+  setAuthMarkerCookie(false);
+};
+
+const persistTokens = (accessToken: string, refreshToken: string, user: AuthUser) => {
+  localStorage.setItem("token", accessToken);
+  localStorage.setItem("refresh_token", refreshToken);
+  cacheUser(user);
+  setAuthMarkerCookie(true);
 };
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
@@ -53,8 +81,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       { email, password }
     );
 
-    localStorage.setItem("token", data.access_token);
-    localStorage.setItem("refresh_token", data.refresh_token);
+    persistTokens(data.access_token, data.refresh_token, data.user);
     set({
       token: data.access_token,
       user: data.user,
@@ -69,8 +96,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       { id_token: idToken }
     );
 
-    localStorage.setItem("token", data.access_token);
-    localStorage.setItem("refresh_token", data.refresh_token);
+    persistTokens(data.access_token, data.refresh_token, data.user);
     set({
       token: data.access_token,
       user: data.user,
@@ -96,10 +122,13 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   },
 
   async logout() {
+    const refreshToken =
+      typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
     try {
-      await api.post("/api/v1/auth/logout");
+      // Send refresh_token so the server can bump token_version even if access JWT expired
+      await api.post("/api/v1/auth/logout", refreshToken ? { refresh_token: refreshToken } : undefined);
     } catch {
-      // Ignore network errors on logout
+      // Ignore network errors on logout — local session must still clear
     }
     clearStoredTokens();
     set({
@@ -114,12 +143,24 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const { initialized, token } = get();
     if (initialized) return;
 
-    // Never leave the dashboard on an infinite loading shell.
     const failSafe =
       typeof window !== "undefined"
         ? window.setTimeout(() => {
             if (!get().initialized) {
-              set({ loading: false, initialized: true });
+              // Prefer cached session over anonymous if tokens still exist
+              const cached = getCachedUser();
+              const stillToken = getStoredToken();
+              if (stillToken && cached) {
+                set({
+                  user: cached,
+                  token: stillToken,
+                  loading: false,
+                  initialized: true,
+                });
+                setAuthMarkerCookie(true);
+              } else {
+                set({ loading: false, initialized: true });
+              }
             }
           }, 12000)
         : null;
@@ -127,7 +168,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     try {
       let storedToken = token ?? getStoredToken();
 
-      // 1. Try to extract tokens from URL search params (OAuth redirect)
+      // OAuth redirect tokens in URL — accept once then strip from history
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
         const urlToken = params.get("token");
@@ -135,38 +176,72 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         if (urlToken && urlRefreshToken) {
           localStorage.setItem("token", urlToken);
           localStorage.setItem("refresh_token", urlRefreshToken);
+          setAuthMarkerCookie(true);
           storedToken = urlToken;
-          // Clean URL parameters without reloading
           const cleanUrl = window.location.origin + window.location.pathname;
           window.history.replaceState({}, document.title, cleanUrl);
         }
       }
 
-
-
-
-      // 3. If no token, don't request /me (prevents CORS preflight credentials error for anonymous users)
       if (!storedToken) {
+        clearStoredTokens();
         set({ user: null, token: null, loading: false, initialized: true });
         return;
       }
 
       set({ loading: true });
+      setAuthMarkerCookie(true);
 
       try {
-        const user = await api.get<AuthUser>(
-          "/api/v1/auth/me",
-          { token: storedToken }
-        );
+        const user = await api.get<AuthUser>("/api/v1/auth/me", { token: storedToken });
+        // Prefer freshly stored token after a possible silent refresh
+        const latestToken = getStoredToken() ?? storedToken;
+        cacheUser(user);
         set({
           user,
-          token: storedToken,
+          token: latestToken,
           loading: false,
           initialized: true,
         });
-      } catch {
-        clearStoredTokens();
-        set({ user: null, token: null, loading: false, initialized: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "";
+        const stillHasToken = Boolean(getStoredToken());
+        const isNetworkError =
+          message === CONNECTION_ERROR_MESSAGE ||
+          /network|failed to fetch|could not connect/i.test(message);
+
+        if (stillHasToken && isNetworkError) {
+          // Transient outage — restore cached profile so refresh does not log the user out
+          const cached = getCachedUser();
+          set({
+            user: cached,
+            token: getStoredToken(),
+            loading: false,
+            initialized: true,
+          });
+          return;
+        }
+
+        if (!stillHasToken) {
+          // Refresh definitively failed and cleared tokens
+          clearStoredTokens();
+          set({ user: null, token: null, loading: false, initialized: true });
+          return;
+        }
+
+        // Unexpected error with tokens still present — keep session via cache
+        const cached = getCachedUser();
+        if (cached) {
+          set({
+            user: cached,
+            token: getStoredToken(),
+            loading: false,
+            initialized: true,
+          });
+        } else {
+          clearStoredTokens();
+          set({ user: null, token: null, loading: false, initialized: true });
+        }
       }
     } finally {
       if (failSafe != null) window.clearTimeout(failSafe);
@@ -176,15 +251,22 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   syncTokensRefreshed(detail) {
     if (!detail) return;
 
-    set((state) => ({
-      token: detail.accessToken ?? state.token,
-      user: detail.user ?? state.user,
-      loading: false,
-      initialized: true,
-    }));
+    set((state) => {
+      const nextUser = detail.user ?? state.user;
+      if (nextUser) cacheUser(nextUser);
+      setAuthMarkerCookie(true);
+      return {
+        token: detail.accessToken ?? state.token,
+        user: nextUser,
+        loading: false,
+        initialized: true,
+      };
+    });
   },
 
   syncLoggedOut() {
+    cacheUser(null);
+    setAuthMarkerCookie(false);
     set({
       token: null,
       user: null,
@@ -193,8 +275,40 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     });
   },
 
-  async setHfToken(hfToken: string) {
-    const response = await api.put<AuthUser>("/api/v1/auth/hf-token", { hf_token: hfToken });
-    set({ user: response });
+  /** Cross-tab sync: re-read localStorage after another tab changes auth keys. */
+  syncFromStorage() {
+    const storedToken = getStoredToken();
+    if (!storedToken) {
+      set({
+        token: null,
+        user: null,
+        loading: false,
+        initialized: true,
+      });
+      setAuthMarkerCookie(false);
+      return;
+    }
+
+    const cached = getCachedUser();
+    setAuthMarkerCookie(true);
+    set({
+      token: storedToken,
+      user: cached ?? get().user,
+      loading: false,
+      initialized: true,
+    });
+
+    // Refresh profile in background when another tab logged in
+    if (!cached) {
+      void api
+        .get<AuthUser>("/api/v1/auth/me")
+        .then((user) => {
+          cacheUser(user);
+          set({ user, token: getStoredToken(), initialized: true, loading: false });
+        })
+        .catch(() => {
+          /* keep whatever we have */
+        });
+    }
   },
 }));

@@ -159,7 +159,6 @@ def index_document(
     chunks: Optional[Sequence[Dict[str, Any]]] = None,
     *,
     llm_provider: Optional[str] = None,
-    hf_token: Optional[str] = None,
     completer: Any = None,
     db: Any = None,
 ) -> Dict[str, Any]:
@@ -231,7 +230,6 @@ def index_document(
                 chunks,
                 str(document_id),
                 llm_provider=llm_provider,
-                hf_token=hf_token,
                 completer=completer,
             )
         except Exception as exc:
@@ -367,7 +365,6 @@ def reindex_document(
     user_id: str,
     *,
     llm_provider: Optional[str] = None,
-    hf_token: Optional[str] = None,
     completer: Any = None,
 ) -> Dict[str, Any]:
     """Rebuild a document's graph contribution from its indexed chunks."""
@@ -377,7 +374,6 @@ def reindex_document(
         user_id,
         chunks,
         llm_provider=llm_provider,
-        hf_token=hf_token,
         completer=completer,
     )
 

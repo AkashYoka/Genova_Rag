@@ -181,7 +181,8 @@ def test_update_document_no_fields_does_nothing(client, auth_headers, ready_docu
     assert ready_document.summary is None
 
 
-def test_rename_document_returns_403_for_other_users_document(client, auth_headers, db_session, other_user):
+def test_rename_document_returns_404_for_other_users_document(client, auth_headers, db_session, other_user):
+    """Non-owned documents must look identical to missing ones (no IDOR oracle)."""
     other_document = Document(
         user_id=other_user.id,
         filename="other.txt",
@@ -199,7 +200,7 @@ def test_rename_document_returns_403_for_other_users_document(client, auth_heade
         json={"name": "renamed.txt"},
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404
     db_session.refresh(other_document)
     assert other_document.original_name == "other.txt"
 

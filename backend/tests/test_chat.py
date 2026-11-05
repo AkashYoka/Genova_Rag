@@ -101,38 +101,6 @@ def test_chat_stream_blocks_prompt_injection_before_generation(client, auth_head
     assert called is False
 
 
-def test_agent_dynamic_token(monkeypatch):
-    from app.rag.llm.agent import generate_answer
-    import app.rag.llm.agent
-
-    called_with_token = None
-
-    class MockInferenceClient:
-        def __init__(self, token=None, **kwargs):
-            nonlocal called_with_token
-            called_with_token = token
-
-        def chat_completion(self, *args, **kwargs):
-            class MockResponse:
-                choices = []
-            return MockResponse()
-
-    # InferenceClient is imported inside get_llm_client; patch the source module.
-    monkeypatch.setattr("huggingface_hub.InferenceClient", MockInferenceClient)
-    # Mock retrieval to return empty chunks
-    monkeypatch.setattr("app.rag.llm.agent.retrieve", lambda **kwargs: [])
-
-    # Test with custom token
-    generate_answer(question="hello?", user_id="some-user", hf_token="my-custom-hf-token")
-    assert called_with_token == "my-custom-hf-token"
-
-    # Without a user token the HF provider must not fall back to server config.
-    import app.rag.llm.agent as agent_module
-
-    with pytest.raises(ValueError, match="Hugging Face API token"):
-        agent_module.get_llm_client()
-
-
 def test_clear_chat_history(client, auth_headers, ready_document, db_session, user):
     from app.models import ChatMessage
     

@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     JWT_REFRESH_EXPIRY_DAYS: int = 7
     # Auth bypass disabled for security
     DEV_AUTH_BYPASS: bool = False
+    # Optional bearer token required to scrape /metrics in production
+    METRICS_ACCESS_TOKEN: str = ""
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_DRIVE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google-drive/callback"

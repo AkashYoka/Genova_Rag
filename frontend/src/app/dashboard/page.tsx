@@ -11,6 +11,7 @@ import {
   CONNECTION_ERROR_MESSAGE,
 } from "@/lib/api";
 import Header from "@/components/layout/Header";
+import { RequireAuth } from "@/components/auth/RequireAuth";
 import ChatSessionSidebar from "@/components/chat/ChatSessionSidebar";
 import ChatPanel from "@/components/chat/ChatPanel";
 import CompareView from "@/components/document/CompareView";
@@ -137,7 +138,7 @@ function writeSessionsOpen(open: boolean): void {
   sessionsOpenListeners.forEach((listener) => listener());
 }
 
-export default function DashboardPage() {
+function DashboardPageContent() {
   const { user, initialized } = useAuth();
   const router = useRouter();
 
@@ -170,12 +171,6 @@ export default function DashboardPage() {
   const setNotesOpen = useNotesStore((s) => s.setNotesOpen);
   const notesFocusToken = useNotesStore((s) => s.focusToken);
 
-  useEffect(() => {
-    if (initialized && !user) {
-      router.replace("/login");
-    }
-  }, [user, initialized, router]);
-
   const toggleSessions = useCallback(() => {
     writeSessionsOpen(!readSessionsOpen());
   }, []);
@@ -190,17 +185,6 @@ export default function DashboardPage() {
       useNotesStore.getState().reset();
     }
   }, [user?.id, initialized, loadNotes]);
-
-  useEffect(() => {
-    if (user) {
-      const hasHfToken = !!(user.hf_token || localStorage.getItem("hf_token"));
-      if (!hasHfToken) {
-        console.info(
-          "Hugging Face API token is not configured. Personal model access will fall back to the system default unless set in the user profile menu.",
-        );
-      }
-    }
-  }, [user]);
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -335,31 +319,6 @@ export default function DashboardPage() {
     }
   }, [activeDoc?.id]);
 
-  if (!initialized) {
-    return (
-      <div
-        className="flex min-h-screen items-center justify-center bg-background"
-        suppressHydrationWarning
-      >
-        <div
-          className="h-8 w-8 animate-pulse rounded-full bg-muted"
-          aria-label="Loading"
-          suppressHydrationWarning
-        />
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div
-          className="h-8 w-8 animate-pulse rounded-full bg-muted"
-          aria-label="Loading"
-        />
-      </div>
-    );
-  }
   const showPdfDock =
     !compareOpen &&
     viewerOpen &&
@@ -658,5 +617,13 @@ export default function DashboardPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <RequireAuth>
+      <DashboardPageContent />
+    </RequireAuth>
   );
 }

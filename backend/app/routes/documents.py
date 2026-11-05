@@ -28,7 +28,6 @@ from app.exceptions import (
     ValidationException,
     ConflictException,
     AppException,
-    ForbiddenException,
 )
 from app.models import User, Document
 from app.schemas import (
@@ -798,16 +797,16 @@ def update_document(
     is not present (or is null) it will be left unchanged.  To clear the
     current summary send an explicit empty string.
     """
+    # Same ownership filter as other document routes — avoid IDOR existence oracle
+    # (non-owned docs must look identical to missing docs → 404, not 403).
     doc = db.query(Document).filter(
         Document.id == document_id,
+        Document.user_id == user.id,
         Document.is_deleted.is_(False),
     ).first()
 
     if not doc:
         raise NotFoundException("Document")
-
-    if str(doc.user_id) != str(user.id):
-        raise ForbiddenException("You do not have permission to update this document")
 
     if update.name is not None:
         doc.original_name = update.name
