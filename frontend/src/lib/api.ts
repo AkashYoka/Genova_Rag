@@ -459,19 +459,32 @@ class ApiClient {
   /**
    * Download a protected resource with Authorization header (avoids JWT in URL).
    */
-  async downloadAuthenticated(path: string): Promise<{ blob: Blob; filename: string | null }> {
-    let res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
-      method: "GET",
-      headers: this.getHeaders(),
+  async downloadAuthenticated(
+    path: string,
+    init?: { method?: "GET" | "POST"; body?: unknown },
+  ): Promise<{ blob: Blob; filename: string | null }> {
+    const method = init?.method ?? "GET";
+    const buildOpts = (token?: string | null): RequestInit => ({
+      method,
+      headers: this.getHeaders(token ?? undefined),
+      body:
+        method !== "GET" && init?.body !== undefined
+          ? JSON.stringify(init.body)
+          : undefined,
     });
+
+    let res = await this.fetchWithConnectionError(
+      `${this.baseUrl}${path}`,
+      buildOpts(),
+    );
 
     if (res.status === 401) {
       const newToken = await this.tryRefreshToken();
       if (newToken) {
-        res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
-          method: "GET",
-          headers: this.getHeaders(newToken),
-        });
+        res = await this.fetchWithConnectionError(
+          `${this.baseUrl}${path}`,
+          buildOpts(newToken),
+        );
       } else if (!this.getRefreshToken()) {
         this.handleUnauthorized();
       }

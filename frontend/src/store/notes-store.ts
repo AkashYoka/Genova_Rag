@@ -19,6 +19,7 @@ export type NotesStorage = "s3" | "local" | "unavailable";
 /** One independent sticky note. */
 export interface StickyNote {
   id: string;
+  title: string;
   document: CkEditorDocument | null;
   html: string;
 }
@@ -63,6 +64,7 @@ interface NotesStore {
   appendsHandled: () => void;
   addNote: () => string;
   selectNote: (noteId: string) => void;
+  renameNote: (noteId: string, title: string) => void;
   closeNote: (noteId: string) => void;
   clear: () => void;
   setNotesOpen: (open: boolean) => void;
@@ -102,8 +104,11 @@ function createNoteId(): string {
   return `note-${Date.now().toString(36)}-${noteSequence}`;
 }
 
-function createEmptyNote(id = createNoteId()): StickyNote {
-  return { id, document: null, html: "" };
+function createEmptyNote(
+  id = createNoteId(),
+  title = "Note",
+): StickyNote {
+  return { id, title, document: null, html: "" };
 }
 
 function readDraft(userId: string): NormalizedNotesCollection | null {
@@ -161,14 +166,24 @@ function clearLegacyHtml() {
 function asRecords(notes: StickyNote[]): StickyNoteRecord[] {
   return notes.map((note) => ({
     id: note.id,
+    title: note.title,
     document: note.document,
     html: note.html,
   }));
 }
 
+function nextNoteTitle(notes: StickyNote[]): string {
+  let max = 0;
+  for (const note of notes) {
+    const match = /^Note\s+(\d+)$/i.exec(note.title.trim());
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return `Note ${max + 1}`;
+}
+
 function updateActiveNote(
   state: NotesStore,
-  patch: Partial<Pick<StickyNote, "document" | "html">>,
+  patch: Partial<Pick<StickyNote, "document" | "html" | "title">>,
 ): Pick<NotesStore, "notes"> {
   let changed = false;
   const notes = state.notes.map((note) => {
@@ -297,7 +312,12 @@ export const useNotesStore = create<NotesStore>((set, get) => {
 
         const legacyHtml = readLegacyHtml();
         if (legacyHtml) {
-          const note: StickyNote = { id: "note-1", document: null, html: legacyHtml };
+          const note: StickyNote = {
+            id: "note-1",
+            title: "Note 1",
+            document: null,
+            html: legacyHtml,
+          };
           set({
             notes: [note],
             activeNoteId: note.id,
@@ -310,7 +330,7 @@ export const useNotesStore = create<NotesStore>((set, get) => {
         }
 
         // Fresh account: start with one empty note (Note 1).
-        const note = createEmptyNote("note-1");
+        const note = createEmptyNote("note-1", "Note 1");
         set({
           notes: [note],
           activeNoteId: note.id,
@@ -331,11 +351,12 @@ export const useNotesStore = create<NotesStore>((set, get) => {
               ? [
                   {
                     id: "note-1",
+                    title: "Note 1",
                     document: null,
                     html: legacyHtml,
                   } satisfies StickyNote,
                 ]
-              : [createEmptyNote("note-1")];
+              : [createEmptyNote("note-1", "Note 1")];
 
         set({
           notes,
@@ -355,7 +376,7 @@ export const useNotesStore = create<NotesStore>((set, get) => {
         // note so the editor can consume the queued append.
         const current = get();
         if (current.pendingAppends.length > 0 && current.notes.length === 0) {
-          const note = createEmptyNote("note-1");
+          const note = createEmptyNote("note-1", "Note 1");
           set({ notes: [note], activeNoteId: note.id });
         }
       }
@@ -390,7 +411,9 @@ export const useNotesStore = create<NotesStore>((set, get) => {
     appendMessage(payload) {
       set((state) => {
         const notes =
-          state.notes.length > 0 ? state.notes : [createEmptyNote("note-1")];
+          state.notes.length > 0
+            ? state.notes
+            : [createEmptyNote("note-1", "Note 1")];
         return {
           notes,
           activeNoteId:
@@ -408,7 +431,8 @@ export const useNotesStore = create<NotesStore>((set, get) => {
     },
 
     addNote() {
-      const note = createEmptyNote();
+      const { notes } = get();
+      const note = createEmptyNote(undefined, nextNoteTitle(notes));
       set((state) => ({
         notes: [...state.notes, note],
         activeNoteId: note.id,
@@ -427,6 +451,18 @@ export const useNotesStore = create<NotesStore>((set, get) => {
         focusToken: state.focusToken + 1,
       }));
       // Keep the active tab in the persisted envelope as well as the draft.
+      scheduleSave();
+    },
+
+    renameNote(noteId, title) {
+      const nextTitle = title.trim() || "Note";
+      const current = get().notes.find((note) => note.id === noteId);
+      if (!current || current.title === nextTitle) return;
+      set((state) => ({
+        notes: state.notes.map((note) =>
+          note.id === noteId ? { ...note, title: nextTitle } : note,
+        ),
+      }));
       scheduleSave();
     },
 

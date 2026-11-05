@@ -130,6 +130,8 @@ export const NOTES_COLLECTION_VERSION = 1;
 /** A single persisted sticky note. */
 export interface StickyNoteRecord {
   id: string;
+  /** User-facing tab label (e.g. "Note 1", "Chemistry"). */
+  title: string;
   /** CKEditor model JSON for this note. */
   document: Record<string, unknown> | null;
   /** HTML mirror, used for exports and as the pre-JSON fallback. */
@@ -154,6 +156,7 @@ export function createNotesEnvelope(
     activeId,
     notes: notes.map((note) => ({
       id: note.id,
+      title: note.title,
       document: note.document,
       html: note.html,
     })),
@@ -180,12 +183,14 @@ function noteFrom(
    * yet and must survive a reload.
    */
   allowEmpty = false,
+  title = "",
 ): { note: StickyNoteRecord; pendingMigration: boolean } | null {
   const normalized = normalizeNoteDocument(value);
+  const label = title.trim() || "Note";
   if (!normalized.document && !normalized.html) {
     if (!allowEmpty) return null;
     return {
-      note: { id, document: null, html: htmlMirror },
+      note: { id, title: label, document: null, html: htmlMirror },
       pendingMigration: false,
     };
   }
@@ -193,6 +198,7 @@ function noteFrom(
   return {
     note: {
       id,
+      title: label,
       document: normalized.document as unknown as Record<string, unknown> | null,
       html: normalized.html ?? htmlMirror,
     },
@@ -228,7 +234,11 @@ export function normalizeNotesCollection(raw: unknown): NormalizedNotesCollectio
       const source = wrapped ? (entry.document ?? entry.html ?? null) : entry;
       const htmlMirror =
         typeof entry.html === "string" ? entry.html : "";
-      const parsed = noteFrom(source, id, htmlMirror, true);
+      const title =
+        typeof entry.title === "string" && entry.title.trim()
+          ? entry.title.trim()
+          : `Note ${index + 1}`;
+      const parsed = noteFrom(source, id, htmlMirror, true, title);
       if (!parsed) return;
       notes.push(parsed.note);
       pendingMigration = pendingMigration || parsed.pendingMigration;
@@ -249,6 +259,8 @@ export function normalizeNotesCollection(raw: unknown): NormalizedNotesCollectio
     record.document ?? record.html ?? null,
     "note-1",
     legacyHtml,
+    false,
+    "Note 1",
   );
   if (legacy) {
     return {
@@ -259,7 +271,7 @@ export function normalizeNotesCollection(raw: unknown): NormalizedNotesCollectio
   }
 
   // Bare CKEditor document / HTML string.
-  const single = noteFrom(record, "note-1");
+  const single = noteFrom(record, "note-1", "", false, "Note 1");
   if (single) {
     return {
       notes: [single.note],

@@ -125,8 +125,8 @@ describe("notes collection (multiple sticky notes)", () => {
   it("builds the persisted envelope", () => {
     const envelope = createNotesEnvelope(
       [
-        { id: "a", document: NOTE_A, html: "<p>Alpha</p>" },
-        { id: "b", document: NOTE_B, html: "<h1>Beta</h1>" },
+        { id: "a", title: "Note 1", document: NOTE_A, html: "<p>Alpha</p>" },
+        { id: "b", title: "Chemistry", document: NOTE_B, html: "<h1>Beta</h1>" },
       ],
       "b",
     );
@@ -136,8 +136,13 @@ describe("notes collection (multiple sticky notes)", () => {
       version: NOTES_COLLECTION_VERSION,
       activeId: "b",
       notes: [
-        { id: "a", document: NOTE_A, html: "<p>Alpha</p>" },
-        { id: "b", document: NOTE_B, html: "<h1>Beta</h1>" },
+        { id: "a", title: "Note 1", document: NOTE_A, html: "<p>Alpha</p>" },
+        {
+          id: "b",
+          title: "Chemistry",
+          document: NOTE_B,
+          html: "<h1>Beta</h1>",
+        },
       ],
     });
   });
@@ -156,8 +161,18 @@ describe("notes collection (multiple sticky notes)", () => {
     const normalized = normalizeNotesCollection(
       createNotesEnvelope(
         [
-          { id: "note-a", document: NOTE_A, html: "<p>Alpha</p>" },
-          { id: "note-b", document: NOTE_B, html: "<h1>Beta</h1>" },
+          {
+            id: "note-a",
+            title: "Note 1",
+            document: NOTE_A,
+            html: "<p>Alpha</p>",
+          },
+          {
+            id: "note-b",
+            title: "Note 2",
+            document: NOTE_B,
+            html: "<h1>Beta</h1>",
+          },
         ],
         "note-b",
       ),
@@ -166,8 +181,18 @@ describe("notes collection (multiple sticky notes)", () => {
     expect(normalized.activeId).toBe("note-b");
     expect(normalized.pendingMigration).toBe(false);
     expect(normalized.notes).toEqual([
-      { id: "note-a", document: NOTE_A, html: "<p>Alpha</p>" },
-      { id: "note-b", document: NOTE_B, html: "<h1>Beta</h1>" },
+      {
+        id: "note-a",
+        title: "Note 1",
+        document: NOTE_A,
+        html: "<p>Alpha</p>",
+      },
+      {
+        id: "note-b",
+        title: "Note 2",
+        document: NOTE_B,
+        html: "<h1>Beta</h1>",
+      },
     ]);
   });
 
@@ -175,8 +200,8 @@ describe("notes collection (multiple sticky notes)", () => {
     const normalized = normalizeNotesCollection(
       createNotesEnvelope(
         [
-          { id: "note-a", document: NOTE_A, html: "" },
-          { id: "note-b", document: NOTE_B, html: "" },
+          { id: "note-a", title: "Note 1", document: NOTE_A, html: "" },
+          { id: "note-b", title: "Note 2", document: NOTE_B, html: "" },
         ],
         "missing",
       ),
@@ -208,6 +233,7 @@ describe("notes collection (multiple sticky notes)", () => {
 
     expect(normalized.notes[0]).toEqual({
       id: "old",
+      title: "Note 1",
       document: null,
       html: "<p>Carried over</p>",
     });
@@ -223,7 +249,12 @@ describe("notes collection (multiple sticky notes)", () => {
     });
 
     expect(normalized.notes).toEqual([
-      { id: "note-1", document: NOTE_A, html: "<p>Alpha</p>" },
+      {
+        id: "note-1",
+        title: "Note 1",
+        document: NOTE_A,
+        html: "<p>Alpha</p>",
+      },
     ]);
     expect(normalized.activeId).toBe("note-1");
   });
@@ -234,7 +265,12 @@ describe("notes collection (multiple sticky notes)", () => {
     });
 
     expect(normalized.notes).toEqual([
-      { id: "note-1", document: null, html: "<p>Old notes</p>" },
+      {
+        id: "note-1",
+        title: "Note 1",
+        document: null,
+        html: "<p>Old notes</p>",
+      },
     ]);
     expect(normalized.activeId).toBe("note-1");
     expect(normalized.pendingMigration).toBe(true);
@@ -244,7 +280,7 @@ describe("notes collection (multiple sticky notes)", () => {
     const normalized = normalizeNotesCollection(NOTE_A);
 
     expect(normalized.notes).toEqual([
-      { id: "note-1", document: NOTE_A, html: "" },
+      { id: "note-1", title: "Note 1", document: NOTE_A, html: "" },
     ]);
     expect(normalized.activeId).toBe("note-1");
     expect(normalized.pendingMigration).toBe(false);
@@ -264,13 +300,15 @@ describe("notes collection (multiple sticky notes)", () => {
     expect(normalized.notes).toHaveLength(2);
     expect(normalized.notes[1]).toEqual({
       id: "note-b",
+      title: "Note 2",
       document: null,
       html: "",
     });
     expect(normalized.activeId).toBe("note-b");
   });
 
-  it("skips malformed note entries without dropping the rest", () => {    const normalized = normalizeNotesCollection({
+  it("skips malformed note entries without dropping the rest", () => {
+    const normalized = normalizeNotesCollection({
       format: NOTES_COLLECTION_FORMAT,
       notes: [
         "nope",
@@ -280,7 +318,7 @@ describe("notes collection (multiple sticky notes)", () => {
     });
 
     expect(normalized.notes).toEqual([
-      { id: "kept", document: NOTE_B, html: "" },
+      { id: "kept", title: "Note 3", document: NOTE_B, html: "" },
     ]);
     expect(normalized.activeId).toBe("kept");
   });

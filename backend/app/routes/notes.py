@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
@@ -25,6 +27,7 @@ router = APIRouter(prefix="/notes", tags=["Sticky Notes"])
 # A notes document is text; 2 MB is far above any realistic editor payload and
 # keeps a single user from writing an unbounded object.
 MAX_NOTES_BYTES = 2 * 1024 * 1024
+MAX_EXPORT_HTML_BYTES = 2 * 1024 * 1024
 
 # Multi-note envelopes written by the current client:
 #   {"format": "genova-sticky-notes", "version": 1, "activeId": "…",
@@ -35,6 +38,12 @@ NOTES_COLLECTION_FORMAT = "genova-sticky-notes"
 
 class NotesPayload(BaseModel):
     notes: Dict[str, Any] = Field(..., description="CKEditor 5 JSON document")
+
+
+class NotesPdfExportPayload(BaseModel):
+    html: str = Field(..., description="CKEditor HTML snapshot to typeset")
+    title: Optional[str] = Field(None, description="Optional document title")
+    note_id: Optional[str] = Field(None, description="Optional note identifier")
 
 
 def _require_storage() -> None:
@@ -181,3 +190,60 @@ def delete_notes(current_user: User = Depends(get_current_user)):
         ) from exc
 
     return {"deleted": True, "storage": "s3"}
+
+
+def _safe_filename(name: str) -> str:
+    cleaned = re.sub(r"[^\w\s\-]+", "", (name or "notes").strip(), flags=re.UNICODE)
+    cleaned = re.sub(r"\s+", "_", cleaned).strip("._") or "notes"
+    return cleaned[:80]
+
+
+@router.post(
+    "/export/pdf",
+    summary="Export CKEditor note HTML as a professionally typeset PDF",
+    description=(
+        "Accepts the editor HTML snapshot and returns a Genova publishing-system "
+        "PDF (cover, TOC when applicable, editorial typography). Does not read or "
+        "write S3 — the client supplies the content to export."
+    ),
+)
+def export_notes_pdf(
+    payload: NotesPdfExportPayload,
+    current_user: User = Depends(get_current_user),
+):
+    """Typeset notes HTML with the shared PDF publishing design system."""
+    html = payload.html or ""
+    if not html.strip():
+        raise ValidationException("Notes are empty — nothing to export")
+    if len(html.encode("utf-8")) > MAX_EXPORT_HTML_BYTES:
+        raise ValidationException(
+            f"Export HTML exceeds the {MAX_EXPORT_HTML_BYTES // (1024 * 1024)} MB limit"
+        )
+
+    try:
+        from app.publishing.notes import format_notes_pdf
+
+        pdf_bytes = format_notes_pdf(
+            html,
+            title=payload.title,
+            note_id=payload.note_id,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Notes PDF export failed for user %s: %s", current_user.id, exc
+        )
+        raise AppException(
+            "NOTES_PDF_EXPORT_FAILED",
+            "Could not generate the notes PDF. Please try again.",
+            500,
+        ) from exc
+
+    filename = f"{_safe_filename(payload.title or 'genova-notes')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )

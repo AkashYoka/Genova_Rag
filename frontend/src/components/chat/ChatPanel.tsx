@@ -160,6 +160,7 @@ export default function ChatPanel({
 
   const [attachedDocs, setAttachedDocs] = useState<AttachedDocument[]>([]);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [attachPickerOpen, setAttachPickerOpen] = useState(false);
   const [attachFilter, setAttachFilter] = useState("");
   const MAX_CHARACTERS = 2000;
@@ -819,6 +820,7 @@ export default function ChatPanel({
 
   const handleExport = async (format: "md" | "txt" | "pdf") => {
     setExportMenuOpen(false);
+    if (exporting) return;
     const token = api.getAccessToken();
     if (!token || token === "cookie") {
       toast.error("Sign in required to export chat");
@@ -837,6 +839,11 @@ export default function ChatPanel({
       return;
     }
 
+    setExporting(true);
+    const toastId =
+      format === "pdf"
+        ? toast.loading("Preparing conversation ebook…")
+        : toast.loading("Exporting chat…");
     try {
       const { blob, filename } = await api.downloadAuthenticated(path);
       const objectUrl = URL.createObjectURL(blob);
@@ -847,10 +854,15 @@ export default function ChatPanel({
       a.click();
       a.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-      toast.success("Chat exported");
+      toast.success(
+        format === "pdf" ? "Conversation ebook ready" : "Chat exported",
+        { id: toastId },
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not export chat";
-      toast.error(message);
+      toast.error(message, { id: toastId });
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -1422,12 +1434,13 @@ export default function ChatPanel({
                     <DropdownMenuTrigger
                       id="export-chat-btn"
                       type="button"
+                      disabled={exporting}
                       className={cn(
                         buttonVariants({ variant: "ghost", size: "icon" }),
                         "h-8 w-8 rounded-full text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
                       )}
                       aria-label={t("chat.exportTitle")}
-                      title={t("chat.exportTitle")}
+                      title={exporting ? "Preparing export…" : t("chat.exportTitle")}
                     >
                       <Download className="h-3.5 w-3.5" />
                     </DropdownMenuTrigger>
@@ -1441,16 +1454,18 @@ export default function ChatPanel({
                       <DropdownMenuItem
                         id="export-md-btn"
                         className="gap-2 px-3 py-2"
-                        onClick={() => handleExport("md")}
+                        disabled={exporting}
+                        onClick={() => void handleExport("md")}
                       >
                         {t("chat.markdown")}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         id="export-pdf-btn"
                         className="gap-2 px-3 py-2"
-                        onClick={() => handleExport("pdf")}
+                        disabled={exporting}
+                        onClick={() => void handleExport("pdf")}
                       >
-                        {t("chat.pdf")}
+                        {exporting ? "Preparing PDF…" : t("chat.pdf")}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

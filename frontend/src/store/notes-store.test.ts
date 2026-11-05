@@ -44,12 +44,13 @@ const NOTE_C = createNoteDocument([
 ]);
 
 function envelope(
-  notes: Array<{ id: string; document: unknown; html: string }>,
+  notes: Array<{ id: string; title?: string; document: unknown; html: string }>,
   activeId: string | null,
 ) {
   return createNotesEnvelope(
-    notes.map((note) => ({
+    notes.map((note, index) => ({
       id: note.id,
+      title: note.title ?? `Note ${index + 1}`,
       document: note.document as Record<string, unknown> | null,
       html: note.html,
     })),
@@ -125,10 +126,12 @@ describe("notes-store — multiple notes", () => {
     expect(state.notes).toHaveLength(2);
     expect(state.notes[0]).toEqual({
       id: "note-a",
+      title: "Note 1",
       document: NOTE_A,
       html: "<p>Alpha</p>",
     });
     expect(state.notes[1].id).toBe(createdId);
+    expect(state.notes[1].title).toBe("Note 2");
     expect(state.notes[1].html).toBe("");
     expect(state.activeNoteId).toBe(createdId);
 
@@ -208,11 +211,13 @@ describe("notes-store — multiple notes", () => {
     const notes = useNotesStore.getState().notes;
     expect(notes[0]).toEqual({
       id: "note-a",
+      title: "Note 1",
       document: NOTE_A,
       html: "<p>Alpha</p>",
     });
     expect(notes[1]).toEqual({
       id: "note-b",
+      title: "Note 2",
       document: NOTE_C,
       html: "<p>Gamma</p>",
     });
@@ -314,9 +319,30 @@ describe("notes-store — multiple notes", () => {
 
     const state = useNotesStore.getState();
     expect(state.notes).toEqual([
-      { id: "note-1", document: null, html: "<p>Legacy body</p>" },
+      {
+        id: "note-1",
+        title: "Note 1",
+        document: null,
+        html: "<p>Legacy body</p>",
+      },
     ]);
     expect(state.activeNoteId).toBe("note-1");
     expect(state.pendingMigration).toBe(true);
+  });
+
+  it("renames a note and persists the title", async () => {
+    await load(
+      envelope(
+        [{ id: "note-a", document: NOTE_A, html: "<p>Alpha</p>" }],
+        "note-a",
+      ),
+    );
+
+    act(() => {
+      useNotesStore.getState().renameNote("note-a", "Chemistry");
+    });
+
+    expect(useNotesStore.getState().notes[0].title).toBe("Chemistry");
+    expect(draft().notes[0].title).toBe("Chemistry");
   });
 });

@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Download,
   Eraser,
   FileDown,
   FileText,
+  Pencil,
   Plus,
   StickyNote,
   X,
@@ -34,7 +35,7 @@ const NotesEditor = dynamic(() => import("./NotesEditor"), {
   ssr: false,
   loading: () => (
     <div
-      className="flex flex-1 items-center justify-center text-xs text-muted-foreground"
+      className="flex flex-1 items-center justify-center text-xs text-[var(--gd-muted)]"
       aria-busy="true"
     >
       Loading editor…
@@ -53,6 +54,7 @@ export default function NotesPanel() {
   const appendMessage = useNotesStore((s) => s.appendMessage);
   const addNote = useNotesStore((s) => s.addNote);
   const selectNote = useNotesStore((s) => s.selectNote);
+  const renameNote = useNotesStore((s) => s.renameNote);
   const closeNote = useNotesStore((s) => s.closeNote);
   const clear = useNotesStore((s) => s.clear);
   const setNotesOpen = useNotesStore((s) => s.setNotesOpen);
@@ -62,10 +64,35 @@ export default function NotesPanel() {
   const error = useNotesStore((s) => s.error);
   const [dragOver, setDragOver] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const activeIndex = notes.findIndex((note) => note.id === activeNoteId);
   const activeNote = activeIndex >= 0 ? notes[activeIndex] : null;
   const html = activeNote?.html ?? "";
+
+  useEffect(() => {
+    if (editingId) renameInputRef.current?.focus();
+  }, [editingId]);
+
+  const startRename = (noteId: string, currentTitle: string) => {
+    setEditingId(noteId);
+    setEditTitle(currentTitle);
+    selectNote(noteId);
+  };
+
+  const commitRename = () => {
+    if (!editingId) return;
+    renameNote(editingId, editTitle);
+    setEditingId(null);
+    setEditTitle("");
+  };
+
+  const cancelRename = () => {
+    setEditingId(null);
+    setEditTitle("");
+  };
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (
@@ -99,7 +126,6 @@ export default function NotesPanel() {
         return;
       }
 
-      // Plain text fallback
       const text = raw.trim();
       if (!text) return;
       appendMessage({
@@ -117,46 +143,65 @@ export default function NotesPanel() {
       toast.message("Notes are empty");
       return;
     }
+    if (exporting) return;
     setExporting(true);
+    const toastId =
+      kind === "pdf"
+        ? toast.loading("Preparing ebook PDF…")
+        : undefined;
     try {
       if (kind === "txt") exportNotesAsTxt(html);
       else if (kind === "md") exportNotesAsMarkdown(html);
-      else await exportNotesAsPdf(html);
-      toast.success(`Exported as ${kind.toUpperCase()}`);
+      else {
+        await exportNotesAsPdf(html, {
+          title: activeNote?.title || "Genova Notes",
+          noteId: activeNote?.id,
+        });
+      }
+      if (toastId !== undefined) {
+        toast.success("Notes PDF ready", { id: toastId });
+      } else {
+        toast.success(`Exported as ${kind.toUpperCase()}`);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Export failed";
-      toast.error(message);
+      if (toastId !== undefined) toast.error(message, { id: toastId });
+      else toast.error(message);
     } finally {
       setExporting(false);
     }
   };
 
+  const statusLabel = saving
+    ? "Saving…"
+    : storage === "s3"
+      ? "Synced to your private S3 folder"
+      : storage === "unavailable"
+        ? "Stored on this device"
+        : error
+          ? "Kept on this device — sync failed"
+          : "Saved on this device";
+
   return (
     <div
-      className="flex h-full min-h-0 flex-1 flex-col"
+      className="genova-notes flex h-full min-h-0 flex-1 flex-col bg-[var(--gd-surface)] text-[var(--gd-text)]"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       aria-label="Sticky notes"
     >
-      <div className="flex shrink-0 flex-col gap-1.5 border-b border-[var(--gd-border,#e2e5ea)] px-3 py-2">
+      <div className="genova-notes-chrome flex shrink-0 flex-col gap-2 border-b border-[var(--gd-border)] px-3 py-2.5">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <StickyNote className="h-3.5 w-3.5 shrink-0 text-[var(--gd-muted,#6b7280)]" />
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[var(--gd-border)] bg-[var(--gd-raised)]">
+              <StickyNote className="h-3.5 w-3.5 text-[var(--gd-muted)]" />
+            </div>
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-medium leading-tight">
+              <p className="truncate text-[13px] font-semibold leading-tight tracking-tight">
                 Notes
               </p>
-              <p className="truncate text-[10px] text-muted-foreground">
-                {saving
-                  ? "Saving…"
-                  : storage === "s3"
-                    ? "Synced to your private S3 folder"
-                    : storage === "unavailable"
-                      ? "Stored on this device"
-                      : error
-                        ? "Kept on this device — sync failed"
-                        : "Saved on this device"}
+              <p className="truncate text-[11px] text-[var(--gd-muted)]">
+                {statusLabel}
               </p>
             </div>
           </div>
@@ -167,7 +212,7 @@ export default function NotesPanel() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7"
+                    className="h-7 w-7 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
                     disabled={exporting}
                     aria-label="Export notes"
                     title="Export notes"
@@ -179,10 +224,11 @@ export default function NotesPanel() {
               <DropdownMenuContent align="end" className="min-w-44">
                 <DropdownMenuItem
                   className="cursor-pointer"
+                  disabled={exporting}
                   onClick={() => void runExport("pdf")}
                 >
                   <FileDown className="mr-2 h-3.5 w-3.5" />
-                  Download PDF
+                  {exporting ? "Preparing PDF…" : "Download PDF"}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="cursor-pointer"
@@ -203,7 +249,7 @@ export default function NotesPanel() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7"
+              className="h-7 w-7 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
               onClick={() => {
                 if (!html.trim()) return;
                 clear();
@@ -217,7 +263,7 @@ export default function NotesPanel() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7"
+              className="h-7 w-7 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
               onClick={() => setNotesOpen(false)}
               aria-label="Close notes"
               title="Close notes"
@@ -227,40 +273,87 @@ export default function NotesPanel() {
           </div>
         </div>
 
-        {/* Note tabs — one independent note per tab. */}
         <div className="flex min-w-0 items-center gap-1">
           <div
             className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-0.5"
             role="tablist"
             aria-label="Sticky note tabs"
           >
-            {notes.map((note, index) => {
+            {notes.map((note) => {
               const selected = note.id === activeNoteId;
+              const isEditing = editingId === note.id;
+              const label = note.title?.trim() || "Note";
+
               return (
                 <div
                   key={note.id}
-                  className={`flex shrink-0 items-center overflow-hidden rounded-md border text-[11px] transition-colors ${
+                  className={`group flex max-w-[11rem] shrink-0 items-center overflow-hidden rounded-lg border text-[12px] transition-colors ${
                     selected
-                      ? "border-[var(--gd-data,#0F7C86)]/40 bg-[var(--gd-raised,#eceef2)] text-[var(--gd-text,#14171c)]"
-                      : "border-[var(--gd-border,#e2e5ea)] text-[var(--gd-muted,#5c636c)] hover:bg-[var(--gd-raised,#eceef2)]"
+                      ? "border-[var(--gd-border)] bg-[var(--gd-raised)] text-[var(--gd-text)]"
+                      : "border-transparent text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
                   }`}
                 >
+                  {isEditing ? (
+                    <form
+                      className="flex min-w-0 flex-1 items-center"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        commitRename();
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        ref={renameInputRef}
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelRename();
+                          }
+                        }}
+                        maxLength={48}
+                        aria-label="Rename note"
+                        className="min-w-0 flex-1 bg-transparent px-2 py-1 text-[12px] font-medium text-[var(--gd-text)] outline-none"
+                      />
+                    </form>
+                  ) : (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      title={`${label} — double-click to rename`}
+                      onClick={() => selectNote(note.id)}
+                      onDoubleClick={() => startRename(note.id, label)}
+                      className="min-w-0 cursor-pointer truncate px-2.5 py-1.5 font-medium"
+                    >
+                      {label}
+                    </button>
+                  )}
+                  {!isEditing && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename(note.id, label);
+                      }}
+                      aria-label={`Rename ${label}`}
+                      title={`Rename ${label}`}
+                      className="hidden shrink-0 px-1 py-1.5 text-[var(--gd-muted)] opacity-0 transition-opacity hover:text-[var(--gd-text)] group-hover:inline-flex group-hover:opacity-100 group-focus-within:inline-flex group-focus-within:opacity-100"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  )}
                   <button
                     type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    title={`Note ${index + 1}`}
-                    onClick={() => selectNote(note.id)}
-                    className="cursor-pointer px-2 py-1 font-medium"
-                  >
-                    Note {index + 1}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => closeNote(note.id)}
-                    aria-label={`Close Note ${index + 1}`}
-                    title={`Close Note ${index + 1}`}
-                    className="cursor-pointer px-1 py-1 text-[var(--gd-muted,#6b7280)] hover:bg-black/5 hover:text-[var(--gd-text,#14171c)]"
+                    onClick={() => {
+                      if (isEditing) cancelRename();
+                      closeNote(note.id);
+                    }}
+                    aria-label={`Close ${label}`}
+                    title={`Close ${label}`}
+                    className="shrink-0 cursor-pointer px-1.5 py-1.5 text-[var(--gd-muted)] hover:text-[var(--gd-text)]"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -271,7 +364,7 @@ export default function NotesPanel() {
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 shrink-0"
+            className="h-7 w-7 shrink-0 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
             onClick={() => addNote()}
             aria-label="Create a new note"
             title="New note"
@@ -282,32 +375,43 @@ export default function NotesPanel() {
       </div>
 
       <div
-        className={`relative flex min-h-0 flex-1 flex-col ${
+        className={`relative flex min-h-0 flex-1 flex-col bg-[var(--gd-surface)] ${
           dragOver
-            ? "bg-[color-mix(in_oklab,var(--gd-data,#0F7C86)_8%,transparent)]"
+            ? "bg-[color-mix(in_oklab,var(--gd-accent)_8%,transparent)]"
             : ""
         }`}
       >
         {dragOver ? (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center border-2 border-dashed border-[var(--gd-data,#0F7C86)] bg-[color-mix(in_oklab,var(--gd-data,#0F7C86)_6%,var(--gd-surface,#fff))] text-sm font-medium text-[var(--gd-text,#14171c)]">
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center border-2 border-dashed border-[var(--gd-accent)] bg-[color-mix(in_oklab,var(--gd-accent)_6%,var(--gd-surface))] text-sm font-medium text-[var(--gd-text)]">
             Drop message into notes
           </div>
         ) : null}
 
         {loading ? (
-          <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground" aria-busy="true">
+          <div
+            className="flex flex-1 items-center justify-center text-xs text-[var(--gd-muted)]"
+            aria-busy="true"
+          >
             Loading notes…
           </div>
         ) : !activeNote ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-            <StickyNote className="h-7 w-7 text-[var(--gd-muted,#6b7280)]" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--gd-border)] bg-[var(--gd-raised)]">
+              <StickyNote className="h-4 w-4 text-[var(--gd-muted)]" />
+            </div>
             <div>
-              <p className="text-[13px] font-medium">No notes open</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
+              <p className="text-[13px] font-medium text-[var(--gd-text)]">
+                No notes open
+              </p>
+              <p className="mt-1 text-[11px] text-[var(--gd-muted)]">
                 Create a note or add a chat message to start writing.
               </p>
             </div>
-            <Button size="sm" className="text-xs" onClick={() => addNote()}>
+            <Button
+              size="sm"
+              className="text-xs"
+              onClick={() => addNote()}
+            >
               <Plus className="mr-1 h-3.5 w-3.5" />
               New note
             </Button>

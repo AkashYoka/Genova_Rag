@@ -1,5 +1,5 @@
-import { jsPDF } from "jspdf";
 import TurndownService from "turndown";
+import { api } from "@/lib/api";
 
 function stripHtml(html: string): string {
   if (typeof document === "undefined") {
@@ -45,28 +45,38 @@ export function exportNotesAsMarkdown(html: string) {
   );
 }
 
-export async function exportNotesAsPdf(html: string) {
-  const text = stripHtml(html) || " ";
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const margin = 48;
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  const maxWidth = pageWidth - margin * 2;
-  const lines = doc.splitTextToSize(text, maxWidth) as string[];
-  const lineHeight = 14;
-  let y = margin;
+export type NotesPdfOptions = {
+  title?: string;
+  noteId?: string;
+};
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-
-  for (const line of lines) {
-    if (y + lineHeight > pageHeight - margin) {
-      doc.addPage();
-      y = margin;
-    }
-    doc.text(line, margin, y);
-    y += lineHeight;
+/**
+ * Export CKEditor HTML via the Genova publishing backend (ReportLab ebook),
+ * matching Chat PDF typography and page chrome.
+ */
+export async function exportNotesAsPdf(
+  html: string,
+  options: NotesPdfOptions = {},
+) {
+  const token = api.getAccessToken();
+  if (!token || token === "cookie") {
+    throw new Error("Sign in required to export notes as PDF");
+  }
+  if (!html?.trim()) {
+    throw new Error("Notes are empty");
   }
 
-  doc.save(`genova-notes-${stamp()}.pdf`);
+  const { blob, filename } = await api.downloadAuthenticated(
+    "/api/v1/notes/export/pdf",
+    {
+      method: "POST",
+      body: {
+        html,
+        title: options.title || undefined,
+        note_id: options.noteId || undefined,
+      },
+    },
+  );
+
+  downloadBlob(filename ?? `genova-notes-${stamp()}.pdf`, blob);
 }

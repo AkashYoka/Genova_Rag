@@ -26,10 +26,18 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Genova_Rag — Yoka Document Intelligence",
+  title: "Genova — Yoka Document Intelligence",
   description:
     "Upload complex PDFs and chat with an AI agent that retrieves precise insights and cites sources using Retrieval-Augmented Generation.",
   keywords: ["RAG", "Document AI", "PDF Analysis", "Genova", "Yoka"],
+  icons: {
+    icon: [
+      { url: "/favicon.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/logo.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({

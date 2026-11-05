@@ -671,11 +671,25 @@
   box-shadow: inset 0 -1px 0 var(--gd-surface);
 }
 
+/* Sticky notes — Taste Skill app-screen: quiet chrome, editor fills the pane */
+.genova-notes {
+  color: var(--gd-text);
+  background: var(--gd-surface);
+}
+
 .genova-notes-editor {
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
+  background: var(--gd-surface);
+  color: var(--gd-text);
+  color-scheme: light;
+}
+
+.dark .genova-notes-editor,
+.genova-desk.theme-dark .genova-notes-editor {
+  color-scheme: dark;
 }
 
 .genova-notes-editor .ck.ck-editor {
@@ -683,18 +697,139 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
+  background: var(--gd-surface);
+  color: var(--gd-text);
+  --ck-color-base-background: var(--gd-surface);
+  --ck-color-base-foreground: var(--gd-text);
+  --ck-color-base-border: var(--gd-border);
+  --ck-color-toolbar-background: var(--gd-raised);
+  --ck-color-toolbar-border: var(--gd-border);
+  --ck-color-button-default-background: transparent;
+  --ck-color-button-default-hover-background: var(--gd-active);
+  --ck-color-button-on-background: var(--gd-active);
+  --ck-color-button-on-color: var(--gd-text);
+  --ck-color-button-default-color: var(--gd-muted);
+  --ck-color-dropdown-panel-background: var(--gd-surface);
+  --ck-color-dropdown-panel-border: var(--gd-border);
+  --ck-color-list-background: var(--gd-surface);
+  --ck-color-list-button-hover-background: var(--gd-raised);
+  --ck-color-list-button-on-background: var(--gd-active);
+  --ck-color-text: var(--gd-text);
+  --ck-color-engine-placeholder-text: var(--gd-faint);
+  --ck-color-widget-hover-border: var(--gd-accent);
+  --ck-color-focus-border: var(--gd-accent);
+  --ck-border-radius: 0;
+  --ck-inner-shadow: none;
+  --ck-drop-shadow: none;
+}
+
+.genova-notes-editor .ck.ck-toolbar {
+  background: var(--gd-raised) !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--gd-border) !important;
+  box-shadow: none !important;
+}
+
+.genova-notes-editor .ck.ck-toolbar .ck-button,
+.genova-notes-editor .ck.ck-toolbar .ck-dropdown__button {
+  color: var(--gd-muted) !important;
+}
+
+.genova-notes-editor .ck.ck-toolbar .ck-button:hover,
+.genova-notes-editor .ck.ck-toolbar .ck-button.ck-on,
+.genova-notes-editor .ck.ck-toolbar .ck-dropdown__button:hover {
+  background: var(--gd-active) !important;
+  color: var(--gd-text) !important;
+}
+
+.genova-notes-editor .ck.ck-toolbar .ck-toolbar__separator {
+  background: var(--gd-border) !important;
 }
 
 .genova-notes-editor .ck.ck-editor__main {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  background: var(--gd-surface) !important;
 }
 
-.genova-notes-editor .ck-editor__editable {
+.genova-notes-editor .ck-editor__editable,
+.genova-notes-editor .ck-content {
   min-height: 100%;
   border: 0 !important;
   box-shadow: none !important;
+  background: var(--gd-surface) !important;
+  color: var(--gd-text) !important;
+  caret-color: var(--gd-text);
+}
+
+.genova-notes-editor .ck-content p,
+.genova-notes-editor .ck-content li,
+.genova-notes-editor .ck-content blockquote,
+.genova-notes-editor .ck-content h1,
+.genova-notes-editor .ck-content h2,
+.genova-notes-editor .ck-content h3,
+.genova-notes-editor .ck-content h4,
+.genova-notes-editor .ck-content h5,
+.genova-notes-editor .ck-content h6 {
+  color: var(--gd-text);
+}
+
+.genova-notes-editor .ck-content a {
+  color: var(--gd-accent);
+}
+
+.genova-notes-editor .ck-content code,
+.genova-notes-editor .ck-content pre {
+  background: var(--gd-raised) !important;
+  color: var(--gd-text) !important;
+  border-color: var(--gd-border);
+}
+
+.genova-notes-editor .ck-content blockquote {
+  border-left-color: var(--gd-border) !important;
+  color: var(--gd-muted);
+}
+
+.genova-notes-editor .ck-content table,
+.genova-notes-editor .ck-content table td,
+.genova-notes-editor .ck-content table th {
+  border-color: var(--gd-border) !important;
+  background: transparent;
+  color: var(--gd-text);
+}
+
+.genova-notes-editor .ck-content table th {
+  background: var(--gd-raised) !important;
+}
+
+.genova-notes-editor .ck.ck-dropdown__panel,
+.genova-notes-editor .ck.ck-list,
+.genova-notes-editor .ck.ck-balloon-panel {
+  background: var(--gd-surface) !important;
+  border-color: var(--gd-border) !important;
+  color: var(--gd-text) !important;
+  box-shadow: 0 8px 24px color-mix(in oklab, #000 18%, transparent) !important;
+}
+
+.genova-notes-editor .ck.ck-list__item .ck-button {
+  color: var(--gd-text) !important;
+}
+
+.genova-notes-editor .ck.ck-list__item .ck-button:hover,
+.genova-notes-editor .ck.ck-list__item .ck-button.ck-on {
+  background: var(--gd-raised) !important;
+}
+
+.genova-notes-editor .ck.ck-input-text,
+.genova-notes-editor .ck.ck-labeled-field-view__input-wrapper .ck-input {
+  background: var(--gd-raised) !important;
+  border-color: var(--gd-border) !important;
+  color: var(--gd-text) !important;
+}
+
+.genova-notes-editor .ck-placeholder::before {
+  color: var(--gd-faint) !important;
 }
 
 .genova-desk-alert {
