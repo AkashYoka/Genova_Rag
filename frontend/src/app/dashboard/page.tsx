@@ -18,7 +18,14 @@ import CompareView from "@/components/document/CompareView";
 import DashboardDropOverlay from "@/components/document/DashboardDropOverlay";
 import { useDashboardDrop } from "@/hooks/useDashboardDrop";
 import { Button } from "@/components/ui/button";
-import { Columns2, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import {
+  Columns2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  StickyNote,
+} from "lucide-react";
 import { useNotesStore } from "@/store/notes-store";
 import "./dashboard.css";
 
@@ -352,16 +359,6 @@ function DashboardPageContent() {
       />
 
       <Header
-        viewerOpen={viewerOpen}
-        onToggleViewer={() => setViewerOpen(!viewerOpen)}
-        notesOpen={notesOpen}
-        onToggleNotes={() => {
-          const next = !notesOpen;
-          setNotesOpen(next);
-          if (next) setInspectorTab("notes");
-        }}
-        compareOpen={compareOpen}
-        onToggleCompare={() => setCompareOpen(!compareOpen)}
         graphOpen={graphOpen}
         onToggleGraph={() => setGraphOpen(!graphOpen)}
       />
@@ -388,12 +385,12 @@ function DashboardPageContent() {
 
         {/* Region 3 — open conversation */}
         <section className="genova-desk-chat" aria-label="Assistant">
-          <div className="genova-desk-title">
+          <header className="genova-desk-title">
             <div className="genova-desk-title-heading">
               <Button
                 variant="ghost"
                 size="icon"
-                className="hidden h-8 w-8 shrink-0 md:inline-flex"
+                className="hidden h-7 w-7 shrink-0 md:inline-flex"
                 onClick={toggleSessions}
                 aria-label={
                   sessionsOpen ? "Hide chat sessions" : "Show chat sessions"
@@ -405,32 +402,38 @@ function DashboardPageContent() {
                 }
               >
                 {sessionsOpen ? (
-                  <PanelLeftClose className="h-4 w-4" />
+                  <PanelLeftClose className="h-3.5 w-3.5" />
                 ) : (
-                  <PanelLeftOpen className="h-4 w-4" />
+                  <PanelLeftOpen className="h-3.5 w-3.5" />
                 )}
               </Button>
-              <div className="min-w-0">
-                <h1>{activeDoc?.original_name ?? "Document desk"}</h1>
-                <p className="sub">
+              <div className="min-w-0 flex-1">
+                <h1 title={activeDoc?.original_name ?? "Document desk"}>
+                  {activeDoc?.original_name ?? "Document desk"}
+                </h1>
+                <p className="sub" title={
+                  activeDoc
+                    ? `${activeDoc.status}, ${formatBytes(activeDoc.file_size)}, ${activeDoc.page_count || "–"} pages, ${activeDoc.chunk_count || 0} chunks. ${titleFinding}`
+                    : titleFinding
+                }>
                   {activeDoc ? (
                     <>
                       <span className={statusClass(activeDoc.status)}>
                         {activeDoc.status}
                       </span>
-                      <span className="text-[var(--gd-faint)]">, </span>
+                      <span aria-hidden="true"> · </span>
                       <span className="num">
                         {formatBytes(activeDoc.file_size)}
                       </span>
-                      <span className="text-[var(--gd-faint)]">, </span>
+                      <span aria-hidden="true"> · </span>
                       <span className="num">{activeDoc.page_count || "–"}</span>{" "}
                       pages
-                      <span className="text-[var(--gd-faint)]">, </span>
+                      <span aria-hidden="true"> · </span>
                       <span className="num data-hue">
                         {activeDoc.chunk_count || 0}
                       </span>{" "}
                       chunks
-                      <span className="text-[var(--gd-faint)]">. </span>
+                      <span aria-hidden="true"> · </span>
                       {titleFinding}
                     </>
                   ) : (
@@ -439,33 +442,56 @@ function DashboardPageContent() {
                 </p>
               </div>
             </div>
-            <div className="actions lg:hidden">
+            <div className="actions">
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-7 w-7"
                 onClick={() => setViewerOpen(!viewerOpen)}
                 aria-label={viewerOpen ? "Close PDF viewer" : "Open PDF viewer"}
+                aria-pressed={viewerOpen}
+                title={viewerOpen ? "Close viewer" : "Open viewer"}
               >
                 {viewerOpen ? (
-                  <PanelRightClose className="h-4 w-4" />
+                  <PanelRightClose className="h-3.5 w-3.5" />
                 ) : (
-                  <PanelRightOpen className="h-4 w-4" />
+                  <PanelRightOpen className="h-3.5 w-3.5" />
                 )}
               </Button>
               <Button
                 variant={compareOpen ? "secondary" : "ghost"}
                 size="icon"
-                className="h-8 w-8"
+                className="h-7 w-7"
                 onClick={() => setCompareOpen(!compareOpen)}
                 aria-label={
                   compareOpen ? "Close compare view" : "Open compare view"
                 }
+                aria-pressed={compareOpen}
+                title={
+                  compareOpen
+                    ? "Close compare view"
+                    : "Compare two PDFs side-by-side"
+                }
               >
-                <Columns2 className="h-4 w-4" />
+                <Columns2 className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant={notesOpen ? "secondary" : "ghost"}
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => {
+                  const next = !notesOpen;
+                  setNotesOpen(next);
+                  if (next) setInspectorTab("notes");
+                }}
+                aria-label={notesOpen ? "Close notes panel" : "Open notes panel"}
+                aria-pressed={notesOpen}
+                title={notesOpen ? "Close notes" : "Open notes"}
+              >
+                <StickyNote className="h-3.5 w-3.5" />
               </Button>
             </div>
-          </div>
+          </header>
 
           <div className="genova-desk-chat-body">
             <ChatPanel
@@ -490,7 +516,11 @@ function DashboardPageContent() {
                 }
 
                 if (matchedDoc) {
-                  setActiveDoc(matchedDoc);
+                  // Only switch the desk document when the citation points at a
+                  // different file — avoid remounting chat state for same-doc views.
+                  if (matchedDoc.id !== activeDoc?.id) {
+                    setActiveDoc(matchedDoc);
+                  }
                 } else if (!activeDoc) {
                   toast.error("Select a PDF document to view citations.");
                   return;

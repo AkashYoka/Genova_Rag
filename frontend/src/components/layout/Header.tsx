@@ -17,16 +17,12 @@ import {
 import {
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   LogOut,
   Menu,
   X,
   Sun,
   Moon,
   Settings,
-  Columns2,
-  StickyNote,
   Network,
 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -43,12 +39,6 @@ import Logo from "./Logo";
 interface HeaderProps {
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
-  viewerOpen?: boolean;
-  onToggleViewer?: () => void;
-  notesOpen?: boolean;
-  onToggleNotes?: () => void;
-  compareOpen?: boolean;
-  onToggleCompare?: () => void;
   graphOpen?: boolean;
   onToggleGraph?: () => void;
   /** Pass DocumentSidebar JSX so the mobile sheet can render it */
@@ -62,12 +52,6 @@ const getServerSnapshot = () => false;
 export default function Header({
   sidebarOpen = false,
   onToggleSidebar,
-  viewerOpen = false,
-  onToggleViewer,
-  notesOpen = false,
-  onToggleNotes,
-  compareOpen = false,
-  onToggleCompare,
   graphOpen = false,
   onToggleGraph,
   mobileSheetContent,
@@ -179,63 +163,6 @@ export default function Header({
         </div>
 
         <div className="flex items-center gap-1">
-          {onToggleViewer ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              className={toolBtn}
-              onClick={onToggleViewer}
-              title={viewerOpen ? "Close viewer" : "Open viewer"}
-              aria-label={viewerOpen ? "Close PDF viewer" : "Open PDF viewer"}
-              aria-pressed={viewerOpen}
-            >
-              {viewerOpen ? (
-                <PanelRightClose className="h-4 w-4" />
-              ) : (
-                <PanelRightOpen className="h-4 w-4" />
-              )}
-            </Button>
-          ) : null}
-          {onToggleNotes ? (
-            <Button
-              variant={notesOpen ? "secondary" : "ghost"}
-              size="icon"
-              className={
-                notesOpen
-                  ? "h-8 w-8 bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)]"
-                  : toolBtn
-              }
-              onClick={onToggleNotes}
-              title={notesOpen ? "Close notes" : "Open notes"}
-              aria-label={notesOpen ? "Close notes panel" : "Open notes panel"}
-              aria-pressed={notesOpen}
-            >
-              <StickyNote className="h-4 w-4" />
-            </Button>
-          ) : null}
-          {onToggleCompare ? (
-            <Button
-              variant={compareOpen ? "secondary" : "ghost"}
-              size="icon"
-              className={
-                compareOpen
-                  ? "h-8 w-8 bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)]"
-                  : toolBtn
-              }
-              onClick={onToggleCompare}
-              title={
-                compareOpen
-                  ? "Close compare view"
-                  : "Compare two PDFs side-by-side"
-              }
-              aria-label={
-                compareOpen ? "Close compare view" : "Open compare view"
-              }
-              aria-pressed={compareOpen}
-            >
-              <Columns2 className="h-4 w-4" />
-            </Button>
-          ) : null}
           {onToggleGraph ? (
             <Button
               variant={graphOpen ? "secondary" : "ghost"}

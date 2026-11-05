@@ -4,8 +4,6 @@ import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import { formatDistanceToNow } from "date-fns";
 import type { ChatMsg } from "@/store/chat-store";
 import {
-  Brain,
-  User,
   Copy,
   Check,
   Play,
@@ -54,7 +52,6 @@ export default function MessageBubble({ message }: Props) {
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Cancel speech synthesis when the component unmounts
   useEffect(() => {
     return () => {
       if (utteranceRef.current) {
@@ -124,8 +121,6 @@ export default function MessageBubble({ message }: Props) {
 
   const handleBranch = () => {
     setCurrentBranchId(message.id);
-
-    console.log("Branch created from:", message.id);
   };
 
   const notePayload = {
@@ -141,165 +136,66 @@ export default function MessageBubble({ message }: Props) {
     toast.success("Added to notes");
   };
 
+  const actionBtn = cn(
+    buttonVariants({ variant: "ghost", size: "icon-xs" }),
+    "h-7 w-7 rounded-md text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
+  );
+
   return (
     <div
-      className={`flex gap-3 py-3 animate-fade-in-up ${isUser ? "justify-end" : "justify-start"}`}
-    >
-      {!isUser && (
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary/25 to-[oklch(0.86_0.16_125/0.2)] border border-primary/20 flex items-center justify-center shrink-0 mt-0.5">
-          <Brain className="w-4 h-4 text-primary" />
-        </div>
+      className={cn(
+        "gc-msg animate-fade-in-up",
+        isUser ? "is-user" : "is-assistant",
       )}
-
-      <div
-        className={`genova-message-bubble group relative max-w-[80%] select-text rounded-2xl px-4 py-3 ${
-          isUser
-            ? "bg-primary text-primary-foreground rounded-br-md shadow-lg shadow-primary/20"
-            : "bg-card/80 border border-border/50 rounded-bl-md backdrop-blur-sm"
-        }`}
-      >
+    >
+      <div className="gc-msg-body select-text">
         {isUser ? (
           <>
-            {message.content ? (
-              <div className="absolute top-2 left-2 flex opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
-                <Tooltip>
-                  <TooltipTrigger
-                    type="button"
-                    className={cn(
-                      buttonVariants({ variant: "ghost", size: "icon-xs" }),
-                      "bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25",
-                    )}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleAddToNotes();
-                    }}
-                    aria-label="Add to notes"
+            <div className="gc-user-bubble relative group">
+              {message.content ? (
+                <div className="absolute -left-9 top-1/2 -translate-y-1/2 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
+                  <Tooltip>
+                    <TooltipTrigger
+                      type="button"
+                      className={actionBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAddToNotes();
+                      }}
+                      aria-label="Add to notes"
+                    >
+                      <StickyNote className="w-3.5 h-3.5" />
+                    </TooltipTrigger>
+                    <TooltipContent>Add to notes</TooltipContent>
+                  </Tooltip>
+                </div>
+              ) : null}
+              <p className={cn("m-0", fontSizeClass)}>{message.content}</p>
+            </div>
+
+            {(message.attachments?.length || messageTime) && (
+              <div className="gc-msg-meta justify-end">
+                {message.attachments?.map((doc) => (
+                  <span
+                    key={doc.id}
+                    className="inline-flex max-w-[10rem] truncate rounded-md border border-[var(--gd-border)] bg-[var(--gd-raised)] px-1.5 py-0.5 text-[10px] text-[var(--gd-muted)]"
+                    title={doc.filename}
                   >
-                    <StickyNote className="w-3.5 h-3.5" />
-                  </TooltipTrigger>
-                  <TooltipContent>Add to notes</TooltipContent>
-                </Tooltip>
+                    {doc.filename}
+                  </span>
+                ))}
+                {messageTime && (
+                  <div title={messageTime.toLocaleString()}>
+                    {formatDistanceToNow(messageTime, { addSuffix: true })}
+                  </div>
+                )}
               </div>
-            ) : null}
-            <p
-              className={`leading-relaxed whitespace-pre-wrap ${fontSizeClass} ${message.content ? "pt-5" : ""}`}
-            >
-              {message.content}
-            </p>
+            )}
           </>
         ) : (
           <>
-            {message.content && (
-              <>
-                {/* Action buttons row — shown on hover */}
-                <div className="absolute top-2 right-2 flex items-center gap-0.5 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity">
-                  {/* Branch button */}
-                  <Tooltip>
-                    <TooltipTrigger
-                      type="button"
-                      className={cn(
-                        buttonVariants({ variant: "ghost", size: "icon-xs" }),
-                        "text-muted-foreground hover:text-foreground",
-                      )}
-                      onClick={handleBranch}
-                      aria-label="Branch conversation"
-                    >
-                      <GitBranch className="w-3.5 h-3.5" />
-                    </TooltipTrigger>
-                    <TooltipContent>Branch conversation</TooltipContent>
-                  </Tooltip>
-
-                  {/* Speech button */}
-                  {!message.isStreaming && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        type="button"
-                        className={cn(
-                          buttonVariants({ variant: "ghost", size: "icon-xs" }),
-                          isSpeaking
-                            ? "text-primary"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}
-                        onClick={handleSpeech}
-                        aria-label={
-                          isSpeaking ? "Stop reading" : "Read response aloud"
-                        }
-                        aria-pressed={isSpeaking}
-                      >
-                        {isSpeaking ? (
-                          <Pause className="w-3.5 h-3.5" />
-                        ) : (
-                          <Play className="w-3.5 h-3.5" />
-                        )}
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {isSpeaking ? "Stop reading" : "Read response aloud"}
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-
-                  {/* Copy button */}
-                  <Tooltip>
-                    <TooltipTrigger
-                      type="button"
-                      className={cn(
-                        buttonVariants({ variant: "ghost", size: "icon-xs" }),
-                        "text-muted-foreground hover:text-foreground",
-                        copied && "opacity-100",
-                      )}
-                      onClick={handleCopy}
-                      aria-label={copied ? "Copied" : "Copy response"}
-                    >
-                      {copied ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {copied ? "Copied" : "Copy response"}
-                    </TooltipContent>
-                  </Tooltip>
-
-                  {/* Add to notes */}
-                  {!message.isStreaming && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        type="button"
-                        className={cn(
-                          buttonVariants({ variant: "ghost", size: "icon-xs" }),
-                          "text-muted-foreground hover:text-foreground",
-                        )}
-                        onClick={handleAddToNotes}
-                        aria-label="Add to notes"
-                      >
-                        <StickyNote className="w-3.5 h-3.5" />
-                      </TooltipTrigger>
-                      <TooltipContent>Add to notes</TooltipContent>
-                    </Tooltip>
-                  )}
-
-                </div>
-
-                {copied && (
-                  <div
-                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-zinc-800 text-white text-xs rounded-md whitespace-nowrap pointer-events-none"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    Copied!
-                  </div>
-                )}
-              </>
-            )}
-
-            <div
-              className={`genova-message-prose prose-chat ${fontSizeClass} ${message.content ? "pr-24" : ""}`}
-            >
+            <div className={cn("gc-assistant-prose genova-message-prose prose-chat", fontSizeClass)}>
               {message.content ? (
-                // While tokens arrive, paint plain text via StreamingText so the
-                // caret stays solid and the UI stays responsive. Full markdown /
-                // KaTeX runs only when the stream finishes.
                 message.isStreaming ? (
                   <StreamingText
                     liveText={prepareMarkdownForMath(message.content, {
@@ -317,81 +213,135 @@ export default function MessageBubble({ message }: Props) {
                   <MarkdownContent content={message.content} />
                 )
               ) : message.isStreaming ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce [animation-delay:0ms]" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce [animation-delay:150ms]" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce [animation-delay:300ms]" />
+                <div className="flex items-center gap-1.5 py-1" aria-label="Generating">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-accent)]/70 animate-bounce [animation-delay:0ms]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-accent)]/70 animate-bounce [animation-delay:150ms]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-accent)]/70 animate-bounce [animation-delay:300ms]" />
                 </div>
               ) : null}
             </div>
+
+            {message.content && (
+              <div className="gc-msg-actions">
+                <Tooltip>
+                  <TooltipTrigger
+                    type="button"
+                    className={actionBtn}
+                    onClick={handleBranch}
+                    aria-label="Branch conversation"
+                  >
+                    <GitBranch className="w-3.5 h-3.5" />
+                  </TooltipTrigger>
+                  <TooltipContent>Branch conversation</TooltipContent>
+                </Tooltip>
+
+                {!message.isStreaming && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      type="button"
+                      className={cn(
+                        actionBtn,
+                        isSpeaking && "text-[var(--gd-accent)]",
+                      )}
+                      onClick={handleSpeech}
+                      aria-label={
+                        isSpeaking ? "Stop reading" : "Read response aloud"
+                      }
+                      aria-pressed={isSpeaking}
+                    >
+                      {isSpeaking ? (
+                        <Pause className="w-3.5 h-3.5" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5" />
+                      )}
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {isSpeaking ? "Stop reading" : "Read response aloud"}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                <Tooltip>
+                  <TooltipTrigger
+                    type="button"
+                    className={cn(actionBtn, copied && "opacity-100")}
+                    onClick={handleCopy}
+                    aria-label={copied ? "Copied" : "Copy response"}
+                  >
+                    {copied ? (
+                      <Check className="w-3.5 h-3.5 text-[var(--gd-positive)]" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {copied ? "Copied" : "Copy response"}
+                  </TooltipContent>
+                </Tooltip>
+
+                {!message.isStreaming && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      type="button"
+                      className={actionBtn}
+                      onClick={handleAddToNotes}
+                      aria-label="Add to notes"
+                    >
+                      <StickyNote className="w-3.5 h-3.5" />
+                    </TooltipTrigger>
+                    <TooltipContent>Add to notes</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            )}
+
+            {(messageTime ||
+              message.usage ||
+              message.response_time_ms ||
+              message.llm_provider) && (
+              <div className="gc-msg-meta">
+                {messageTime && (
+                  <div title={messageTime.toLocaleString()}>
+                    {formatDistanceToNow(messageTime, { addSuffix: true })}
+                  </div>
+                )}
+                <span className="rounded-md border border-[var(--gd-border)] px-1.5 py-0.5 text-[10px]">
+                  {message.usage?.model_id ||
+                    (message.llm_provider === "bedrock"
+                      ? "us.amazon.nova-2-lite-v1:0"
+                      : message.llm_provider === "ollama"
+                        ? "Ollama"
+                        : message.llm_provider || "LLM")}
+                </span>
+                {message.usage && (
+                  <span
+                    title={
+                      message.usage.pricing_note ||
+                      "Estimated cost from provider usage metadata — not an AWS bill."
+                    }
+                  >
+                    in {message.usage.input_tokens ?? "—"} · out{" "}
+                    {message.usage.output_tokens ?? "—"} · tot{" "}
+                    {message.usage.total_tokens ?? "—"}
+                    {typeof message.usage.estimated_cost_usd === "number"
+                      ? ` · est $${
+                          message.usage.estimated_cost_usd < 0.0001
+                            ? message.usage.estimated_cost_usd.toFixed(6)
+                            : message.usage.estimated_cost_usd < 0.01
+                              ? message.usage.estimated_cost_usd.toFixed(4)
+                              : message.usage.estimated_cost_usd.toFixed(3)
+                        } (est. ≠ billed)`
+                      : ""}
+                  </span>
+                )}
+                {message.response_time_ms && (
+                  <span>{(message.response_time_ms / 1000).toFixed(1)}s</span>
+                )}
+              </div>
+            )}
           </>
         )}
-
-        <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-muted-foreground justify-end">
-          {isUser &&
-            message.attachments &&
-            message.attachments.length > 0 &&
-            message.attachments.map((doc) => (
-              <span
-                key={doc.id}
-                className={cn(
-                  "inline-flex max-w-[10rem] truncate rounded-md border px-1.5 py-0.5 text-[10px]",
-                  "border-primary-foreground/25 bg-primary-foreground/10 text-primary-foreground/90",
-                )}
-                title={doc.filename}
-              >
-                {doc.filename}
-              </span>
-            ))}
-          {messageTime && (
-            <div title={messageTime.toLocaleString()}>
-              {formatDistanceToNow(messageTime, { addSuffix: true })}
-            </div>
-          )}
-          {!isUser && (
-            <span className="text-[10px] rounded-md border border-border/50 px-1.5 py-0.5">
-              {message.usage?.model_id ||
-                (message.llm_provider === "bedrock"
-                  ? "us.amazon.nova-2-lite-v1:0"
-                  : message.llm_provider === "ollama"
-                    ? "Ollama"
-                    : message.llm_provider || "LLM")}
-            </span>
-          )}
-          {!isUser && message.usage && (
-            <span
-              className="text-[10px] text-right"
-              title={
-                message.usage.pricing_note ||
-                "Estimated cost from provider usage metadata — not an AWS bill."
-              }
-            >
-              in {message.usage.input_tokens ?? "—"} · out{" "}
-              {message.usage.output_tokens ?? "—"} · tot{" "}
-              {message.usage.total_tokens ?? "—"}
-              {typeof message.usage.estimated_cost_usd === "number"
-                ? ` · est $${
-                    message.usage.estimated_cost_usd < 0.0001
-                      ? message.usage.estimated_cost_usd.toFixed(6)
-                      : message.usage.estimated_cost_usd < 0.01
-                        ? message.usage.estimated_cost_usd.toFixed(4)
-                        : message.usage.estimated_cost_usd.toFixed(3)
-                  } (est. ≠ billed)`
-                : ""}
-            </span>
-          )}
-          {!isUser && message.response_time_ms && (
-            <span className="text-[10px]">
-              ⚡ {(message.response_time_ms / 1000).toFixed(1)}s
-            </span>
-          )}
-        </div>
       </div>
-      {isUser && (
-        <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
-          <User className="w-4 h-4 text-primary-foreground" />
-        </div>
-      )}
     </div>
   );
 }

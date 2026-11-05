@@ -413,7 +413,9 @@
   }
 }
 /* A message that contains a table can use the full conversation width. */
-.genova-message-bubble:has(.prose-table-wrap) {
+.genova-message-bubble:has(.prose-table-wrap),
+.gc-msg.is-assistant .gc-msg-body:has(.prose-table-wrap),
+.gc-assistant-prose:has(.prose-table-wrap) {
   width: 100%;
   max-width: 100%;
 }

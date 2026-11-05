@@ -3,7 +3,6 @@
 import { useId, useState } from "react";
 import type { SourceBoundingBox, SourceChunk } from "@/store/chat-store";
 import { resolveHighlightRects } from "@/lib/citation-highlight";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -11,6 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ChevronDown, ChevronUp, FileText, Eye, TextQuote } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const EXCERPT_THRESHOLD = 200;
 
@@ -38,36 +38,37 @@ const getConfidenceBadgeMeta = (value?: number): ConfidenceBadgeMeta => {
   if (normalizedValue === undefined) {
     return {
       label: "Unknown",
-      className: "border-muted bg-muted/40 text-muted-foreground",
+      className:
+        "border-[var(--gd-border)] bg-[var(--gd-raised)] text-[var(--gd-muted)]",
     };
   }
 
   if (normalizedValue >= 0.8) {
     return {
       label: "High",
-      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
+      className:
+        "border-[var(--gd-positive)]/30 bg-[color-mix(in_oklab,var(--gd-positive)_10%,transparent)] text-[var(--gd-positive)]",
     };
   }
 
   if (normalizedValue >= 0.5) {
     return {
       label: "Medium",
-      className: "border-amber-500/30 bg-amber-500/10 text-amber-600",
+      className:
+        "border-[var(--gd-warning)]/30 bg-[color-mix(in_oklab,var(--gd-warning)_10%,transparent)] text-[var(--gd-warning)]",
     };
   }
 
   return {
     label: "Low",
-    className: "border-red-500/30 bg-red-500/10 text-red-600",
+    className:
+      "border-[var(--gd-negative)]/30 bg-[color-mix(in_oklab,var(--gd-negative)_10%,transparent)] text-[var(--gd-negative)]",
   };
 };
 
 const getPrimarySourceMetric = (source: SourceChunk) =>
   source.confidence ?? source.score;
 
-// Returns true only when the source has a real, usable page number.
-// Some document types (e.g. .txt, .md) have no page concept, and the
-// backend may send page as undefined/null/NaN/0 in those cases.
 const hasValidPage = (source: SourceChunk) =>
   typeof source.page === "number" &&
   Number.isFinite(source.page) &&
@@ -76,7 +77,7 @@ const hasValidPage = (source: SourceChunk) =>
 const canOpenInViewer = (source: SourceChunk) =>
   hasValidPage(source) || Boolean(source.text?.trim());
 
-const MetricBadge = ({
+const MetricChip = ({
   label,
   value,
 }: {
@@ -86,13 +87,15 @@ const MetricBadge = ({
   const badgeMeta = getConfidenceBadgeMeta(value);
 
   return (
-    <Badge
-      variant="outline"
-      className={`h-5 px-1.5 text-[9px] font-medium ${badgeMeta.className}`}
+    <span
+      className={cn(
+        "inline-flex h-5 items-center rounded-md border px-1.5 text-[9px] font-medium",
+        badgeMeta.className,
+      )}
       title={`${label}: ${formatMetricValue(value)}`}
     >
       {label}: {badgeMeta.label}
-    </Badge>
+    </span>
   );
 };
 
@@ -131,7 +134,6 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
   const openCitation = (src: SourceChunk) => {
     if (!canOpenInViewer(src)) return;
     onPageClick({
-      // Backend pages are already 1-based; 0 means "search by excerpt".
       page: hasValidPage(src) ? src.page : 0,
       filename: src.filename,
       excerpt: src.text,
@@ -140,28 +142,28 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
   };
 
   return (
-    <div className="rounded-2xl border border-primary/15 bg-card/70 overflow-hidden shadow-[0_12px_40px_-28px_oklch(0.5_0.08_195/0.55)]">
+    <div className="gc-card">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
         aria-controls={sourceListId}
         aria-label={`${expanded ? "Collapse" : "Expand"} ${sources.length} cited source${sources.length > 1 ? "s" : ""}`}
-        className="w-full flex items-center justify-between px-3.5 py-2.5 text-xs hover:bg-accent/40 transition-colors"
+        className="flex w-full items-center justify-between px-3 py-2.5 text-xs transition-colors hover:bg-[var(--gd-raised)]"
       >
-        <span className="flex items-center gap-1.5 text-muted-foreground font-medium tracking-wide">
-          <FileText className="w-3.5 h-3.5 text-primary" />
+        <span className="flex items-center gap-1.5 font-medium tracking-wide text-[var(--gd-muted)]">
+          <FileText className="h-3.5 w-3.5 text-[var(--gd-accent)]" />
           {sources.length} source{sources.length > 1 ? "s" : ""} cited
         </span>
         {expanded ? (
-          <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+          <ChevronUp className="h-3.5 w-3.5 text-[var(--gd-muted)]" />
         ) : (
-          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+          <ChevronDown className="h-3.5 w-3.5 text-[var(--gd-muted)]" />
         )}
       </button>
 
       {!expanded && (
-        <div className="px-3 pb-2 flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1.5 px-3 pb-2.5">
           {sources.map((src, i) => {
             const badgeMeta = getConfidenceBadgeMeta(
               getPrimarySourceMetric(src),
@@ -184,17 +186,18 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                         : `Source from ${src.filename}. Page unavailable. Confidence ${badgeMeta.label}`
                   }
                 >
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] h-5 transition-colors ${badgeMeta.className} ${
+                  <span
+                    className={cn(
+                      "inline-flex h-5 items-center rounded-md border px-1.5 text-[10px] transition-colors",
+                      badgeMeta.className,
                       canOpen
-                        ? "cursor-pointer hover:bg-primary/20"
-                        : "cursor-default opacity-70"
-                    }`}
+                        ? "cursor-pointer hover:opacity-80"
+                        : "cursor-default opacity-70",
+                    )}
                   >
                     {validPage ? `p.${src.page}` : "Page N/A"} -{" "}
                     {badgeMeta.label}
-                  </Badge>
+                  </span>
                 </TooltipTrigger>
                 <TooltipContent
                   side="top"
@@ -202,10 +205,10 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                   className="max-w-xs p-2"
                 >
                   <div className="mb-1 flex flex-wrap gap-1">
-                    <MetricBadge label="Score" value={src.score} />
-                    <MetricBadge label="Confidence" value={src.confidence} />
+                    <MetricChip label="Score" value={src.score} />
+                    <MetricChip label="Confidence" value={src.confidence} />
                   </div>
-                  <p className="text-[11px] leading-relaxed line-clamp-6">
+                  <p className="line-clamp-6 text-[11px] leading-relaxed">
                     {src.text}
                   </p>
                 </TooltipContent>
@@ -216,7 +219,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
       )}
 
       {expanded && (
-        <div id={sourceListId} className="border-t border-border/30">
+        <div id={sourceListId} className="border-t border-[var(--gd-border)]">
           {sources.map((src, i) => {
             const validPage = hasValidPage(src);
             const canOpen = canOpenInViewer(src);
@@ -226,23 +229,23 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
             return (
               <div
                 key={i}
-                className="px-3 py-2.5 border-b border-border/20 last:border-b-0 hover:bg-accent/20 transition-colors"
+                className="border-b border-[var(--gd-border)] px-3 py-2.5 transition-colors last:border-b-0 hover:bg-[var(--gd-raised)]"
               >
-                <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="truncate text-[10px] font-medium text-muted-foreground">
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <span className="truncate text-[10px] font-medium text-[var(--gd-muted)]">
                       {src.filename}
                     </span>
-                    <Badge variant="outline" className="h-5 px-1.5 text-[9px]">
+                    <span className="inline-flex h-5 items-center rounded-md border border-[var(--gd-border)] px-1.5 text-[9px] text-[var(--gd-muted)]">
                       {validPage ? `Page ${src.page}` : "Page N/A"}
-                    </Badge>
-                    <MetricBadge label="Score" value={src.score} />
-                    <MetricBadge label="Confidence" value={src.confidence} />
+                    </span>
+                    <MetricChip label="Score" value={src.score} />
+                    <MetricChip label="Confidence" value={src.confidence} />
                   </div>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-6 shrink-0 px-2 text-[10px]"
+                    className="h-6 shrink-0 px-2 text-[10px] text-[var(--gd-muted)] hover:text-[var(--gd-text)]"
                     disabled={!canOpen}
                     onClick={() => openCitation(src)}
                     aria-label={
@@ -253,15 +256,16 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                           : "Page reference unavailable for this source"
                     }
                   >
-                    <Eye className="w-3 h-3 mr-1" />
+                    <Eye className="mr-1 h-3 w-3" />
                     {canOpen ? "View" : "N/A"}
                   </Button>
                 </div>
                 <p
                   id={excerptId}
-                  className={`text-[11px] text-muted-foreground leading-relaxed ${
-                    isExcerptOpen ? "" : "line-clamp-3"
-                  }`}
+                  className={cn(
+                    "text-[11px] leading-relaxed text-[var(--gd-muted)]",
+                    !isExcerptOpen && "line-clamp-3",
+                  )}
                 >
                   {src.text}
                 </p>
@@ -271,9 +275,9 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                     onClick={() => toggleExcerpt(i)}
                     aria-expanded={isExcerptOpen}
                     aria-controls={excerptId}
-                    className="mt-1.5 flex items-center gap-1 text-[10px] text-primary/70 hover:text-primary transition-colors"
+                    className="mt-1.5 flex items-center gap-1 text-[10px] text-[var(--gd-accent)] transition-colors hover:opacity-80"
                   >
-                    <TextQuote className="w-3 h-3" />
+                    <TextQuote className="h-3 w-3" />
                     {isExcerptOpen ? "Hide excerpt" : "Show excerpt"}
                   </button>
                 )}
