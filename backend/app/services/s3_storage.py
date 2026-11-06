@@ -2,13 +2,14 @@
 
 Layout
 ------
-    s3://<bucket>/{user_id}/pdfs/<stored-filename>
-    s3://<bucket>/{user_id}/sticky_notes/notes.json
+    s3://<bucket>/NoteBase/{user_id}/pdfs/<stored-filename>
+    s3://<bucket>/NoteBase/{user_id}/sticky_notes/notes.json
 
-The ``user_id`` segment always comes from the authenticated request, so a user
-can only ever address their own prefix. Credentials are resolved by the
-standard AWS provider chain (environment variables, shared credentials file,
-IAM role/instance profile); nothing is hardcoded or committed.
+``S3_BASE_PREFIX`` defaults to ``NoteBase``. The ``user_id`` segment always
+comes from the authenticated request, so a user can only ever address their
+own prefix. Credentials are resolved by the standard AWS provider chain
+(``AWS_ACCESS_KEY_ID`` / ``AWS_SECRET_ACCESS_KEY`` / ``AWS_REGION``, shared
+credentials file, or IAM role); nothing is hardcoded or committed.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,10 +30,12 @@ settings = get_settings()
 
 NOTES_FILENAME = "notes.json"
 _NOTES_CONTENT_TYPE = "application/json; charset=utf-8"
+_FOLDER_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
 
 _client_lock = threading.Lock()
 _cached_client = None
 _cached_bucket: Optional[str] = None
+_config_logged = False
 
 
 class S3StorageError(RuntimeError):
@@ -42,25 +46,86 @@ class S3StorageError(RuntimeError):
 
 def is_configured() -> bool:
     """True when an S3 bucket is configured for per-user storage."""
-    return bool(settings.S3_BUCKET)
+    return bool((settings.S3_BUCKET or settings.AWS_S3_BUCKET or "").strip())
+
+
+def _bucket() -> str:
+    bucket = (settings.S3_BUCKET or settings.AWS_S3_BUCKET or "").strip()
+    if not bucket:
+        raise S3StorageError(
+            "S3 bucket is not configured. Set AWS_S3_BUCKET (or S3_BUCKET) "
+            "plus AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION."
+        )
+    return bucket
 
 
 def _region() -> str:
     return (
-        settings.S3_REGION
+        (settings.S3_REGION or "").strip()
         or os.getenv("AWS_REGION")
         or os.getenv("AWS_DEFAULT_REGION")
         or "us-east-1"
     )
 
 
+def base_prefix() -> str:
+    """Root folder inside the bucket (default ``NoteBase/``)."""
+    prefix = (settings.S3_BASE_PREFIX or "NoteBase").strip().strip("/") or "NoteBase"
+    return f"{prefix}/"
+
+
+def validate_configuration(*, probe: bool = False) -> dict[str, Any]:
+    """Return (and log once) non-secret S3 config; optionally probe the bucket.
+
+    Never logs credentials. Raises ``S3StorageError`` when configured but invalid.
+    """
+    global _config_logged
+
+    info: dict[str, Any] = {
+        "configured": is_configured(),
+        "bucket": (settings.S3_BUCKET or settings.AWS_S3_BUCKET or "").strip() or None,
+        "base_prefix": base_prefix() or None,
+        "region": _region(),
+        "endpoint_url": (settings.S3_ENDPOINT_URL or "").strip() or None,
+        "has_access_key_env": bool(os.getenv("AWS_ACCESS_KEY_ID")),
+        "has_secret_key_env": bool(os.getenv("AWS_SECRET_ACCESS_KEY")),
+    }
+
+    if not info["configured"]:
+        if not _config_logged:
+            logger.info("S3 storage disabled — AWS_S3_BUCKET / S3_BUCKET not set")
+            _config_logged = True
+        return info
+
+    if not _config_logged:
+        logger.info(
+            "S3 storage enabled: bucket=%s prefix=%s region=%s endpoint=%s",
+            info["bucket"],
+            info["base_prefix"],
+            info["region"],
+            info["endpoint_url"] or "aws",
+        )
+        _config_logged = True
+
+    if probe:
+        try:
+            _client().head_bucket(Bucket=_bucket())
+            info["reachable"] = True
+        except S3StorageError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise S3StorageError(
+                f"S3 bucket {_bucket()!r} is not reachable in region {_region()}: {exc}"
+            ) from exc
+
+    return info
+
+
 def _client():
     """Return a cached boto3 S3 client built from the ambient AWS credentials."""
     global _cached_client, _cached_bucket
 
-    bucket = settings.S3_BUCKET
-    if not bucket:
-        raise S3StorageError("S3_BUCKET is not configured")
+    bucket = _bucket()
 
     with _client_lock:
         if _cached_client is not None and _cached_bucket == bucket:
@@ -95,6 +160,21 @@ def _client():
             # MinIO / LocalStack compatible endpoints.
             config_kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
 
+        # Explicit env credentials are preferred when present; otherwise boto3
+        # falls through to the shared credentials file / IAM role chain.
+        access_key = (os.getenv("AWS_ACCESS_KEY_ID") or "").strip()
+        secret_key = (os.getenv("AWS_SECRET_ACCESS_KEY") or "").strip()
+        session_token = (os.getenv("AWS_SESSION_TOKEN") or "").strip() or None
+        if access_key and secret_key:
+            config_kwargs["aws_access_key_id"] = access_key
+            config_kwargs["aws_secret_access_key"] = secret_key
+            if session_token:
+                config_kwargs["aws_session_token"] = session_token
+        elif access_key or secret_key:
+            raise S3StorageError(
+                "Both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together."
+            )
+
         _cached_client = boto3.client("s3", **config_kwargs)
         _cached_bucket = bucket
         return _cached_client
@@ -102,17 +182,18 @@ def _client():
 
 def reset_client_cache() -> None:
     """Drop the cached client (used by tests and after credential rotation)."""
-    global _cached_client, _cached_bucket
+    global _cached_client, _cached_bucket, _config_logged
     with _client_lock:
         _cached_client = None
         _cached_bucket = None
+        _config_logged = False
 
 
 def _is_missing(exc: Exception) -> bool:
     response = getattr(exc, "response", None) or {}
     code = str(response.get("Error", {}).get("Code", ""))
     status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-    return code in {"NoSuchKey", "NotFound", "404"} or status == 404
+    return code in {"NoSuchKey", "NotFound", "404", "NoSuchBucket"} or status == 404
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -123,15 +204,33 @@ def _iso(value: Any) -> Optional[str]:
 
 # ── Key layout ───────────────────────────────────────────────────────────────
 
+def _join_under_base(*parts: str) -> str:
+    """Join path segments under the optional base prefix, rejecting unsafe segments."""
+    cleaned: list[str] = []
+    for part in parts:
+        for segment in str(part).replace("\\", "/").split("/"):
+            segment = segment.strip()
+            if not segment or segment in {".", ".."}:
+                continue
+            cleaned.append(segment)
+    return f"{base_prefix()}{'/'.join(cleaned)}"
+
+
 def pdf_key(user_id: str, filename: str) -> str:
-    """Object key for one user's document: ``{user_id}/pdfs/{filename}``."""
+    """Object key: ``NoteBase/{user_id}/pdfs/{filename}``."""
     safe_name = Path(str(filename)).name  # blocks ../ traversal from stored names
-    return f"{user_id}/{settings.S3_PDFS_PREFIX}/{safe_name}"
+    return _join_under_base(str(user_id), settings.S3_PDFS_PREFIX, safe_name)
 
 
 def notes_key(user_id: str) -> str:
-    """Object key for one user's sticky notes: ``{user_id}/sticky_notes/notes.json``."""
-    return f"{user_id}/{settings.S3_NOTES_PREFIX}/{NOTES_FILENAME}"
+    """Object key: ``NoteBase/{user_id}/sticky_notes/notes.json``."""
+    return _join_under_base(str(user_id), settings.S3_NOTES_PREFIX, NOTES_FILENAME)
+
+
+def folder_key(relative_path: str) -> str:
+    """Folder marker key under the user/base prefix, always ending with ``/``."""
+    key = _join_under_base(relative_path)
+    return key if key.endswith("/") else f"{key}/"
 
 
 def _put_args(extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
@@ -139,6 +238,98 @@ def _put_args(extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     if settings.S3_SERVER_SIDE_ENCRYPTION:
         args["ServerSideEncryption"] = settings.S3_SERVER_SIDE_ENCRYPTION
     return args
+
+
+def create_folder(relative_path: str) -> str:
+    """Create an empty folder marker under the bucket root / optional base prefix.
+
+    ``relative_path`` is relative to the base prefix (e.g. ``{user_id}/pdfs``).
+    Returns the full object key ending in ``/``.
+    """
+    path = str(relative_path or "").strip().strip("/")
+    if not path:
+        raise S3StorageError("Folder path is required")
+
+    for segment in path.replace("\\", "/").split("/"):
+        if not segment or segment in {".", ".."} or not _FOLDER_SEGMENT_RE.match(segment):
+            raise S3StorageError(
+                f"Invalid folder segment {segment!r}. "
+                "Use letters, numbers, dots, underscores, or hyphens."
+            )
+
+    key = folder_key(path)
+    try:
+        _client().put_object(
+            Bucket=_bucket(),
+            Key=key,
+            Body=b"",
+            ContentType="application/x-directory",
+            **_put_args(),
+        )
+    except S3StorageError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise S3StorageError(f"Could not create folder {key}: {exc}") from exc
+
+    logger.info("Created S3 folder %s", key)
+    return key
+
+
+def list_prefix(
+    relative_path: str = "",
+    *,
+    max_keys: int = 200,
+) -> list[dict[str, Any]]:
+    """List objects and common prefixes under ``{base}{relative_path}``."""
+    prefix = folder_key(relative_path) if relative_path.strip() else base_prefix()
+    try:
+        response = _client().list_objects_v2(
+            Bucket=_bucket(),
+            Prefix=prefix,
+            Delimiter="/",
+            MaxKeys=max(1, min(int(max_keys), 1000)),
+        )
+    except S3StorageError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise S3StorageError(f"Could not list {prefix}: {exc}") from exc
+
+    items: list[dict[str, Any]] = []
+    for entry in response.get("CommonPrefixes") or []:
+        key = entry.get("Prefix") or ""
+        items.append({"key": key, "type": "folder", "size": 0, "last_modified": None})
+    for entry in response.get("Contents") or []:
+        key = entry.get("Key") or ""
+        if key.endswith("/"):
+            items.append(
+                {
+                    "key": key,
+                    "type": "folder",
+                    "size": 0,
+                    "last_modified": _iso(entry.get("LastModified")),
+                }
+            )
+            continue
+        items.append(
+            {
+                "key": key,
+                "type": "file",
+                "size": int(entry.get("Size") or 0),
+                "last_modified": _iso(entry.get("LastModified")),
+            }
+        )
+    return items
+
+
+def ensure_user_folders(user_id: str) -> list[str]:
+    """Ensure the user's ``pdfs/`` and ``sticky_notes/`` folders exist."""
+    uid = str(user_id).strip()
+    if not uid:
+        raise S3StorageError("user_id is required to create storage folders")
+    return [
+        create_folder(f"{uid}/{settings.S3_PDFS_PREFIX}"),
+        create_folder(f"{uid}/{settings.S3_NOTES_PREFIX}"),
+    ]
 
 
 # ── PDF objects ──────────────────────────────────────────────────────────────
@@ -150,7 +341,7 @@ def upload_pdf(user_id: str, filename: str, local_path: str) -> str:
     try:
         _client().upload_file(
             str(local_path),
-            settings.S3_BUCKET,
+            _bucket(),
             key,
             ExtraArgs=_put_args({"ContentType": content_type}),
         )
@@ -162,7 +353,7 @@ def upload_pdf(user_id: str, filename: str, local_path: str) -> str:
     return key
 
 
-def open_pdf(user_id: str, filename: str):
+def open_pdf(user_id: str, filename: str, *, key: str | None = None):
     """Return a context manager over the streamed object body for a stored document.
 
     Usage::
@@ -171,17 +362,18 @@ def open_pdf(user_id: str, filename: str):
             data = body.read()
 
     Returns ``None`` when the object is missing. Raises ``S3StorageError`` for
-    non-transient failures.
+    non-transient failures. Pass ``key`` when the database already stores the
+    exact object key.
     """
-    key = pdf_key(user_id, filename)
+    object_key = (key or "").strip() or pdf_key(user_id, filename)
     try:
-        response = _client().get_object(Bucket=settings.S3_BUCKET, Key=key)
+        response = _client().get_object(Bucket=_bucket(), Key=object_key)
     except S3StorageError:
         raise
     except Exception as exc:  # noqa: BLE001
         if _is_missing(exc):
             return None
-        raise S3StorageError(f"Could not read {key}: {exc}") from exc
+        raise S3StorageError(f"Could not read {object_key}: {exc}") from exc
 
     body = response["Body"]
     content_length = int(response.get("ContentLength") or 0)
@@ -211,32 +403,38 @@ def open_pdf(user_id: str, filename: str):
     return _StreamProxy(body, content_length)
 
 
-def download_pdf_to_path(user_id: str, filename: str, destination: str) -> bool:
+def download_pdf_to_path(
+    user_id: str,
+    filename: str,
+    destination: str,
+    *,
+    key: str | None = None,
+) -> bool:
     """Download a stored document to ``destination``; False when it is missing."""
-    key = pdf_key(user_id, filename)
+    object_key = (key or "").strip() or pdf_key(user_id, filename)
     try:
-        _client().download_file(settings.S3_BUCKET, key, str(destination))
+        _client().download_file(_bucket(), object_key, str(destination))
         return True
     except S3StorageError:
         raise
     except Exception as exc:  # noqa: BLE001
         if _is_missing(exc):
             return False
-        raise S3StorageError(f"Could not download {key}: {exc}") from exc
+        raise S3StorageError(f"Could not download {object_key}: {exc}") from exc
 
 
-def delete_pdf(user_id: str, filename: str) -> bool:
+def delete_pdf(user_id: str, filename: str, *, key: str | None = None) -> bool:
     """Delete a stored document. Missing objects are treated as success."""
     if not is_configured():
         return False
-    key = pdf_key(user_id, filename)
+    object_key = (key or "").strip() or pdf_key(user_id, filename)
     try:
-        _client().delete_object(Bucket=settings.S3_BUCKET, Key=key)
+        _client().delete_object(Bucket=_bucket(), Key=object_key)
         return True
     except S3StorageError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise S3StorageError(f"Could not delete {key}: {exc}") from exc
+        raise S3StorageError(f"Could not delete {object_key}: {exc}") from exc
 
 
 # ── Sticky notes ─────────────────────────────────────────────────────────────
@@ -250,7 +448,7 @@ def load_notes(user_id: str) -> Tuple[Optional[dict], Optional[str]]:
     """
     key = notes_key(user_id)
     try:
-        response = _client().get_object(Bucket=settings.S3_BUCKET, Key=key)
+        response = _client().get_object(Bucket=_bucket(), Key=key)
         raw = response["Body"].read()
     except S3StorageError:
         raise
@@ -290,12 +488,13 @@ def save_notes(user_id: str, document: dict) -> str:
     saved_at = datetime.now(timezone.utc).isoformat()
     try:
         _client().put_object(
-            Bucket=settings.S3_BUCKET,
+            Bucket=_bucket(),
             Key=key,
             Body=payload,
             ContentType=_NOTES_CONTENT_TYPE,
             CacheControl="no-store",
             Metadata={"updated-at": saved_at, "user-id": str(user_id)},
+            **{k: v for k, v in _put_args().items()},
         )
     except S3StorageError:
         raise
@@ -312,7 +511,7 @@ def delete_notes(user_id: str) -> bool:
         return False
     key = notes_key(user_id)
     try:
-        _client().delete_object(Bucket=settings.S3_BUCKET, Key=key)
+        _client().delete_object(Bucket=_bucket(), Key=key)
     except S3StorageError:
         raise
     except Exception as exc:  # noqa: BLE001

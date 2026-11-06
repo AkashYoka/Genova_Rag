@@ -14,6 +14,11 @@ backend/evaluation/ragas_results.json
 .env
 backend/.env
 
+# AWS access-key exports — never commit
+*accessKeys.csv
+*accessKeys*.csv
+notebase-user_accessKeys.csv
+
 # Build outputs
 frontend/out/
 frontend/.next/

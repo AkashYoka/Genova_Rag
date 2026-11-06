@@ -1,13 +1,17 @@
 """Reusable document ingestion pipeline."""
-import traceback
 import logging
+import os
+import tempfile
+import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.models import Document
 from app.rag.llm.agent import persist_document_keywords
 from app.rag.chunking.chunker import chunk_document, get_page_count
 from app.rag.vectordb.vectorstore import store_chunks
 from app.config import get_settings
+from app.services import s3_storage
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -32,6 +36,49 @@ def _update_progress(document_id: str, progress: int, stage: str, error: str = N
         db.close()
 
 
+def materialize_document_file(
+    *,
+    user_id: str,
+    filename: str,
+    s3_key: str | None = None,
+    preferred_path: str | None = None,
+) -> tuple[str, bool]:
+    """Return a local filesystem path for ingestion/view helpers.
+
+    Prefers AWS S3 when the document is stored there. Returns
+    ``(path, should_delete)`` so callers can clean up ephemeral downloads.
+    """
+    if preferred_path and os.path.exists(preferred_path):
+        return preferred_path, False
+
+    if s3_storage.is_configured() and (s3_key or filename):
+        suffix = Path(filename or s3_key or ".bin").suffix or ".bin"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp_path = tmp.name
+        tmp.close()
+        try:
+            ok = s3_storage.download_pdf_to_path(
+                str(user_id),
+                filename,
+                tmp_path,
+                key=s3_key,
+            )
+        except s3_storage.S3StorageError:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
+        if ok:
+            return tmp_path, True
+        Path(tmp_path).unlink(missing_ok=True)
+
+    legacy = os.path.join(settings.UPLOAD_DIR, str(user_id), filename)
+    if os.path.exists(legacy):
+        return legacy, False
+
+    raise FileNotFoundError(
+        f"Document file not found in S3 or local storage: {filename}"
+    )
+
+
 def ingest_document(document_id: str, filepath: str, original_name: str, user_id: str):
     """
     Process a document: chunk it, generate embeddings, store vectors, summarize,
@@ -40,6 +87,7 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
     from app.database import SessionLocal
 
     db = SessionLocal()
+    cleanup_path: str | None = None
     try:
         doc = db.query(Document).filter(
             Document.id == document_id,
@@ -55,6 +103,25 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         doc.error_message = None
         doc.last_error_traceback = None
         db.commit()
+
+        try:
+            working_path, should_cleanup = materialize_document_file(
+                user_id=user_id,
+                filename=doc.filename,
+                s3_key=getattr(doc, "s3_key", None),
+                preferred_path=filepath or None,
+            )
+        except Exception as exc:
+            doc.status = "failed"
+            doc.processing_progress = 0
+            doc.error_message = f"Could not load document bytes for ingestion: {exc}"[:500]
+            db.commit()
+            logger.error("Materialize failed for %s: %s", document_id, exc)
+            return
+
+        if should_cleanup:
+            cleanup_path = working_path
+        filepath = working_path
 
         page_count = get_page_count(filepath)
         doc.page_count = page_count
@@ -228,4 +295,9 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         except Exception:
             logger.exception("Failed to mark document %s as failed", document_id)
     finally:
+        if cleanup_path:
+            try:
+                Path(cleanup_path).unlink(missing_ok=True)
+            except Exception:
+                logger.warning("Could not remove temp ingest file %s", cleanup_path)
         db.close()

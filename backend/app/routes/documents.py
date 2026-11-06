@@ -64,21 +64,107 @@ settings = get_settings()
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
-def _mirror_document_to_s3(user_id: str, filename: str, filepath: str) -> None:
-    """Copy a freshly stored upload into the user's S3 ``pdfs/`` folder.
+def _mirror_document_to_s3(user_id: str, filename: str, filepath: str) -> Optional[str]:
+    """Upload a working file into the user's ``pdfs/`` folder.
 
-    The local copy is retained because ingestion parses from disk. An S3
-    failure is logged and never fails the upload request: the document is
-    still usable locally, and the next upload/retry re-syncs it.
+    Returns the S3 object key on success. For PDFs this is required — callers
+    must not keep a permanent local copy. Non-PDF uploads may still fall back
+    to local disk when S3 is not configured.
     """
     if not s3_storage.is_configured():
-        return
+        return None
     try:
-        s3_storage.upload_pdf(str(user_id), filename, filepath)
+        return s3_storage.upload_pdf(str(user_id), filename, filepath)
     except s3_storage.S3StorageError as exc:
         logger.error(
             "S3 storage failed for user %s (%s): %s", user_id, filename, exc
         )
+        raise ExternalServiceException(
+            "s3",
+            "Could not store the document in AWS S3. Upload was not completed.",
+        ) from exc
+
+
+def _persist_upload_to_s3(
+    *,
+    user_id: str,
+    stored_filename: str,
+    temp_path: str,
+    ext: str,
+) -> tuple[str, int, str]:
+    """Persist a validated upload to S3 and return ``(s3_key, size, backend)``.
+
+    PDF uploads always go to ``s3://…/NoteBase/{user_id}/pdfs/`` and are never
+    kept under ``UPLOAD_DIR``. Raises when S3 is unavailable for PDFs.
+    """
+    file_size = Path(temp_path).stat().st_size
+    if ext == "pdf" and not s3_storage.is_configured():
+        raise ExternalServiceException(
+            "s3",
+            "PDF uploads require AWS S3. Set AWS_S3_BUCKET and AWS credentials.",
+        )
+
+    if s3_storage.is_configured():
+        s3_key = _mirror_document_to_s3(user_id, stored_filename, temp_path)
+        if not s3_key:
+            raise ExternalServiceException(
+                "s3",
+                "Could not store the document in AWS S3. Upload was not completed.",
+            )
+        return s3_key, file_size, "s3"
+
+    # Legacy non-PDF path when S3 is not configured.
+    user_dir = os.path.join(settings.UPLOAD_DIR, user_id)
+    os.makedirs(user_dir, exist_ok=True)
+    filepath = os.path.join(user_dir, stored_filename)
+    shutil.move(temp_path, filepath)
+    return "", Path(filepath).stat().st_size, "local"
+
+
+def _queue_ingest(
+    *,
+    document_id,
+    filepath: str,
+    original_name: str,
+    user_id: str,
+    background_tasks: Optional[BackgroundTasks],
+) -> str:
+    """Queue ingestion via Celery, with an in-process fallback."""
+    from app.celery_app import celery_app as _celery
+
+    use_local_bg = (
+        bool(getattr(_celery.conf, "task_always_eager", False))
+        and background_tasks is not None
+    )
+    if use_local_bg:
+        background_tasks.add_task(
+            ingest_document,
+            document_id=document_id,
+            filepath=filepath,
+            original_name=original_name,
+            user_id=user_id,
+        )
+        return f"local_{uuid.uuid4().hex}"
+
+    try:
+        task = process_document.delay(
+            document_id=document_id,
+            filepath=filepath,
+            original_name=original_name,
+            user_id=user_id,
+        )
+        return task.id
+    except Exception as e:
+        logger.warning("Celery queue failed, falling back to background task: %s", e)
+        if background_tasks:
+            background_tasks.add_task(
+                ingest_document,
+                document_id=document_id,
+                filepath=filepath,
+                original_name=original_name,
+                user_id=user_id,
+            )
+        return f"local_{uuid.uuid4().hex}"
 
 
 ALLOWED_MIME_TYPES = settings.ALLOWED_MIME_TYPES
@@ -283,73 +369,55 @@ async def upload_document(
             f"File type '.{ext}' not supported. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}",
         )
 
-    # ── Validate and save file to disk ───────────────
+    # ── Validate, upload to S3 (PDFs never stay on local disk) ──
     temp_path = await validate_upload(file)
-
-    user_dir = os.path.join(settings.UPLOAD_DIR, user.id)
-    os.makedirs(user_dir, exist_ok=True)
-
     stored_filename = f"{uuid.uuid4().hex}.{ext}"
-    filepath = os.path.join(user_dir, stored_filename)
+    ingest_path = temp_path
+    try:
+        s3_key, file_size, storage_backend = _persist_upload_to_s3(
+            user_id=user.id,
+            stored_filename=stored_filename,
+            temp_path=temp_path,
+            ext=ext,
+        )
+        if storage_backend == "local":
+            ingest_path = os.path.join(settings.UPLOAD_DIR, user.id, stored_filename)
+            temp_path = None  # moved into UPLOAD_DIR
 
-    shutil.move(temp_path, filepath)
-    file_size = Path(filepath).stat().st_size
+        # ── Create database record (metadata + S3 key) ──
+        document = Document(
+            user_id=user.id,
+            filename=stored_filename,
+            original_name=file.filename,
+            file_size=file_size,
+            status="pending",
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            s3_key=s3_key or None,
+            storage_backend=storage_backend,
+        )
+        db.add(document)
+        db.commit()
+        db.refresh(document)
 
-    # ── Persist in the user's S3 folder (best-effort) ─
-    _mirror_document_to_s3(user.id, stored_filename, filepath)
-
-    # ── Create database record ───────────────────────
-    document = Document(
-        user_id=user.id,
-        filename=stored_filename,
-        original_name=file.filename,
-        file_size=file_size,
-        status="pending",
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
-    )
-    db.add(document)
-    db.commit()
-    db.refresh(document)
-
-    # ── Queue background ingestion ─────────────────
-    # When Redis is down Celery runs task_always_eager=True, which would block
-    # this HTTP request for the entire ingest (large PDFs look "stuck"). Prefer
-    # FastAPI BackgroundTasks in that mode so upload returns 202 immediately.
-    task_id = None
-    from app.celery_app import celery_app as _celery
-
-    use_local_bg = bool(getattr(_celery.conf, "task_always_eager", False)) and background_tasks is not None
-    if use_local_bg:
-        background_tasks.add_task(
-            ingest_document,
+        # When Redis is down Celery runs task_always_eager=True, which would block
+        # this HTTP request for the entire ingest. Prefer BackgroundTasks then.
+        task_id = _queue_ingest(
             document_id=document.id,
-            filepath=filepath,
+            filepath=ingest_path if storage_backend == "local" else "",
             original_name=file.filename,
             user_id=user.id,
+            background_tasks=background_tasks,
         )
-        task_id = f"local_{uuid.uuid4().hex}"
-        logger.info("Queued document %s via BackgroundTasks (Celery eager mode)", document.id)
-    else:
-        try:
-            task = process_document.delay(
-                document_id=document.id,
-                filepath=filepath,
-                original_name=file.filename,
-                user_id=user.id,
+        if task_id.startswith("local_"):
+            logger.info(
+                "Queued document %s via BackgroundTasks (Celery eager/fallback)",
+                document.id,
             )
-            task_id = task.id
-        except Exception as e:
-            logger.warning(f"Celery queue failed, falling back to background task: {e}")
-            if background_tasks:
-                background_tasks.add_task(
-                    ingest_document,
-                    document_id=document.id,
-                    filepath=filepath,
-                    original_name=file.filename,
-                    user_id=user.id,
-                )
-            task_id = f"local_{uuid.uuid4().hex}"
+    finally:
+        # S3 is the system of record — drop the validated temp file.
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
 
     return DocumentResponse.model_validate(document).model_copy(update={"task_id": task_id})
 
@@ -389,15 +457,13 @@ async def batch_upload_documents(
     if chunk_overlap < 0 or chunk_overlap >= chunk_size:
         raise ValidationException("Chunk overlap must be non-negative and less than chunk_size")
 
-    user_dir = os.path.join(settings.UPLOAD_DIR, user.id)
-    os.makedirs(user_dir, exist_ok=True)
-
     created_documents: List[DocumentResponse] = []
     task_ids: List[str] = []
     failed: List[str] = []
 
     for file in files:
         filename = file.filename or "unknown"
+        temp_path: Optional[str] = None
         try:
             if not file.filename:
                 raise ValidationException("No filename provided")
@@ -409,13 +475,17 @@ async def batch_upload_documents(
                 )
 
             temp_path = await validate_upload(file)
-
             stored_filename = f"{uuid.uuid4().hex}.{ext}"
-            filepath = os.path.join(user_dir, stored_filename)
-            shutil.move(temp_path, filepath)
-            file_size = Path(filepath).stat().st_size
-
-            _mirror_document_to_s3(user.id, stored_filename, filepath)
+            s3_key, file_size, storage_backend = _persist_upload_to_s3(
+                user_id=user.id,
+                stored_filename=stored_filename,
+                temp_path=temp_path,
+                ext=ext,
+            )
+            ingest_path = ""
+            if storage_backend == "local":
+                ingest_path = os.path.join(settings.UPLOAD_DIR, user.id, stored_filename)
+                temp_path = None
 
             document = Document(
                 user_id=user.id,
@@ -425,44 +495,20 @@ async def batch_upload_documents(
                 status="pending",
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
+                s3_key=s3_key or None,
+                storage_backend=storage_backend,
             )
             db.add(document)
             db.commit()
             db.refresh(document)
 
-            task_id = None
-            from app.celery_app import celery_app as _celery
-
-            use_local_bg = bool(getattr(_celery.conf, "task_always_eager", False)) and background_tasks is not None
-            if use_local_bg:
-                background_tasks.add_task(
-                    ingest_document,
-                    document_id=document.id,
-                    filepath=filepath,
-                    original_name=file.filename,
-                    user_id=user.id,
-                )
-                task_id = f"local_{uuid.uuid4().hex}"
-            else:
-                try:
-                    task = process_document.delay(
-                        document_id=document.id,
-                        filepath=filepath,
-                        original_name=file.filename,
-                        user_id=user.id,
-                    )
-                    task_id = task.id
-                except Exception as e:
-                    logger.warning(f"Celery queue failed for {file.filename}, falling back to background task: {e}")
-                    if background_tasks:
-                        background_tasks.add_task(
-                            ingest_document,
-                            document_id=document.id,
-                            filepath=filepath,
-                            original_name=file.filename,
-                            user_id=user.id,
-                        )
-                    task_id = f"local_{uuid.uuid4().hex}"
+            task_id = _queue_ingest(
+                document_id=document.id,
+                filepath=ingest_path,
+                original_name=file.filename,
+                user_id=user.id,
+                background_tasks=background_tasks,
+            )
 
             created_documents.append(
                 DocumentResponse.model_validate(document).model_copy(update={"task_id": task_id})
@@ -475,6 +521,9 @@ async def batch_upload_documents(
         except Exception as e:
             logger.error(f"Batch upload: unexpected error for '{filename}' — {e}")
             failed.append(filename)
+        finally:
+            if temp_path:
+                Path(temp_path).unlink(missing_ok=True)
 
     if not created_documents and failed:
         raise ValidationException(f"All files failed validation: {', '.join(failed)}")
@@ -546,20 +595,22 @@ async def upload_document_url(
             tmp.write(markdown)
             temp_path = tmp.name
 
-        # ── Move temp file to permanent user upload directory ──
         ext = "txt"
-        user_dir = os.path.join(settings.UPLOAD_DIR, user.id)
-        os.makedirs(user_dir, exist_ok=True)
-
         stored_filename = f"{uuid.uuid4().hex}.{ext}"
-        filepath = os.path.join(user_dir, stored_filename)
-        shutil.move(temp_path, filepath)
-        temp_path = None  # file is now at filepath; no longer a temp to clean up
-
-        file_size = Path(filepath).stat().st_size
-
-        # ── Persist in the user's S3 folder (best-effort) ─
-        _mirror_document_to_s3(user.id, stored_filename, filepath)
+        s3_key, file_size, storage_backend = _persist_upload_to_s3(
+            user_id=user.id,
+            stored_filename=stored_filename,
+            temp_path=temp_path,
+            ext=ext,
+        )
+        ingest_path = ""
+        if storage_backend == "local":
+            ingest_path = os.path.join(settings.UPLOAD_DIR, user.id, stored_filename)
+            temp_path = None
+        else:
+            # S3 holds the object; drop the crawl temp file after metadata is saved.
+            Path(temp_path).unlink(missing_ok=True)
+            temp_path = None
 
         # ── Derive a human-readable name from the URL ─────────
         url_path = parsed.path.rstrip("/")
@@ -581,32 +632,20 @@ async def upload_document_url(
             original_name=original_name,
             file_size=file_size,
             status="pending",
+            s3_key=s3_key or None,
+            storage_backend=storage_backend,
         )
         db.add(document)
         db.commit()
         db.refresh(document)
 
-        # ── Queue background ingestion ───────────────────────
-        task_id = None
-        try:
-            task = process_document.delay(
-                document_id=document.id,
-                filepath=filepath,
-                original_name=original_name,
-                user_id=user.id,
-            )
-            task_id = task.id
-        except Exception as e:
-            logger.warning(f"Celery queue failed, falling back to background task: {e}")
-            if background_tasks:
-                background_tasks.add_task(
-                    ingest_document,
-                    document_id=document.id,
-                    filepath=filepath,
-                    original_name=original_name,
-                    user_id=user.id,
-                )
-            task_id = f"local_{uuid.uuid4().hex}"
+        task_id = _queue_ingest(
+            document_id=document.id,
+            filepath=ingest_path,
+            original_name=original_name,
+            user_id=user.id,
+            background_tasks=background_tasks,
+        )
 
         return DocumentResponse.model_validate(document).model_copy(update={"task_id": task_id})
 
@@ -890,11 +929,54 @@ def serve_pdf(
     if not doc:
         raise NotFoundException("Document")
 
-    # S3 is the system of record for uploaded documents. Fall back to the local
-    # working copy (offline dev, pre-S3 documents) when the object is missing.
+    # S3 is the system of record for uploads. Legacy local files are only used
+    # when the document was stored before S3 integration.
+    if s3_storage.is_configured() and (
+        getattr(doc, "storage_backend", None) == "s3" or getattr(doc, "s3_key", None)
+    ):
+        try:
+            stored = s3_storage.open_pdf(
+                user.id,
+                doc.filename,
+                key=getattr(doc, "s3_key", None),
+            )
+        except s3_storage.S3StorageError as exc:
+            logger.error(
+                "S3 read failed for %s/%s: %s", user.id, doc.filename, exc
+            )
+            raise ExternalServiceException(
+                "s3", "Could not retrieve the PDF from AWS S3."
+            ) from exc
+        if stored is None:
+            raise NotFoundException("File")
+
+        content_length = stored.content_length
+        headers = {
+            "Content-Disposition": (
+                "inline; filename*=UTF-8''" + quote(doc.original_name)
+            ),
+            "Cache-Control": "private, max-age=0",
+        }
+        if content_length:
+            headers["Content-Length"] = str(content_length)
+
+        def stream_pdf():
+            with stored:
+                yield from stored.iter_chunks(chunk_size=64 * 1024)
+
+        return StreamingResponse(
+            stream_pdf(),
+            media_type="application/pdf",
+            headers=headers,
+        )
+
     if s3_storage.is_configured():
         try:
-            stored = s3_storage.open_pdf(user.id, doc.filename)
+            stored = s3_storage.open_pdf(
+                user.id,
+                doc.filename,
+                key=getattr(doc, "s3_key", None),
+            )
         except s3_storage.S3StorageError as exc:
             logger.warning(
                 "S3 read failed for %s/%s: %s", user.id, doc.filename, exc
@@ -911,14 +993,12 @@ def serve_pdf(
             if content_length:
                 headers["Content-Length"] = str(content_length)
 
-            def stream_pdf():
-                # Close the S3 body as soon as the response finishes so the
-                # underlying HTTP connection is returned to the pool.
+            def stream_pdf_legacy():
                 with stored:
                     yield from stored.iter_chunks(chunk_size=64 * 1024)
 
             return StreamingResponse(
-                stream_pdf(),
+                stream_pdf_legacy(),
                 media_type="application/pdf",
                 headers=headers,
             )
@@ -1062,27 +1142,20 @@ def update_chunk_settings(
     db.commit()
 
     # Queue ingestion with updated chunk settings. The worker reads the new
-    # settings from the document record before re-chunking.
-    task_id = None
-    try:
-        task = process_document.delay(
-            document_id=doc.id,
-            filepath=os.path.join(settings.UPLOAD_DIR, user.id, doc.filename), 
-            original_name=doc.original_name,
-            user_id=user.id,
-        )
-        task_id = task.id
-    except Exception as e:
-        logger.warning(f"Celery queue failed, falling back to background task: {e}")
-        if background_tasks:
-            background_tasks.add_task(
-                ingest_document,
-                document_id=doc.id,
-                filepath=os.path.join(settings.UPLOAD_DIR, user.id, doc.filename), 
-                original_name=doc.original_name,
-                user_id=user.id,
-            )
-        task_id = f"local_{uuid.uuid4().hex}"
+    # settings from the document record (and materializes bytes from S3).
+    legacy_path = os.path.join(settings.UPLOAD_DIR, user.id, doc.filename)
+    ingest_path = (
+        ""
+        if getattr(doc, "s3_key", None) or getattr(doc, "storage_backend", None) == "s3"
+        else legacy_path
+    )
+    task_id = _queue_ingest(
+        document_id=doc.id,
+        filepath=ingest_path,
+        original_name=doc.original_name,
+        user_id=user.id,
+        background_tasks=background_tasks,
+    )
 
     # Return the updated document record with new chunk settings
     return _deserialize_doc(doc).model_copy(update={"task_id": task_id})
@@ -1122,33 +1195,32 @@ def retry_document_processing(
     doc.page_count = 0
     db.commit()
 
-    # Re-queue ingestion
+    # Re-queue ingestion from S3 (or legacy local file if still present).
     filepath = os.path.join(settings.UPLOAD_DIR, user.id, doc.filename)
-
-    # Heal a missing or failed S3 copy before re-processing. The local file is
-    # the ingestion source, so a retry is also the natural place to re-sync S3.
-    if os.path.exists(filepath):
-        _mirror_document_to_s3(user.id, doc.filename, filepath)
-
-    task_id = None
-    try:
-        task = process_document.delay(
-            document_id=doc.id,
-            filepath=filepath,
-            original_name=doc.original_name,
-            user_id=user.id,
-        )
-        task_id = task.id
-    except Exception as e:
-        logger.warning(f"Celery queue failed for retry, falling back to background task: {e}")
-        if background_tasks:
-            background_tasks.add_task(
-                ingest_document,
-                document_id=doc.id,
-                filepath=filepath,
-                original_name=doc.original_name,
-                user_id=user.id,
+    if os.path.exists(filepath) and not getattr(doc, "s3_key", None):
+        try:
+            s3_key = _mirror_document_to_s3(user.id, doc.filename, filepath)
+            if s3_key:
+                doc.s3_key = s3_key
+                doc.storage_backend = "s3"
+                db.commit()
+                # Prefer S3 going forward — remove the local working copy.
+                Path(filepath).unlink(missing_ok=True)
+                filepath = ""
+        except ExternalServiceException:
+            logger.warning(
+                "Retry could not promote local file to S3 for %s; using local path",
+                doc.id,
             )
-        task_id = f"local_{uuid.uuid4().hex}"
+    else:
+        filepath = "" if getattr(doc, "s3_key", None) else filepath
+
+    task_id = _queue_ingest(
+        document_id=doc.id,
+        filepath=filepath,
+        original_name=doc.original_name,
+        user_id=user.id,
+        background_tasks=background_tasks,
+    )
 
     return _deserialize_doc(doc).model_copy(update={"task_id": task_id})

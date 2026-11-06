@@ -112,10 +112,37 @@ query_text_var = contextvars.ContextVar("query_text", default="")
 chunks_retrieved_var = contextvars.ContextVar("chunks_retrieved", default=None)
 
 
+# Libraries that spam DEBUG during PDF ingest / HTTP and must never ride our
+# root DEBUG level (one PDF parse can emit hundreds of thousands of lines).
+_NOISY_LOGGERS = (
+    "botocore",
+    "boto3",
+    "urllib3",
+    "s3transfer",
+    "pdfminer",
+    "PIL",
+    "pillow",
+    "fontTools",
+    "httpcore",
+    "httpx",
+    "openai",
+    "chromadb",
+    "asyncio",
+)
+
+
 class InterceptHandler(logging.Handler):
     """Logs from Python standard logging are redirected to Loguru."""
 
     def emit(self, record):
+        # Belt-and-suspenders: drop DEBUG from known chatty libraries even if
+        # their logger level was lowered after setup (or never configured).
+        name = record.name or ""
+        if record.levelno < logging.INFO:
+            for prefix in _NOISY_LOGGERS:
+                if name == prefix or name.startswith(prefix + "."):
+                    return
+
         try:
             level = logger.level(record.levelname).name
         except ValueError:
@@ -155,6 +182,12 @@ def json_serializer(record):
     return "{extra[serialized]}\n"
 
 
+def _quiet_noisy_loggers(std_logging) -> None:
+    """Keep third-party DEBUG chatter out of our sinks."""
+    for noisy in _NOISY_LOGGERS:
+        std_logging.getLogger(noisy).setLevel(std_logging.WARNING)
+
+
 def setup_logging():
     """Setup and configure Loguru logging framework."""
     import logging as std_logging
@@ -165,10 +198,11 @@ def setup_logging():
     log_level = settings.LOG_LEVEL
     if not log_level:
         log_level = "DEBUG" if settings.ENVIRONMENT == "development" else "INFO"
+    log_level = str(log_level).upper()
+    root_level = getattr(std_logging, log_level, std_logging.INFO)
 
-    # Never DEBUG-log AWS HTTP clients — Authorization / bearer tokens appear in request dumps.
-    for noisy in ("botocore", "boto3", "urllib3", "s3transfer"):
-        std_logging.getLogger(noisy).setLevel(std_logging.WARNING)
+    # Never DEBUG-log AWS / PDF / HTTP clients — secrets and token-level spam.
+    _quiet_noisy_loggers(std_logging)
         
     # Remove default handlers
     logger.remove()
@@ -207,24 +241,40 @@ def setup_logging():
         format=json_serializer,
         level=log_level,
         backtrace=True,
-        diagnose=True,
+        diagnose=False,
+        enqueue=False,
+        catch=True,
     )
     
-    # Add file handler with rotation and retention
-    os.makedirs(os.path.dirname(settings.LOG_FILE), exist_ok=True)
-    logger.add(
-        settings.LOG_FILE,
-        format=json_serializer,
-        level=log_level,
-        rotation="10 MB",
-        retention="10 days",
-        compression="zip",
-        backtrace=True,
-        diagnose=True,
-    )
+    # File sink: enqueue serialises writes across threads; on Windows multiple
+    # uvicorn/spawn workers can still race on rotation rename (WinError 32), so
+    # use a per-process file name when more than one process may write.
+    os.makedirs(os.path.dirname(settings.LOG_FILE) or ".", exist_ok=True)
+    log_path = settings.LOG_FILE
+    if os.name == "nt":
+        base, ext = os.path.splitext(log_path)
+        log_path = f"{base}.pid{os.getpid()}{ext or '.log'}"
+
+    file_kwargs = {
+        "sink": log_path,
+        "format": json_serializer,
+        "level": log_level,
+        "rotation": "10 MB",
+        "retention": "10 days",
+        "enqueue": True,
+        "catch": True,
+        "backtrace": True,
+        "diagnose": False,
+    }
+    # Zip compression after rename is another common WinError 32 source.
+    if os.name != "nt":
+        file_kwargs["compression"] = "zip"
+    logger.add(**file_kwargs)
     
-    # Intercept standard library logging
-    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+    # Intercept standard library logging at the configured app level — never
+    # level=0, which pulls every library's DEBUG into Loguru.
+    logging.basicConfig(handlers=[InterceptHandler()], level=root_level, force=True)
+    _quiet_noisy_loggers(std_logging)
     
     # Redirect Uvicorn logs to loguru
     for name in ("uvicorn", "uvicorn.asgi", "uvicorn.access", "uvicorn.error"):
@@ -232,7 +282,7 @@ def setup_logging():
         logging_logger.handlers = [InterceptHandler()]
         logging_logger.propagate = False
         
-    logger.info(f"Logging initialized with level: {log_level}, log file: {settings.LOG_FILE}")
+    logger.info(f"Logging initialized with level: {log_level}, log file: {log_path}")
 
 
 class StructuredLoggingMiddleware(BaseHTTPMiddleware):

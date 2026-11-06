@@ -136,6 +136,10 @@ export interface StickyNoteRecord {
   document: Record<string, unknown> | null;
   /** HTML mirror, used for exports and as the pre-JSON fallback. */
   html: string;
+  /** Optional PDF/document this note is associated with. */
+  documentId?: string | null;
+  /** Original PDF filename kept with the note for restore/display. */
+  documentName?: string | null;
 }
 
 export interface NormalizedNotesCollection {
@@ -159,6 +163,9 @@ export function createNotesEnvelope(
       title: note.title,
       document: note.document,
       html: note.html,
+      ...(note.documentId
+        ? { documentId: note.documentId, documentName: note.documentName ?? null }
+        : {}),
     })),
   };
 }
@@ -184,13 +191,18 @@ function noteFrom(
    */
   allowEmpty = false,
   title = "",
+  documentId: string | null = null,
+  documentName: string | null = null,
 ): { note: StickyNoteRecord; pendingMigration: boolean } | null {
   const normalized = normalizeNoteDocument(value);
   const label = title.trim() || "Note";
+  const association = {
+    ...(documentId ? { documentId, documentName } : {}),
+  };
   if (!normalized.document && !normalized.html) {
     if (!allowEmpty) return null;
     return {
-      note: { id, title: label, document: null, html: htmlMirror },
+      note: { id, title: label, document: null, html: htmlMirror, ...association },
       pendingMigration: false,
     };
   }
@@ -201,6 +213,7 @@ function noteFrom(
       title: label,
       document: normalized.document as unknown as Record<string, unknown> | null,
       html: normalized.html ?? htmlMirror,
+      ...association,
     },
     // Pre-JSON HTML only becomes lossless once the editor rewrites it.
     pendingMigration: !normalized.document && Boolean(normalized.html),
@@ -238,7 +251,23 @@ export function normalizeNotesCollection(raw: unknown): NormalizedNotesCollectio
         typeof entry.title === "string" && entry.title.trim()
           ? entry.title.trim()
           : `Note ${index + 1}`;
-      const parsed = noteFrom(source, id, htmlMirror, true, title);
+      const documentId =
+        typeof entry.documentId === "string" && entry.documentId
+          ? entry.documentId
+          : null;
+      const documentName =
+        typeof entry.documentName === "string" && entry.documentName
+          ? entry.documentName
+          : null;
+      const parsed = noteFrom(
+        source,
+        id,
+        htmlMirror,
+        true,
+        title,
+        documentId,
+        documentName,
+      );
       if (!parsed) return;
       notes.push(parsed.note);
       pendingMigration = pendingMigration || parsed.pendingMigration;

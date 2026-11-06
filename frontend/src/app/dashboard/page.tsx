@@ -176,6 +176,7 @@ function DashboardPageContent() {
   const [inspectorTab, setInspectorTab] = useState<"notes" | "pdf">("notes");
   const notesOpen = useNotesStore((s) => s.notesOpen);
   const setNotesOpen = useNotesStore((s) => s.setNotesOpen);
+  const associateDocument = useNotesStore((s) => s.associateDocument);
   const notesFocusToken = useNotesStore((s) => s.focusToken);
 
   const toggleSessions = useCallback(() => {
@@ -324,7 +325,8 @@ function DashboardPageContent() {
       prevDocIdRef.current = activeDocId;
       setGraphOpen(false);
     }
-  }, [activeDoc?.id]);
+    associateDocument(activeDoc?.id ?? null, activeDoc?.original_name ?? null);
+  }, [activeDoc?.id, activeDoc?.original_name, associateDocument]);
 
   const showPdfDock =
     !compareOpen &&

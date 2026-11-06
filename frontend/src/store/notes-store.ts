@@ -22,6 +22,9 @@ export interface StickyNote {
   title: string;
   document: CkEditorDocument | null;
   html: string;
+  /** PDF/document this note is associated with (persisted in notes.json). */
+  documentId?: string | null;
+  documentName?: string | null;
 }
 
 const DRAFT_KEY_PREFIX = "genova-notes-draft:";
@@ -57,6 +60,9 @@ interface NotesStore {
   error: string | null;
   /** Legacy HTML notes need one save to become CKEditor JSON. */
   pendingMigration: boolean;
+  /** Desk PDF currently linked to new / active notes. */
+  associatedDocumentId: string | null;
+  associatedDocumentName: string | null;
   loadNotes: (userId: string) => Promise<void>;
   commitDocument: (document: CkEditorDocument, html: string) => void;
   syncDocument: (document: CkEditorDocument, html: string) => void;
@@ -65,6 +71,10 @@ interface NotesStore {
   addNote: () => string;
   selectNote: (noteId: string) => void;
   renameNote: (noteId: string, title: string) => void;
+  associateDocument: (
+    documentId: string | null,
+    documentName?: string | null,
+  ) => void;
   closeNote: (noteId: string) => void;
   clear: () => void;
   setNotesOpen: (open: boolean) => void;
@@ -87,6 +97,8 @@ const initialState = {
   lastSavedAt: null as string | null,
   error: null as string | null,
   pendingMigration: false,
+  associatedDocumentId: null as string | null,
+  associatedDocumentName: null as string | null,
 };
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -107,8 +119,16 @@ function createNoteId(): string {
 function createEmptyNote(
   id = createNoteId(),
   title = "Note",
+  documentId: string | null = null,
+  documentName: string | null = null,
 ): StickyNote {
-  return { id, title, document: null, html: "" };
+  return {
+    id,
+    title,
+    document: null,
+    html: "",
+    ...(documentId ? { documentId, documentName } : {}),
+  };
 }
 
 function readDraft(userId: string): NormalizedNotesCollection | null {
@@ -169,6 +189,9 @@ function asRecords(notes: StickyNote[]): StickyNoteRecord[] {
     title: note.title,
     document: note.document,
     html: note.html,
+    ...(note.documentId
+      ? { documentId: note.documentId, documentName: note.documentName ?? null }
+      : {}),
   }));
 }
 
@@ -376,7 +399,12 @@ export const useNotesStore = create<NotesStore>((set, get) => {
         // note so the editor can consume the queued append.
         const current = get();
         if (current.pendingAppends.length > 0 && current.notes.length === 0) {
-          const note = createEmptyNote("note-1", "Note 1");
+          const note = createEmptyNote(
+            "note-1",
+            "Note 1",
+            current.associatedDocumentId,
+            current.associatedDocumentName,
+          );
           set({ notes: [note], activeNoteId: note.id });
         }
       }
@@ -413,7 +441,14 @@ export const useNotesStore = create<NotesStore>((set, get) => {
         const notes =
           state.notes.length > 0
             ? state.notes
-            : [createEmptyNote("note-1", "Note 1")];
+            : [
+                createEmptyNote(
+                  "note-1",
+                  "Note 1",
+                  state.associatedDocumentId,
+                  state.associatedDocumentName,
+                ),
+              ];
         return {
           notes,
           activeNoteId:
@@ -431,8 +466,13 @@ export const useNotesStore = create<NotesStore>((set, get) => {
     },
 
     addNote() {
-      const { notes } = get();
-      const note = createEmptyNote(undefined, nextNoteTitle(notes));
+      const { notes, associatedDocumentId, associatedDocumentName } = get();
+      const note = createEmptyNote(
+        undefined,
+        nextNoteTitle(notes),
+        associatedDocumentId,
+        associatedDocumentName,
+      );
       set((state) => ({
         notes: [...state.notes, note],
         activeNoteId: note.id,
@@ -464,6 +504,33 @@ export const useNotesStore = create<NotesStore>((set, get) => {
         ),
       }));
       scheduleSave();
+    },
+
+    associateDocument(documentId, documentName = null) {
+      const nextId = documentId || null;
+      const nextName = documentName || null;
+      const state = get();
+      if (
+        state.associatedDocumentId === nextId &&
+        state.associatedDocumentName === nextName
+      ) {
+        return;
+      }
+      set({
+        associatedDocumentId: nextId,
+        associatedDocumentName: nextName,
+      });
+      // Stamp the active note when the desk PDF changes so reload restores the link.
+      if (state.activeNoteId && nextId) {
+        set((s) => ({
+          notes: s.notes.map((note) =>
+            note.id === s.activeNoteId
+              ? { ...note, documentId: nextId, documentName: nextName }
+              : note,
+          ),
+        }));
+        scheduleSave();
+      }
     },
 
     closeNote(noteId) {

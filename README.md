@@ -1,411 +1,228 @@
----
-title: Genova_Rag
-emoji: 🧠
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: true
-license: mit
-short_description: Enterprise Agentic RAG — upload PDFs and chat with AI
----
+# Genova_Rag
 
-<div align="center">
+**Yoka** — per-user document assistant. Upload PDFs (and DOCX/TXT/MD), ingest them into a hybrid RAG pipeline, then chat with streaming answers and page citations from a Next.js desk UI (viewer + chat sessions + sticky notes + knowledge graph).
 
-<br/>
-
-# Yoka
-
-### Genova_Rag
-
-**Enterprise Agentic Retrieval-Augmented Generation**
-
-<br/>
-
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white)](https://nextjs.org/)
-[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
-[![MySQL](https://img.shields.io/badge/MySQL-8.4_LTS-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](https://dev.mysql.com/doc/relnotes/mysql/8.4/en/)
-[![ChromaDB](https://img.shields.io/badge/ChromaDB-VectorDB-FF6B35?style=for-the-badge)](https://trychroma.com/)
-[![HuggingFace](https://img.shields.io/badge/HuggingFace-Inference-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black)](https://huggingface.co/)
-[![Celery](https://img.shields.io/badge/Celery-Redis-37814A?style=for-the-badge&logo=celery&logoColor=white)](https://docs.celeryq.dev/)
-[![Docker](https://img.shields.io/badge/Docker-Multi--Stage-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com/)
-
-<br/>
-
-> **Upload · Embed · Retrieve · Chat** — An AI document assistant with an agentic RAG pipeline, streaming responses, and per-user data isolation.
-
-<br/>
-
-[Features](#-key-features) · [Tech Stack](#-tech-stack) · [Getting Started](#-getting-started) · [Architecture](#-architecture) · [RAG Pipeline](#-rag-pipeline) · [API Reference](#-api-reference) · [Deployment](#-deployment)
+| | |
+|--|--|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:7860 |
+| Swagger | http://localhost:7860/docs |
+| Health | http://localhost:7860/api/v1/health/status |
 
 ---
-
-</div>
-
-## Overview
-
-**Genova_Rag** lets users upload complex PDFs, financial reports, legal contracts, and research papers — then chat with an AI that provides **accurate, cited answers** powered by a multi-stage Retrieval-Augmented Generation pipeline.
-
-The system uses **hybrid search (vector + BM25) with Reciprocal Rank Fusion** and **cross-encoder reranking** to find the most relevant document chunks, streams AI-generated answers token-by-token, and highlights exact source citations with page numbers — all inside a modern Next.js frontend with JWT-secured per-user data isolation.
-
-<br/>
 
 ## Architecture
 
-> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a route-by-route system map, request-flow diagrams, and Swagger/OpenAPI documentation guidance.
+> GraphRAG internals: [docs/graph-rag-architecture.md](docs/graph-rag-architecture.md). Dashboard behaviour: [docs/dashboard-functionality.md](docs/dashboard-functionality.md).
 
 ```mermaid
 flowchart TD
 
-subgraph group_backend["Backend"]
-  node_backend_main["App entry<br/>FastAPI app<br/>[main.py]"]
-  node_backend_routes["Routes<br/>API layer"]
-  node_backend_auth["Auth<br/>JWT/bcrypt<br/>[auth.py]"]
-  node_backend_documents["Documents<br/>doc lifecycle<br/>[documents.py]"]
-  node_backend_chat["Chat<br/>streaming RAG<br/>[chat.py]"]
-  node_backend_workspaces["Workspaces<br/>tenant scope<br/>[workspaces.py]"]
-  node_backend_graph_api["Graph API<br/>knowledge graph<br/>[graph.py]"]
-  node_backend_health["Health<br/>checks<br/>[health.py]"]
-  node_backend_admin["Admin<br/>ops API<br/>[admin.py]"]
-  node_backend_ingestion["Ingestion<br/>async pipeline"]
-  node_backend_rag_retrieval["Retrieval<br/>hybrid RAG<br/>[retriever.py]"]
-  node_backend_rag_generation["Generation<br/>prompt/LLM<br/>[prompts.py]"]
-  node_backend_graph_rag["Graph RAG<br/>entity graph<br/>[graph_builder.py]"]
-  node_backend_storage_db[("Database<br/>SQLAlchemy/MySQL<br/>[database.py]")]
-  node_backend_storage_vector[("Vector store<br/>ChromaDB<br/>[vectorstore.py]")]
-  node_backend_storage_cache[("Cache<br/>Redis/LRU<br/>[cache.py]")]
-  node_backend_queue["Queue<br/>Celery/Redis<br/>[celery_app.py]"]
+subgraph group_frontend["Frontend — Next.js 16 desk"]
+  node_frontend_app["App Router<br/>dashboard / documents / settings / admin"]
+  node_frontend_chat["Chat UI<br/>sessions · SSE stream · citations"]
+  node_frontend_documents["Docs UI<br/>sidebar · PDF viewer · compare"]
+  node_frontend_notes["Sticky notes<br/>CKEditor 5 · notes-store"]
+  node_frontend_graph["Knowledge graph<br/>KnowledgeGraph.tsx · xyflow"]
+  node_frontend_drive["Drive settings<br/>OAuth connect · sync"]
+  node_frontend_state["Zustand<br/>auth · chat · notes · workspace"]
+  node_frontend_api["API client<br/>lib/api.ts · JWT refresh"]
 end
 
-subgraph group_frontend["Frontend"]
-  node_frontend_app["Next app<br/>App Router"]
-  node_frontend_chat["Chat UI<br/>stream client"]
-  node_frontend_documents["Docs UI<br/>document workspace"]
-  node_frontend_graph["Graph view<br/>knowledge graph<br/>[KnowledgeGraph.tsx]"]
-  node_frontend_state["State<br/>Zustand stores"]
-  node_frontend_api["API client<br/>fetch layer<br/>[api.ts]"]
+subgraph group_backend["Backend — FastAPI"]
+  node_backend_main["App entry<br/>main.py · middleware · /metrics"]
+  node_backend_routes["Routes /api/v1"]
+  node_backend_auth["Auth<br/>JWT / bcrypt / Google"]
+  node_backend_documents["Documents<br/>upload · trash · PDF serve"]
+  node_backend_chat["Chat<br/>ask / stream · sessions · export"]
+  node_backend_notes["Notes<br/>GET/PUT sticky JSON"]
+  node_backend_drive["Drive<br/>OAuth · folder sync"]
+  node_backend_graph_api["Graph API<br/>overview · neighbourhood · reindex"]
+  node_backend_workspaces["Workspaces<br/>members · invites"]
+  node_backend_usage["Usage / Admin<br/>quotas · KPIs"]
+  node_backend_health["Health<br/>DB · Redis · Chroma · Ollama"]
+  node_backend_ingestion["Ingestion<br/>document_ingestion.py"]
+  node_backend_rag_retrieval["Retrieval<br/>hybrid RRF · optional rerank"]
+  node_backend_rag_generation["Generation<br/>agent · prompts · SSE"]
+  node_backend_graph_rag["GraphRAG<br/>extract → resolve → SQL store"]
+  node_backend_queue["Queue<br/>Celery / Redis<br/>or eager in-process"]
 end
 
-subgraph group_ops["Ops & Integrations"]
-  node_integrations_bot["Discord bot<br/>integration<br/>[bot.py]"]
-  node_ops_obs["Observability<br/>metrics/tracing<br/>[observability.py]"]
-  node_ops_deploy["Deploy stack<br/>containers<br/>[docker-compose.yml]"]
+subgraph group_storage["Data & providers"]
+  node_storage_db[("SQLAlchemy<br/>SQLite / MySQL<br/>users · docs · graph · sessions")]
+  node_storage_vector[("ChromaDB<br/>per-user vectors")]
+  node_storage_bm25[("BM25 indexes<br/>per document")]
+  node_storage_s3[("S3 NoteBase<br/>{user_id}/pdfs<br/>{user_id}/sticky_notes")]
+  node_storage_local[("Local disk<br/>./data/uploads<br/>when S3 unset")]
+  node_storage_cache[("Cache<br/>Redis / LRU")]
+  node_llm["LLM + embeddings<br/>Ollama default<br/>HF / Bedrock optional"]
+  node_gdrive["Google Drive API<br/>PDF import"]
 end
 
+node_frontend_app --> node_frontend_chat
+node_frontend_app --> node_frontend_documents
+node_frontend_app --> node_frontend_notes
+node_frontend_app --> node_frontend_graph
+node_frontend_app --> node_frontend_drive
+node_frontend_chat --> node_frontend_state
+node_frontend_notes --> node_frontend_state
 node_frontend_app -->|"uses"| node_frontend_api
-node_frontend_api -->|"requests"| node_backend_main
-node_frontend_chat -->|"reads/writes"| node_frontend_state
-node_frontend_documents -->|"reads/writes"| node_frontend_state
-node_frontend_graph -->|"loads"| node_frontend_api
-node_backend_main -->|"mounts"| node_backend_routes
-node_backend_routes -->|"exposes"| node_backend_auth
-node_backend_routes -->|"exposes"| node_backend_documents
-node_backend_routes -->|"exposes"| node_backend_chat
-node_backend_routes -->|"exposes"| node_backend_workspaces
-node_backend_routes -->|"exposes"| node_backend_graph_api
-node_backend_routes -->|"exposes"| node_backend_health
-node_backend_routes -->|"exposes"| node_backend_admin
-node_backend_documents -->|"enqueues"| node_backend_queue
-node_backend_queue -->|"runs"| node_backend_ingestion
-node_backend_ingestion -->|"persists"| node_backend_storage_db
-node_backend_ingestion -->|"indexes"| node_backend_storage_vector
-node_backend_ingestion -->|"caches"| node_backend_storage_cache
-node_backend_chat -->|"retrieves"| node_backend_rag_retrieval
-node_backend_rag_retrieval -->|"searches"| node_backend_storage_vector
-node_backend_rag_retrieval -->|"filters"| node_backend_storage_db
-node_backend_rag_retrieval -->|"supplies context"| node_backend_rag_generation
-node_backend_rag_generation -->|"streams"| node_backend_chat
-node_backend_graph_api -->|"queries"| node_backend_graph_rag
-node_backend_graph_rag -->|"persists"| node_backend_storage_db
-node_backend_auth -->|"authenticates"| node_backend_storage_db
-node_backend_workspaces -->|"scopes"| node_backend_storage_db
-node_backend_health -->|"checks"| node_backend_storage_db
-node_backend_health -->|"checks"| node_backend_storage_cache
-node_backend_health -->|"checks"| node_backend_queue
-node_backend_health -->|"checks"| node_backend_storage_vector
-node_ops_obs -->|"observes"| node_backend_main
-node_ops_deploy -->|"runs"| node_backend_main
-node_ops_deploy -->|"runs"| node_frontend_app
-node_integrations_bot -.->|"integrates"| node_backend_routes
+node_frontend_api -->|"JWT /api/v1/*"| node_backend_main
 
-classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+node_backend_main -->|"mounts"| node_backend_routes
+node_backend_routes --> node_backend_auth
+node_backend_routes --> node_backend_documents
+node_backend_routes --> node_backend_chat
+node_backend_routes --> node_backend_notes
+node_backend_routes --> node_backend_drive
+node_backend_routes --> node_backend_graph_api
+node_backend_routes --> node_backend_workspaces
+node_backend_routes --> node_backend_usage
+node_backend_routes --> node_backend_health
+
+node_backend_documents -->|"enqueue"| node_backend_queue
+node_backend_queue -->|"runs"| node_backend_ingestion
+node_backend_ingestion -->|"metadata"| node_storage_db
+node_backend_ingestion -->|"vectors"| node_storage_vector
+node_backend_ingestion -->|"keywords"| node_storage_bm25
+node_backend_ingestion -->|"entities"| node_backend_graph_rag
+node_backend_ingestion -->|"bytes"| node_storage_s3
+node_backend_ingestion -.->|"fallback"| node_storage_local
+node_backend_graph_rag -->|"entities / edges"| node_storage_db
+
+node_backend_chat -->|"retrieve"| node_backend_rag_retrieval
+node_backend_rag_retrieval --> node_storage_vector
+node_backend_rag_retrieval --> node_storage_bm25
+node_backend_rag_retrieval -->|"graph context"| node_backend_graph_rag
+node_backend_rag_retrieval -->|"context"| node_backend_rag_generation
+node_backend_rag_generation -->|"stream"| node_backend_chat
+node_backend_rag_generation --> node_llm
+node_backend_ingestion --> node_llm
+
+node_backend_notes -->|"notes.json"| node_storage_s3
+node_backend_documents -->|"pdfs/"| node_storage_s3
+node_backend_drive -->|"import PDFs"| node_gdrive
+node_backend_drive -->|"upload path"| node_backend_documents
+node_backend_auth --> node_storage_db
+node_backend_chat --> node_storage_db
+node_backend_health --> node_storage_db
+node_backend_health --> node_storage_cache
+node_backend_health --> node_storage_vector
+node_backend_health --> node_llm
+node_backend_ingestion -.->|"embed cache"| node_storage_cache
+
 classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
 classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
 classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
-classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
 classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
-classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
-class node_backend_main,node_backend_routes,node_backend_auth,node_backend_documents,node_backend_chat,node_backend_workspaces,node_backend_graph_api,node_backend_health,node_backend_admin,node_backend_ingestion,node_backend_rag_retrieval,node_backend_rag_generation,node_backend_graph_rag,node_backend_storage_db,node_backend_storage_vector,node_backend_storage_cache,node_backend_queue toneBlue
-class node_frontend_app,node_frontend_chat,node_frontend_documents,node_frontend_graph,node_frontend_state,node_frontend_api toneAmber
-class node_integrations_bot,node_ops_obs,node_ops_deploy toneMint
+class node_backend_main,node_backend_routes,node_backend_auth,node_backend_documents,node_backend_chat,node_backend_notes,node_backend_drive,node_backend_graph_api,node_backend_workspaces,node_backend_usage,node_backend_health,node_backend_ingestion,node_backend_rag_retrieval,node_backend_rag_generation,node_backend_graph_rag,node_backend_queue toneBlue
+class node_frontend_app,node_frontend_chat,node_frontend_documents,node_frontend_notes,node_frontend_graph,node_frontend_drive,node_frontend_state,node_frontend_api toneAmber
+class node_storage_db,node_storage_vector,node_storage_bm25,node_storage_s3,node_storage_local,node_storage_cache,node_llm,node_gdrive toneMint
 ```
 
-<br/>
+### System flow
 
-### System Flow Overview
+1. **Upload / Drive sync** — PDF lands in S3 `NoteBase/{user_id}/pdfs/` (or local `./data/uploads`), then Celery **or** eager in-process ingest runs.
+2. **Ingest** — chunk → embed (Ollama/nomic by default, cache via Redis/LRU) → Chroma + BM25 → GraphRAG extract/resolve into SQL entity tables.
+3. **Ask** — hybrid retrieval (vector + BM25, optional rerank) + bounded graph neighbourhood → prompt → LLM → SSE tokens + citations to the desk chat panel.
+4. **Notes** — CKEditor JSON via `/api/v1/notes` → `NoteBase/{user_id}/sticky_notes/notes.json` (browser draft fallback when S3 is unset).
 
-1. User uploads a document via the Next.js frontend.
-2. FastAPI queues a Celery ingestion task backed by Redis.
-3. The worker chunks the document, generates local embeddings (cached via Redis/LRU), builds a BM25 index, and stores vectors in ChromaDB.
-4. At query time, hybrid search merges vector and BM25 results via Reciprocal Rank Fusion.
-5. A cross-encoder reranker refines the top candidates.
-6. The agent assembles a prompt and calls the HuggingFace Inference API.
-7. Streamed SSE tokens are returned to the frontend chat panel.
-
-<br/>
-
-## Tech Stack
-
-<div align="center">
-
-### Backend
-
-| | Technology | Purpose |
-|---|---|---|
-| <img src="https://skillicons.dev/icons?i=fastapi" width="30"/> | **FastAPI** | Async web framework + routing |
-| <img src="https://skillicons.dev/icons?i=python" width="30"/> | **Python 3.11** | Runtime environment |
-| <img src="https://skillicons.dev/icons?i=mysql" width="30"/> | **MySQL 8.4 LTS / SQLite** | Relational database (SQLAlchemy ORM) |
-| <img src="https://img.shields.io/badge/JWT-000000?style=flat&logo=jsonwebtokens&logoColor=white" height="24"/> | **JWT + bcrypt** | Authentication & password hashing |
-| <img src="https://img.shields.io/badge/ChromaDB-000000?style=flat" height="24"/> | **ChromaDB** | Local vector store (embeddings) |
-| <img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=flat&logo=huggingface&logoColor=black" height="24"/> | **HuggingFace Inference API** | LLM answer generation |
-| <img src="https://img.shields.io/badge/sentence--transformers-000000?style=flat" height="24"/> | **sentence-transformers** | Local embedding model (all-MiniLM-L6-v2) |
-
-### Frontend
-
-| | Technology | Purpose |
-|---|---|---|
-| <img src="https://skillicons.dev/icons?i=nextjs" width="30"/> | **Next.js 14** | React framework (App Router) |
-| <img src="https://skillicons.dev/icons?i=typescript" width="30"/> | **TypeScript** | Frontend language |
-| <img src="https://skillicons.dev/icons?i=tailwind" width="30"/> | **Tailwind CSS** | Utility-first styling |
-
-### AI / ML Pipeline
-
-| | Technology | Purpose |
-|---|---|---|
-| <img src="https://img.shields.io/badge/sentence--transformers-000000?style=flat" height="24"/> | **sentence-transformers (all-MiniLM-L6-v2)** | Generates vector embeddings for document chunks |
-| <img src="https://img.shields.io/badge/ChromaDB-000000?style=flat" height="24"/> | **ChromaDB** | Stores + retrieves embeddings locally |
-| <img src="https://img.shields.io/badge/HuggingFace-FFD21E?style=flat&logo=huggingface&logoColor=black" height="24"/> | **HuggingFace Inference API** | Generates answers from retrieved context |
-| <img src="https://img.shields.io/badge/Cross--Encoder-000000?style=flat" height="24"/> | **BAAI/bge-reranker-v2-m3** | Cross-encoder reranking for retrieval quality |
-| <img src="https://img.shields.io/badge/GraphRAG-000000?style=flat" height="24"/> | **Knowledge Graph (GraphRAG)** | Entity extraction + relationship graphs |
-| <img src="https://img.shields.io/badge/PyMuPDF-FF0000?style=flat" height="24"/> | **PyMuPDF + pdfplumber + python-docx** | Document text extraction |
-
-### DevOps & Tooling
-
-| | Technology | Purpose |
-|---|---|---|
-| <img src="https://skillicons.dev/icons?i=docker" width="30"/> | **Docker Multi-Stage** | Containerised deployment |
-| <img src="https://skillicons.dev/icons?i=githubactions" width="30"/> | **GitHub Actions** | CI/CD (E2E, security, deploy) |
-| <img src="https://img.shields.io/badge/Playwright-45ba4b?style=flat&logo=playwright&logoColor=white" height="24"/> | **Playwright** | E2E + visual regression tests |
-| <img src="https://img.shields.io/badge/Prometheus-E6522C?style=flat&logo=prometheus&logoColor=white" height="24"/> | **Prometheus + Grafana** | Metrics & observability |
-| <img src="https://img.shields.io/badge/HuggingFace_Spaces-FFD21E?style=flat&logo=huggingface&logoColor=black" height="24"/> | **HuggingFace Spaces** | Production deployment |
-
-</div>
-
-<br/>
-
-## Key Features
-
-### Recent Updates
-
-- Discord Bot Integration
-- Celery + Redis Background PDF Processing
-- Email Verification Workflow
-- RAGAS Evaluation Pipeline
-- Response Caching with Redis
-- Optimized Docker Deployment
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### Users
-- JWT-secured register, login & email verification
-- Upload **PDF**, **DOCX**, **TXT**, and **Markdown**
-- URL ingestion via web crawler
-- Ask questions in natural language
-- **Streaming AI responses** token-by-token
-- Inline **source citations** with page numbers
-- Export chat as **Markdown, TXT, or PDF**
-- Per-user complete data isolation
-
-</td>
-<td width="33%" valign="top">
-
-### RAG Pipeline
-- Smart **recursive text chunking** (configurable size & overlap)
-- **Local embeddings** — no data leaves your machine
-- **Embedding cache** (Redis + LRU) — skip redundant computation
-- **Hybrid search** — vector + BM25 merged via RRF
-- **Cross-encoder reranking** for precision answers
-- **Image caption extraction** from PDF figures
-- **URL extraction** from PDF link annotations
-- **Knowledge graph** (GraphRAG) per document
-
-</td>
-<td width="33%" valign="top">
-
-### Engineering
-- **Async FastAPI** with SSE streaming
-- **MySQL 8.4 LTS** metadata + **ChromaDB** vectors
-- **Celery + Redis** async ingestion pipeline
-- **Multi-stage Docker** with CPU & GPU profiles
-- **Prometheus metrics** + Grafana dashboard
-- **Deep health endpoint** — DB, Redis, Celery, ChromaDB
-- Rate limiting, CORS, file validation, JWT expiry
-- **Playwright** E2E + visual regression tests
-
-</td>
-</tr>
-</table>
-
-<br/>
-
-## Project Structure
-
-```
-Genova_Rag/
-│
-├── backend/
-│   ├── app/
-│   │   ├── main.py                 # FastAPI app — lifespan, middleware, routers
-│   │   ├── config.py               # Pydantic settings (env vars)
-│   │   ├── models.py               # SQLAlchemy ORM models
-│   │   ├── schemas.py              # Pydantic request/response schemas
-│   │   ├── database.py             # Engine, session, migrations
-│   │   ├── auth.py                 # JWT helpers
-│   │   ├── tasks.py                # Celery task definitions
-│   │   │
-│   │   ├── routes/
-│   │   │   ├── auth.py             # Register, login, OAuth
-│   │   │   ├── documents.py        # Upload, list, delete, status
-│   │   │   ├── chat.py             # Ask, stream, history, export
-│   │   │   ├── health.py           # Deep health check endpoint
-│   │   │   ├── admin.py            # Admin stats
-│   │   │   └── workspaces.py       # Workspace management
-│   │   │
-│   │   ├── rag/
-│   │   │   ├── chunker.py          # PDF/DOCX/TXT extraction + chunking
-│   │   │   ├── embeddings.py       # Local embeddings + Redis/LRU cache
-│   │   │   ├── vectorstore.py      # ChromaDB operations
-│   │   │   ├── bm25.py             # BM25 index per document
-│   │   │   ├── retriever.py        # Hybrid search + RRF + reranking
-│   │   │   ├── reranker.py         # Cross-encoder reranker
-│   │   │   ├── vision.py           # Image caption extraction
-│   │   │   ├── url_extractor.py    # PDF URL/link extraction
-│   │   │   ├── graph_builder.py    # Knowledge graph (GraphRAG)
-│   │   │   ├── agent.py            # LLM answer generation
-│   │   │   └── summarizer.py       # Document summarisation
-│   │   │
-│   │   └── services/
-│   │       └── document_ingestion.py  # End-to-end ingestion pipeline
-│   │
-│   ├── tests/                      # pytest test suite
-│   ├── requirements.txt
-│   └── migrate_add_extracted_urls.py
-│
-├── frontend/
-│   ├── src/
-│   │   ├── app/                    # Next.js App Router pages
-│   │   ├── components/             # React components
-│   │   ├── store/                  # Zustand state stores
-│   │   ├── lib/                    # API client, auth, utilities
-│   │   └── services/               # API service layer
-│   ├── e2e/                        # Playwright E2E + snapshot tests
-│   ├── next.config.ts
-│   └── playwright.config.ts
-│
-├── docs/
-│   └── ARCHITECTURE.md
-│
-├── .github/
-│   └── workflows/
-│       ├── ci.yml                  # Backend CI
-│       ├── e2e.yml                 # Playwright E2E + visual regression
-│       ├── deploy.yml              # Docker build (main branch)
-│       └── devsecops.yml           # Security scans
-│
-├── docker-compose.yml              # CPU + GPU + debug profiles + log rotation
-├── Dockerfile                      # Multi-stage backend build
-├── frontend/Dockerfile             # Multi-stage frontend build (nginx)
-└── .env.example
-```
-
-<br/>
-
-## Getting Started
-
-### Prerequisites
-
-- ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white) **Python 3.11+** (3.13 works for local Ollama setup)
-- ![Node](https://img.shields.io/badge/Node.js-20+-339933?style=flat&logo=nodedotjs&logoColor=white) **Node.js 20+**
-- ![Ollama](https://img.shields.io/badge/Ollama-local-000000?style=flat) **Ollama** running at `http://localhost:11434` (default LLM + embeddings)
-- ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white) **Docker + Docker Compose** (optional — not required for local Ollama)
-
-**Default local models (override via OS env vars if needed):**
-- Chat: `qwen2.5:3b`
-- Embeddings: `nomic-embed-text` (768-d)
-- Chroma persist dir: `./data/chroma_db_ollama_nomic` (separate from any MiniLM 384-d index)
-
-A `.env` file is **not required**.
+Redis/Celery are optional. LLM defaults to **Ollama**; HuggingFace Inference and AWS Bedrock are supported via env.
 
 ---
 
-### 1. Project root
+## Stack
 
-Work from the project root directory for all setup and run commands below.
+| Layer | Choices |
+|-------|---------|
+| Backend | FastAPI, SQLAlchemy (SQLite local / MySQL deploy), JWT + bcrypt, ChromaDB, Celery/Redis (optional), boto3 |
+| RAG | Ollama (`qwen2.5:3b` + `nomic-embed-text` 768-d by default), hybrid RRF retrieval, SQL GraphRAG (`backend/app/graph/`) |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind, Zustand, CKEditor 5, pdf.js, `@xyflow/react` |
+| Storage | `./data/*` locally; optional AWS S3 under `NoteBase/{user_id}/…` |
 
-### 2. Windows + Ollama (recommended local path — no Docker, no `.env`)
+---
 
-#### One-time setup
+## Features
+
+- JWT auth (register / login / refresh), optional email verify + Google sign-in
+- Document upload, trash/restore, progress polling, PDF serve
+- Streaming chat with sessions, citations, quiz state, export (MD / TXT / PDF)
+- CKEditor sticky notes (S3-backed when configured; document association)
+- Workspace knowledge graph (entity/relationship extraction + explorer UI)
+- Google Drive PDF sync (OAuth + manual / scheduled sync)
+- Admin + usage surfaces; Prometheus `/metrics` + deep health checks
+
+---
+
+## Project structure
+
+```text
+Genova_Rag/
+├── backend/
+│   ├── app/
+│   │   ├── main.py                 # FastAPI entry, routers, middleware
+│   │   ├── config.py               # Settings from env
+│   │   ├── models.py / schemas.py  # ORM + API schemas
+│   │   ├── routes/                 # auth, documents, chat, notes, drive,
+│   │   │                           # graph, workspaces, admin, usage, health…
+│   │   ├── rag/                    # chunking, embeddings, vectordb, retrieval, llm
+│   │   ├── graph/                  # GraphRAG extract → resolve → store → retrieve
+│   │   ├── services/               # ingestion, s3_storage, drive_sync, memory…
+│   │   └── publishing/             # chat / notes PDF export
+│   ├── tests/
+│   └── requirements.txt
+├── frontend/
+│   └── src/
+│       ├── app/                    # dashboard, documents, settings, admin, auth
+│       ├── components/             # chat, document, notes, graph, …
+│       ├── store/                  # zustand (auth, notes, chat, …)
+│       └── lib/                    # api client, notes envelope helpers
+├── docs/                           # GraphRAG + dashboard notes
+├── docker-compose.yml
+├── Dockerfile
+└── .env.example
+```
+
+---
+
+## Getting started
+
+### Prerequisites
+
+- Python **3.11+**
+- Node.js **20+**
+- [Ollama](https://ollama.com/) with:
+
+```bash
+ollama pull qwen2.5:3b
+ollama pull nomic-embed-text
+```
+
+### Backend
 
 ```powershell
-# From the project root
-# 1) Confirm Ollama is running and models exist
-ollama list
-# If missing:
-#   ollama pull qwen2.5:3b
-#   ollama pull nomic-embed-text
-
-# 2) Backend venv + deps
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-# 3) Frontend deps (new terminal or after deactivating)
-cd ..\frontend
-npm install
+uvicorn app.main:app --reload --port 7860
 ```
 
-#### Every time you start the app
+### Frontend
 
 ```powershell
-# Terminal A — ensure Ollama is running (Windows app or:)
-# ollama serve
-
-# Terminal B — backend (cwd must be backend/)
-cd backend
-.\.venv\Scripts\Activate.ps1
-uvicorn app.main:app --reload --port 7860
-
-# Terminal C — frontend
 cd frontend
+npm install
 npm run dev
 ```
 
 | Service | URL |
 |---------|-----|
-| Frontend | http://localhost:3000 |
-| Backend API | http://localhost:7860 |
-| API Docs (Swagger) | http://localhost:7860/docs |
-| Health | http://localhost:7860/api/v1/health/status |
+| App | http://localhost:3000 |
+| API | http://localhost:7860 |
+| Docs | http://localhost:7860/docs |
 
-**Notes for Windows local mode:**
-- SQLite is used by default (`./data/app.db`) — MySQL is not required for local mode.
-- Redis/Celery are optional. If Redis is down, Celery runs in **eager** mode and uploads still ingest in-process.
-- Register a user in the UI (no SMTP → account is auto-verified for local testing).
-- Optional overrides (PowerShell session only, no `.env` file):
+Local defaults: **SQLite** (`./data/app.db`), **no Redis required**, register in the UI (no SMTP → auto-verify). Optional overrides:
 
 ```powershell
 $env:LLM_MODEL = "qwen2.5:3b"
@@ -414,325 +231,94 @@ $env:OLLAMA_BASE_URL = "http://localhost:11434"
 $env:NEXT_PUBLIC_API_URL = "http://localhost:7860"
 ```
 
-### 3. Optional: HuggingFace Inference instead of Ollama
+Copy [`.env.example`](.env.example) only if you want file-based config. **Do not commit secrets.**
 
-Set the provider below. HuggingFace credentials are resolved from the standard HF environment / cached login (not stored in the app).
-
-```powershell
-$env:LLM_PROVIDER = "huggingface"
-$env:EMBEDDING_PROVIDER = "huggingface"   # or keep ollama embeddings
-$env:LLM_MODEL = "Qwen/Qwen2.5-72B-Instruct"
-$env:EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-$env:EMBEDDING_DIMENSION = "384"
-$env:CHROMA_PERSIST_DIR = "./data/chroma_db"   # separate from Ollama index
-```
-
-### 4. Optional `.env` file
-
-Copy `.env.example` only if you prefer file-based config. The app also reads OS environment variables. Do not commit secrets.
-
-#### Email Verification Setup (optional)
-
-Without SMTP settings, registration auto-verifies (or returns a local verification link) so you can test without email credentials.
-
-### 5. Run with Docker (optional full stack)
+### Docker (optional)
 
 ```bash
-# CPU-only (no GPU needed)
 docker compose --profile cpu up --build
-
-# GPU-accelerated (requires NVIDIA Container Toolkit)
-docker compose --profile gpu up --build
-
-# Also start pgAdmin at http://localhost:5050
-docker compose --profile cpu --profile debug up --build
+# GPU: docker compose --profile gpu up --build
+# Adminer: add --profile debug  → http://localhost:5050
 ```
-
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:3000 |
-| Backend API | http://localhost:7860 |
-| API Docs | http://localhost:7860/docs |
-| pgAdmin | http://localhost:5050 (debug profile) |
-
-### 6. Set up crawl4ai (URL Upload Feature — optional)
-
-```bash
-crawl4ai-setup
-```
-
-### Troubleshooting (Windows + Ollama)
-
-| Symptom | Fix |
-|---------|-----|
-| `Cannot reach Ollama` / health `ollama: down` | Start the Ollama Windows app, then open `http://localhost:11434/api/tags`. |
-| `model ... is not installed` | `ollama pull qwen2.5:3b` and `ollama pull nomic-embed-text` |
-| Upload fails with `python-magic` / libmagic | `pip uninstall python-magic` then `pip install python-magic-bin==0.4.14` (unstructured may reinstall pure `python-magic`) |
-| Answers ignore the PDF / no citations | Confirm health shows Ollama `up`, re-upload after embedding model change, and check Chroma dir is `./data/chroma_db_ollama_nomic` |
-| Redis / Celery shown as down | Expected locally — Celery falls back to eager/in-process ingestion |
-| Frontend cannot reach API | Ensure backend is on port 7860; frontend defaults to `http://localhost:7860` |
-| Mixing MiniLM (384-d) and nomic (768-d) vectors | Do not reuse `./data/chroma_db`. Ollama uses a separate persist dir by default |
-
-<br/>
-
-## RAG Pipeline
-
-```
-                    ┌─────────────────────────────────────────────┐
-                    │         PDF / DOCX / TXT / MD Upload        │
-                    └───────────────────┬─────────────────────────┘
-                                        │
-                                        ▼
-                    ┌─────────────────────────────────────────────┐
-                    │   PyMuPDF / pdfplumber / python-docx Parser │
-                    │   + Image caption extraction                │
-                    │   + PDF URL/link annotation extraction      │
-                    └───────────────────┬─────────────────────────┘
-                                        │
-                                        ▼
-                    ┌─────────────────────────────────────────────┐
-                    │      Recursive Character Text Splitter      │
-                    │   chunk_size=1000  |  overlap=200           │
-                    └───────────────────┬─────────────────────────┘
-                                        │
-                                        ▼
-                    ┌─────────────────────────────────────────────┐
-                    │  all-MiniLM-L6-v2  (local embeddings)       │
-                    │  384-dim · Redis + LRU cache (24h TTL)      │
-                    └──────────────┬──────────────────────────────┘
-                                   │
-                    ┌──────────────┴──────────────┐
-                    ▼                             ▼
-         ┌──────────────────┐         ┌─────────────────────┐
-         │ ChromaDB vectors │         │  BM25 keyword index │
-         │ (per-user coll.) │         │  (per-document .pkl)│
-         └──────────────────┘         └─────────────────────┘
-
-                          ── At Query Time ──
-
-  User Question ──▶ Embed (cached) ──▶ Vector Search (Top-K=20)
-                         │
-                         ├──▶ BM25 Search (Top-K=20)
-                         │
-                         ▼
-              Reciprocal Rank Fusion (RRF, k=60)
-                         │
-                         ▼
-          BGE-Reranker-v2-m3 Cross-Encoder (Top-K=8)
-                         │
-                         ▼
-        Prompt Assembly (system + context + question)
-                         │
-                         ▼
-        Qwen2.5-72B-Instruct (HF Inference API)
-                         │
-                         ▼
-        Streamed SSE tokens ──▶ Frontend ChatPanel
-```
-
-<br/>
-
-## API Reference
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/v1/auth/register` | ❌ | Create a new user account |
-| `POST` | `/api/v1/auth/login` | ❌ | Login and receive JWT tokens |
-| `GET` | `/api/v1/auth/me` | ✅ | Get current user profile |
-| `POST` | `/api/v1/documents/upload` | ✅ | Upload PDF/DOCX/TXT and enqueue ingestion (`202`) |
-| `POST` | `/api/v1/documents/urlupload` | ✅ | Crawl a URL and ingest as document |
-| `GET` | `/api/v1/documents/` | ✅ | List documents (pagination + `?q=` name filter) |
-| `GET` | `/api/v1/documents/{id}` | ✅ | Get document metadata (incl. extracted URLs) |
-| `GET` | `/api/v1/documents/{id}/status` | ✅ | Poll ingestion progress |
-| `DELETE` | `/api/v1/documents/{id}` | ✅ | Soft-delete document |
-| `POST` | `/api/v1/chat/ask/stream` | ✅ | Ask a question (SSE streaming) |
-| `GET` | `/api/v1/chat/history/{doc_id}` | ✅ | Get chat history for a document |
-| `DELETE` | `/api/v1/chat/history/{doc_id}` | ✅ | Clear chat history |
-| `GET` | `/api/v1/chat/export/{doc_id}` | ✅ | Export transcript as MD / TXT / PDF |
-| `GET` | `/api/v1/chat/sessions` | ✅ | List chat sessions |
-| `POST` | `/api/v1/chat/sessions` | ✅ | Create chat session |
-| `GET` | `/api/v1/health/status` | ❌ | Deep health check (DB, Redis, Celery, ChromaDB) |
-| `GET` | `/api/health` | ❌ | Basic liveness check |
-
-> Full interactive docs at `/docs` (Swagger UI) when running locally.
-
-<br/>
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `SECRET_KEY` | ❌ (dev) | insecure default | JWT signing secret. Override in production. |
-| `LLM_PROVIDER` | ❌ | `ollama` | `ollama` or `huggingface` |
-| `EMBEDDING_PROVIDER` | ❌ | `ollama` | `ollama` or `huggingface` |
-| `OLLAMA_BASE_URL` | ❌ | `http://localhost:11434` | Local Ollama server |
-| `LLM_MODEL` | ❌ | `qwen2.5:3b` | Ollama chat model (or HF repo id if provider=huggingface) |
-| `EMBEDDING_MODEL` | ❌ | `nomic-embed-text` | Ollama embedding model (768-d) |
-| `EMBEDDING_DIMENSION` | ❌ | `768` | Must match embedding model |
-| `DATABASE_URL` | ❌ | `sqlite:///./data/app.db` | SQLAlchemy connection string (SQLite or MySQL). Bare `mysql://` is upgraded to `mysql+pymysql://` |
-| `S3_BUCKET` | ❌ | — | Enables per-user S3 storage for PDFs and sticky notes. Unset → local disk + on-device notes |
-| `S3_REGION` | ❌ | `AWS_REGION` / `us-east-1` | S3 region |
-| `S3_ENDPOINT_URL` | ❌ | — | Custom endpoint (MinIO / LocalStack) |
-| `CELERY_BROKER_URL` | ❌ | `redis://localhost:6379/0` | Redis broker for Celery (optional locally) |
-| `CELERY_RESULT_BACKEND` | ❌ | `redis://localhost:6379/1` | Redis backend for Celery results |
-| `REDIS_URL` | ❌ | — | Redis URL for response + embedding cache |
-| `UPLOAD_DIR` | ❌ | `./data/uploads` | File storage directory |
-| `CHROMA_PERSIST_DIR` | ❌ | `./data/chroma_db_ollama_nomic` | ChromaDB persistence directory (Ollama/nomic) |
-| `EMBEDDING_CACHE_TTL` | ❌ | `86400` | Embedding cache TTL in seconds (24h) |
-| `LLM_TEMPERATURE` | ❌ | `0.3` | LLM sampling temperature |
-| `RERANKER_MODEL` | ❌ | `BAAI/bge-reranker-v2-m3` | Cross-encoder reranker model |
-| `USE_HYBRID_SEARCH` | ❌ | `True` | Enable BM25 + vector hybrid search |
-| `RRF_K` | ❌ | `60` | RRF smoothing constant |
-| `CHUNK_SIZE` | ❌ | `1000` | Characters per document chunk |
-| `CHUNK_OVERLAP` | ❌ | `200` | Overlap between consecutive chunks |
-| `TOP_K_RETRIEVAL` | ❌ | `20` | Candidates retrieved from vector store |
-| `TOP_K_RERANK` | ❌ | `8` | Final chunks after reranking |
-| `VISION_PROVIDER` | ❌ | — | Set to `openai` to use GPT-4o-mini for image captions |
-| `OPENAI_API_KEY` | ❌ | — | Required when `VISION_PROVIDER=openai` |
-| `ENVIRONMENT` | ❌ | `development` | Set to `production` to lock CORS |
-| `FRONTEND_URL` | ❌ | `http://localhost:3000` | Public frontend URL for OAuth + email links |
-| `NEXT_PUBLIC_API_URL` | ❌ | `http://localhost:7860` | Backend URL for the Next.js client |
-
-<br/>
-
-## Scripts
-
-### Backend (`backend/`)
-
-| Command | Description |
-|---------|-------------|
-| `uvicorn app.main:app --reload` | Start FastAPI with hot reload |
-| `celery -A app.celery_app.celery_app worker --loglevel=info` | Start Celery worker |
-| `python migrate_add_extracted_urls.py` | Run URL extraction column migration |
-| `python scripts/run_ragas_eval.py --user-id <id>` | Run RAGAS evaluation (vector vs GraphRAG) |
-
-### Frontend (`frontend/`)
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start Next.js dev server |
-| `npm run build` | Production build |
-| `npm run test` | Run Vitest unit tests |
-| `npm run test:e2e` | Run Playwright E2E tests |
-| `npx playwright test e2e/snapshots.spec.ts --update-snapshots` | Regenerate visual regression baselines |
-
-### Docker
-
-| Command | Description |
-|---------|-------------|
-| `docker compose --profile cpu up --build` | Full stack — CPU only |
-| `docker compose --profile gpu up --build` | Full stack — GPU accelerated |
-| `docker compose --profile debug up` | Also start Adminer at http://localhost:5050 |
-| `docker compose --profile legacy-postgres up -d postgres` | Start the pre-migration PostgreSQL 16 service (for dumping old data) |
-| `docker compose down` | Stop all containers |
-
-> **GPU profile** requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
-
-### Per-user storage in AWS S3 (PDFs + sticky notes)
-
-Set `S3_BUCKET` to store each user's documents and notes under their own
-prefix; credentials come from the standard AWS provider chain (env vars,
-shared credentials file, or IAM role):
-
-```text
-s3://<bucket>/{user_id}/pdfs/<stored-filename>
-s3://<bucket>/{user_id}/sticky_notes/notes.json
-```
-
-Sticky notes are saved as the CKEditor JSON document (headings, paragraphs,
-bold/italic, links, lists and block quotes preserved) via `PUT /api/v1/notes`
-and restored on login via `GET /api/v1/notes`. The folder is always resolved
-from the JWT, so a user cannot address another user's prefix.
-
-Minimum IAM policy for the bucket:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::YOUR_BUCKET/*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["s3:ListBucket"],
-      "Resource": "arn:aws:s3:::YOUR_BUCKET"
-    }
-  ]
-}
-```
-
-Without `S3_BUCKET` the app keeps documents on local disk and notes fall back
-to on-device drafts, so local development needs no AWS account.
-
-### Migrating an existing PostgreSQL database to MySQL 8.4
-
-The relational schema is created automatically by the app (`create_all` +
-`_migrate_schema`), so only row data has to be moved:
-
-```bash
-# 0. Snapshot the old database (keep it until MySQL is validated)
-docker exec pdf_rag_postgres pg_dump -U pdf_rag_user -d pdf_rag -Fc \
-  > backup_pre_mysql.dump
-
-# 1. Start MySQL alongside the legacy PostgreSQL container
-docker compose --profile legacy-postgres up -d postgres
-
-# 2. Dry run, then the real copy (writes a JSON snapshot first)
-python backend/scripts/migrate_postgres_to_mysql.py \
-  --postgres postgresql://pdf_rag_user:pdf_rag_pass@localhost:5432/pdf_rag \
-  --mysql    mysql+pymysql://pdf_rag_user:pdf_rag_pass@localhost:3306/pdf_rag \
-  --dry-run
-
-python backend/scripts/migrate_postgres_to_mysql.py \
-  --postgres postgresql://pdf_rag_user:pdf_rag_pass@localhost:5432/pdf_rag \
-  --mysql    mysql+pymysql://pdf_rag_user:pdf_rag_pass@localhost:3306/pdf_rag \
-  --backup ./backups/pre_mysql.json
-
-# 3. Re-verify without writing, then start the stack against MySQL
-docker compose --profile cpu up -d --build
-```
-
-The migration script copies rows in foreign-key order, normalises UUIDs and
-timezone-aware timestamps, runs in a single MySQL transaction, and verifies
-row counts plus a per-column sample. ChromaDB vectors and uploaded files live
-on the `app_data` volume and are unaffected.
-
-<br/>
-
-## Deployment
-
-### HuggingFace Spaces
-
-1. Create a Space at [huggingface.co/new-space](https://huggingface.co/new-space) (SDK: Docker)
-2. Set Space secrets: `SECRET_KEY`, `DATABASE_URL`
-3. Push to the `hf` remote:
-
-```bash
-git remote add hf https://<username>:<access-token>@huggingface.co/spaces/<username>/<space-name>
-git push hf main
-```
-
-### Self-Hosted / VPS
-
-```bash
-docker compose --profile cpu up -d --build
-# App at http://your-server:7860
-# Frontend at http://your-server:3000
-```
-
-<br/>
 
 ---
 
-<div align="center">
+## Storage
 
-<br/>
+```text
+# Local (typically under backend/)
+./data/uploads/
+./data/app.db
+./data/chroma_db_ollama_nomic/
+
+# S3 when AWS_S3_BUCKET / S3_BUCKET is set (prefix NoteBase)
+s3://<bucket>/NoteBase/{user_id}/pdfs/<filename>
+s3://<bucket>/NoteBase/{user_id}/sticky_notes/notes.json
+```
+
+Without a bucket, PDFs stay on disk and notes use on-device drafts only.
+
+---
+
+## Environment (common)
+
+| Variable | Default | Notes |
+|----------|---------|--------|
+| `SECRET_KEY` | insecure dev default | Override in production |
+| `DATABASE_URL` | `sqlite:///./data/app.db` | Or `mysql+pymysql://…` |
+| `LLM_PROVIDER` / `EMBEDDING_PROVIDER` | `ollama` | Also `huggingface` / Bedrock paths |
+| `LLM_MODEL` | `qwen2.5:3b` | |
+| `EMBEDDING_MODEL` | `nomic-embed-text` | 768-d; keep Chroma dir in sync |
+| `CHROMA_PERSIST_DIR` | `./data/chroma_db_ollama_nomic` | Separate from any MiniLM index |
+| `AWS_S3_BUCKET` / `S3_BUCKET` | unset | Enables NoteBase PDFs + notes |
+| `S3_BASE_PREFIX` | `NoteBase` | |
+| `CELERY_BROKER_URL` / `REDIS_URL` | optional | Eager ingest if Redis is down |
+| `FRONTEND_URL` | `http://localhost:3000` | |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:7860` | Frontend → API |
+
+Full list: [`.env.example`](.env.example).
+
+---
+
+## API surface
+
+Auth-gated routes live under `/api/v1`. Interactive docs: `/docs`.
+
+| Area | Examples |
+|------|----------|
+| Auth | `POST /auth/register`, `/auth/login`, `/auth/refresh` |
+| Documents | `POST /documents/upload`, `GET /documents/`, trash/restore, PDF serve |
+| Chat | `POST /chat/ask/stream`, sessions, history, export |
+| Notes | `GET` / `PUT` / `DELETE /notes` |
+| Graph | `/graph/overview`, `/search`, `/neighborhood`, reindex |
+| Drive | OAuth connect, folder link, sync |
+| Admin / usage / health | `/admin/*`, `/usage/*`, `/health/status` |
+
+---
+
+## Scripts
+
+| Command | Where | Purpose |
+|---------|-------|---------|
+| `uvicorn app.main:app --reload --port 7860` | `backend/` | API |
+| `celery -A app.celery_app.celery_app worker --loglevel=info` | `backend/` | Optional ingest worker |
+| `npm run dev` | `frontend/` | UI |
+| `npm run test` / `npm run test:e2e` | `frontend/` | Vitest / Playwright |
+| `pytest` | `backend/` | Backend tests |
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Cannot reach Ollama | Start Ollama; check `http://localhost:11434/api/tags` |
+| Model missing | `ollama pull qwen2.5:3b` and `nomic-embed-text` |
+| Empty document list / hung API | Only one uvicorn on **7860**; restart if health times out |
+| Frontend cannot reach API | Backend on 7860; `NEXT_PUBLIC_API_URL=http://localhost:7860` |
+| Mixing embedding dimensions | Do not reuse MiniLM Chroma dir with nomic (768-d) |
+| Redis / Celery “down” | Expected locally — ingest falls back in-process |
+
+---
 
 **Yoka** — [Genova_Rag](https://github.com/AkashYoka/Genova_Rag)
-
-<br/>
-
-</div>

@@ -260,6 +260,8 @@ class DocumentResponse(BaseModel):
     extracted_urls: Optional[List[str]] = []
     processing_progress: Optional[int] = None
     processing_stage: Optional[str] = None
+    s3_key: Optional[str] = None
+    storage_backend: Optional[str] = None
 
     @field_validator("id", mode="before")
     @classmethod

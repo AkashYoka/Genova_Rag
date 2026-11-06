@@ -348,6 +348,10 @@ class Document(Base):
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
     filename = Column(String(255), nullable=False, index=True)
     original_name = Column(String(255), nullable=False)
+    # Full S3 object key when stored in AWS (e.g. NoteBase/{user}/pdfs/{filename}).
+    s3_key = Column(String(512), nullable=True, index=True)
+    # "s3" for NoteBase uploads; "local" only for legacy pre-S3 documents.
+    storage_backend = Column(String(20), nullable=True, default="local")
     file_size = Column(Integer, default=0)
     page_count = Column(Integer, default=0)
     chunk_count = Column(Integer, default=0)

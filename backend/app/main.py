@@ -63,6 +63,14 @@ async def lifespan(app: FastAPI):
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     os.makedirs(settings.CHROMA_PERSIST_DIR, exist_ok=True)
 
+    # Log S3 configuration (never logs credentials)
+    try:
+        from app.services import s3_storage
+
+        s3_storage.validate_configuration(probe=False)
+    except Exception as e:
+        logger.warning("S3 configuration check failed: %s", e)
+
     # Pre-load embedding model (warm up)
     try:
         from app.rag.embeddings.embeddings import get_embedding_model

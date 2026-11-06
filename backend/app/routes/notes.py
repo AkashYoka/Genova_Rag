@@ -1,8 +1,8 @@
 """Per-user sticky notes persisted as CKEditor JSON in AWS S3.
 
 Every request resolves the user from the JWT, so the S3 prefix is always
-``{authenticated_user_id}/sticky_notes/notes.json`` — a caller can never read
-or write another user's notes.
+``NoteBase/{authenticated_user_id}/sticky_notes/notes.json`` — a caller can
+never read or write another user's notes.
 """
 from __future__ import annotations
 
@@ -83,6 +83,17 @@ def _validate_collection(document: Dict[str, Any]) -> None:
         if note_html is not None and not isinstance(note_html, str):
             raise ValidationException(
                 f"Sticky note {index + 1} 'html' must be a string"
+            )
+
+        document_id = note.get("documentId")
+        if document_id is not None and not isinstance(document_id, str):
+            raise ValidationException(
+                f"Sticky note {index + 1} 'documentId' must be a string"
+            )
+        document_name = note.get("documentName")
+        if document_name is not None and not isinstance(document_name, str):
+            raise ValidationException(
+                f"Sticky note {index + 1} 'documentName' must be a string"
             )
 
 

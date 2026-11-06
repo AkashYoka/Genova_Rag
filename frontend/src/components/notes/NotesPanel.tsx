@@ -6,6 +6,8 @@ import {
   Eraser,
   FileDown,
   FileText,
+  Maximize2,
+  Minimize2,
   Pencil,
   Plus,
   StickyNote,
@@ -64,9 +66,23 @@ export default function NotesPanel() {
   const error = useNotesStore((s) => s.error);
   const [dragOver, setDragOver] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // Leave rename/input handling alone; only exit full-screen when not renaming.
+      if (editingId) return;
+      event.preventDefault();
+      setExpanded(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [expanded, editingId]);
 
   const activeIndex = notes.findIndex((note) => note.id === activeNoteId);
   const activeNote = activeIndex >= 0 ? notes[activeIndex] : null;
@@ -184,11 +200,15 @@ export default function NotesPanel() {
 
   return (
     <div
-      className="genova-notes flex h-full min-h-0 flex-1 flex-col bg-[var(--gd-surface)] text-[var(--gd-text)]"
+      className={`genova-notes flex h-full min-h-0 flex-1 flex-col bg-[var(--gd-surface)] text-[var(--gd-text)]${
+        expanded ? " is-expanded" : ""
+      }`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       aria-label="Sticky notes"
+      aria-modal={expanded || undefined}
+      role={expanded ? "dialog" : undefined}
     >
       <div className="genova-notes-chrome flex shrink-0 flex-col gap-2 border-b border-[var(--gd-border)] px-3 py-2.5">
         <div className="flex items-center justify-between gap-2">
@@ -264,7 +284,25 @@ export default function NotesPanel() {
               variant="ghost"
               size="icon"
               className="h-7 w-7 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
-              onClick={() => setNotesOpen(false)}
+              onClick={() => setExpanded((value) => !value)}
+              aria-label={expanded ? "Exit full screen" : "Expand notes to full screen"}
+              aria-pressed={expanded}
+              title={expanded ? "Exit full screen (Esc)" : "Full screen"}
+            >
+              {expanded ? (
+                <Minimize2 className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
+              onClick={() => {
+                setExpanded(false);
+                setNotesOpen(false);
+              }}
               aria-label="Close notes"
               title="Close notes"
             >

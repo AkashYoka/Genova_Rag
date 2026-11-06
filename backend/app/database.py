@@ -238,6 +238,8 @@ def _migrate_schema():
         ("documents", "completed_at", f"ALTER TABLE documents ADD COLUMN completed_at {timestamp_type}"),
         ("documents", "extracted_urls", f"ALTER TABLE documents ADD COLUMN extracted_urls {text_type}"),
         ("documents", "keywords", f"ALTER TABLE documents ADD COLUMN keywords {text_type}"),
+        ("documents", "s3_key", "ALTER TABLE documents ADD COLUMN s3_key VARCHAR(512)"),
+        ("documents", "storage_backend", "ALTER TABLE documents ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'local'"),
     ]
     for table, column, ddl in docs_migrations:
         if column not in existing_docs_columns:

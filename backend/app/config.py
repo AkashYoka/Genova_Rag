@@ -86,11 +86,15 @@ class Settings(BaseSettings):
     }
 
     # ── AWS S3 (per-user documents + sticky notes) ──────
-    # Layout: s3://<bucket>/{user_id}/pdfs/<file> and {user_id}/sticky_notes/notes.json
-    # Leave S3_BUCKET empty to keep everything on local disk only.
+    # Layout: s3://<bucket>/{user_id}/pdfs/<file>
+    #     and s3://<bucket>/{user_id}/sticky_notes/notes.json
+    # Optional S3_BASE_PREFIX inserts a root folder before {user_id}/.
+    # Leave S3_BUCKET / AWS_S3_BUCKET empty to keep everything on local disk only.
     # Credentials come from the AWS provider chain (env vars, shared credentials
     # file, IAM role) — never from this file.
     S3_BUCKET: str = ""
+    AWS_S3_BUCKET: str = ""          # preferred alias; copied into S3_BUCKET when set
+    S3_BASE_PREFIX: str = "NoteBase"  # s3://bucket/NoteBase/{user_id}/…
     S3_REGION: str = ""              # falls back to AWS_REGION/AWS_DEFAULT_REGION
     S3_ENDPOINT_URL: str = ""        # optional: MinIO / LocalStack endpoint
     S3_PDFS_PREFIX: str = "pdfs"
@@ -255,6 +259,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 "ValidationError: OPENAI_API_KEY is required when VISION_PROVIDER is set to 'openai'."
             )
+        return self
+
+    @model_validator(mode="after")
+    def resolve_s3_settings(self) -> "Settings":
+        """Prefer AWS_S3_BUCKET when S3_BUCKET is empty; normalize optional base prefix."""
+        bucket = (self.S3_BUCKET or self.AWS_S3_BUCKET or "").strip()
+        if bucket:
+            object.__setattr__(self, "S3_BUCKET", bucket)
+            object.__setattr__(self, "AWS_S3_BUCKET", bucket)
+
+        # Default layout: NoteBase/{user_id}/pdfs/... and .../sticky_notes/...
+        prefix = (self.S3_BASE_PREFIX or "NoteBase").strip().strip("/")
+        object.__setattr__(self, "S3_BASE_PREFIX", prefix or "NoteBase")
         return self
 
     @model_validator(mode="after")

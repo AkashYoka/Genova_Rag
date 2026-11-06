@@ -147,6 +147,12 @@ def test_upload_document_handles_duplicate_original_names(
         "delay",
         lambda **_kwargs: types.SimpleNamespace(id="queued-task"),
     )
+    monkeypatch.setattr(documents.s3_storage, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        documents.s3_storage,
+        "upload_pdf",
+        lambda user_id, filename, path: f"NoteBase/{user_id}/pdfs/{filename}",
+    )
 
     first = _run(
         documents.upload_document(
@@ -173,6 +179,10 @@ def test_upload_document_handles_duplicate_original_names(
     assert len({doc.filename for doc in stored_docs}) == 2
     assert first.original_name == second.original_name == "same-name.pdf"
     assert first.task_id == second.task_id == "queued-task"
-    assert (tmp_path / "uploads" / user.id / f"{first_hex}.pdf").exists()
-    assert (tmp_path / "uploads" / user.id / f"{second_hex}.pdf").exists()
+    assert first.storage_backend == second.storage_backend == "s3"
+    assert first.s3_key and second.s3_key
+    assert first.s3_key != second.s3_key
+    # PDFs must not be kept under UPLOAD_DIR once stored in S3.
+    assert not (tmp_path / "uploads" / user.id / f"{first_hex}.pdf").exists()
+    assert not (tmp_path / "uploads" / user.id / f"{second_hex}.pdf").exists()
     assert all(not path.exists() for path in temp_files)

@@ -677,6 +677,36 @@
   background: var(--gd-surface);
 }
 
+/* Full-screen writing: same panel, same editor instance — no remount, no new chrome */
+.genova-notes.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  min-height: 100vh;
+  border: 0;
+  box-shadow: none;
+}
+
+.genova-notes.is-expanded .genova-notes-chrome {
+  padding-inline: max(12px, env(safe-area-inset-left))
+    max(12px, env(safe-area-inset-right));
+}
+
+.genova-notes.is-expanded .genova-notes-editor .ck-editor__editable,
+.genova-notes.is-expanded .genova-notes-editor .ck-content {
+  max-width: min(48rem, 100%);
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+
+/* Link/table balloons often mount on body — keep them above the expanded pane */
+body:has(.genova-notes.is-expanded) .ck.ck-balloon-panel {
+  z-index: 60 !important;
+}
+
 .genova-notes-editor {
   display: flex;
   flex-direction: column;
