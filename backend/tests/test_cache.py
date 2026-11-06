@@ -14,6 +14,11 @@ def reset_cache():
     cache_module._lru_order.clear()
     cache_module._redis_available = False
     cache_module._redis_client = None
+    cache_module._redis_init_attempted = False
+    cache_module._redis_last_error = None
+    # Keep unit tests on in-memory LRU even when backend/.env sets REDIS_URL.
+    cache_module._config_loaded = True
+    cache_module.REDIS_URL = None
     yield
 
 

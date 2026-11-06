@@ -13,18 +13,9 @@ combinations — never shared between different users.
 import hashlib
 import json
 import logging
-import os
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Configuration — all values come from environment variables
-# ---------------------------------------------------------------------------
-
-CACHE_TTL: int = int(os.getenv("CACHE_TTL", "3600"))  # seconds; default 1 hour
-REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
-LRU_MAX_SIZE: int = int(os.getenv("CACHE_LRU_MAX_SIZE", "128"))
 
 # ---------------------------------------------------------------------------
 # Redis client (lazy init — only created when REDIS_URL is set)
@@ -32,6 +23,39 @@ LRU_MAX_SIZE: int = int(os.getenv("CACHE_LRU_MAX_SIZE", "128"))
 
 _redis_client = None
 _redis_available = False
+_redis_init_attempted = False
+_redis_last_error: Optional[str] = None
+
+
+def _cache_settings():
+    """Load Redis/cache settings from pydantic Settings (.env-aware)."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    return (
+        (settings.REDIS_URL or "").strip() or None,
+        int(settings.CACHE_TTL),
+        int(settings.CACHE_LRU_MAX_SIZE),
+    )
+
+
+# Mutable module knobs (tests may override LRU_MAX_SIZE).
+REDIS_URL: Optional[str] = None
+CACHE_TTL: int = 3600
+LRU_MAX_SIZE: int = 128
+_config_loaded = False
+
+
+def _ensure_config() -> None:
+    """Pull REDIS_URL / TTL / LRU size from Settings once (.env-aware)."""
+    global REDIS_URL, CACHE_TTL, LRU_MAX_SIZE, _config_loaded
+    if _config_loaded:
+        return
+    redis_url, cache_ttl, lru_max = _cache_settings()
+    REDIS_URL = redis_url
+    CACHE_TTL = cache_ttl
+    LRU_MAX_SIZE = lru_max
+    _config_loaded = True
 
 
 def _get_redis():
@@ -40,30 +64,40 @@ def _get_redis():
     Returns the client if Redis is reachable, otherwise returns None.
     After one failure, stops retrying for the process lifetime.
     """
-    global _redis_client, _redis_available
+    global _redis_client, _redis_available, _redis_init_attempted, _redis_last_error
 
     if _redis_client is not None:
         return _redis_client if _redis_available else None
 
-    if not REDIS_URL:
+    if _redis_init_attempted:
+        return None
+
+    _redis_init_attempted = True
+    _ensure_config()
+    redis_url = REDIS_URL
+
+    if not redis_url:
         logger.info("REDIS_URL not set — using LRU in-memory cache.")
         _redis_available = False
+        _redis_last_error = "REDIS_URL not configured"
         return None
 
     try:
         import redis  # soft import — redis package is optional
 
         client = redis.from_url(
-            REDIS_URL,
+            redis_url,
             decode_responses=True,
             socket_connect_timeout=2,
         )
         client.ping()
         _redis_client = client
         _redis_available = True
-        logger.info("Redis cache connected at %s", REDIS_URL)
+        _redis_last_error = None
+        logger.info("Redis cache connected at %s", redis_url)
         return _redis_client
     except Exception as exc:  # noqa: BLE001
+        _redis_last_error = str(exc)[:200]
         logger.warning("Redis unavailable (%s) — falling back to LRU cache.", exc)
         _redis_available = False
         return None
@@ -82,6 +116,7 @@ def _lru_get(key: str) -> Optional[str]:
 
 
 def _lru_set(key: str, value: str) -> None:
+    _ensure_config()
     if key in _lru_store:
         _lru_order.remove(key)
     elif len(_lru_store) >= LRU_MAX_SIZE:
@@ -182,6 +217,7 @@ def set_cached_response(
     Store an answer (and optional citation sources). Tries Redis first; falls back to LRU.
     TTL is controlled by the CACHE_TTL environment variable.
     """
+    _ensure_config()
     key = make_cache_key(user_id, document_id, question)
     serialised = json.dumps({"answer": answer, "sources": sources or []})
     r = _get_redis()

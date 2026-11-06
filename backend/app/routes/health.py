@@ -37,10 +37,18 @@ def _check_redis() -> Dict[str, Any]:
     """Ping the Redis broker used by Celery and the response cache."""
     start = time.perf_counter()
     try:
-        from app.cache import _get_redis
+        from app.cache import _get_redis, _redis_last_error
+        from app.config import get_settings
+
+        configured = bool((get_settings().REDIS_URL or "").strip())
         r = _get_redis()
         if r is None:
-            return {"status": "unavailable", "detail": "REDIS_URL not configured"}
+            detail = _redis_last_error or (
+                "REDIS_URL not configured"
+                if not configured
+                else "Redis configured but unreachable"
+            )
+            return {"status": "unavailable", "detail": detail}
         r.ping()
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         return {"status": "up", "latency_ms": latency_ms}

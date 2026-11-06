@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
     CELERY_TASK_TRACK_STARTED: bool = True
+    # Response/embedding cache (optional). Read via Settings so .env is honored.
+    REDIS_URL: str | None = None
+    CACHE_TTL: int = 3600
+    CACHE_LRU_MAX_SIZE: int = 128
 
     # ── Document Processing ──────────────────────────────
     DOC_PROCESSING_TIMEOUT_MINUTES: int = 30
