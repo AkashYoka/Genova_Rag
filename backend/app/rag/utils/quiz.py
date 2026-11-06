@@ -25,20 +25,35 @@ settings = get_settings()
 
 DEFAULT_QUESTION_COUNT = 5
 MIN_QUESTION_COUNT = 1
-MAX_QUESTION_COUNT = 15
+MAX_QUESTION_COUNT = 20
 PREFERRED_MIN = 5
 PREFERRED_MAX = 10
+# Batch size for fill-up calls after a partial one-shot (keeps JSON small for 3B models).
+QUIZ_FILL_BATCH_SIZE = 5
+# How many consecutive empty/duplicate batches before giving up on a fill pass.
+QUIZ_MAX_EMPTY_STREAK = 6
+# Hard cap on LLM batch attempts for one quiz request.
+QUIZ_MAX_BATCH_ATTEMPTS = 24
 
-# Explicit quiz/MCQ intent only — avoid matching ordinary "questions"/"test" wording
-# in normal document Q&A (e.g. "What questions appear…", "Give me the dose").
+# Explicit quiz/MCQ/assessment intent only — avoid matching ordinary "questions"/"test"
+# wording in normal document Q&A (e.g. "What questions appear…", "practice questions"
+# inside a factual ask, "Give me the dose").
 QUIZ_INTENT_RE = re.compile(
-    r"\b("
-    r"quiz(?:zes)?\b|mcqs?\b|multiple[\s-]?choice|"
-    r"quiz\s+me|test\s+me|"
-    r"give\s+me\s+(a\s+)?(quiz|mcqs?|multiple[\s-]?choice(\s+questions?)?|"
-    r"(?:\d{1,2}\s+)?(practice\s+)?(quiz\s+)?questions?)|"
-    r"practice\s+(quiz|mcqs?|questions?)|self[\s-]?test\b|"
-    r"create\s+(a\s+)?(quiz|mcqs?)|generate\s+(a\s+)?(quiz|mcqs?)"
+    r"(?:"
+    r"\bquiz(?:zes)?\b|\bmcqs?\b|\bmultiple[\s-]?choice\b|"
+    r"\bquiz\s+me\b|\btest\s+me\b|\bself[\s-]?test\b|"
+    # Assessment: only when clearly requested (not e.g. "risk assessment" alone).
+    r"\b(?:give|create|generate|make|prepare)\s+(?:me\s+)?"
+    r"(?:an?\s+)?(?:\d{1,2}\s*-?\s*)?(?:question\s+)?assessment\b|"
+    r"\b\d{1,2}\s*-?\s*question\s+assessment\b|"
+    # "give me N questions / MCQs / quiz"
+    r"\bgive\s+me\s+(?:an?\s+)?(?:quiz|mcqs?|multiple[\s-]?choice(?:\s+questions?)?|"
+    r"(?:\d{1,2}\s+)?(?:practice\s+)?(?:quiz\s+)?questions?)\b|"
+    # Practice quiz/MCQs — not bare "practice questions" in prose.
+    r"\bpractice\s+(?:quiz|mcqs?)\b|"
+    r"\b(?:give|create|generate|make)\s+(?:me\s+)?(?:an?\s+)?"
+    r"(?:\d{1,2}\s+)?practice\s+questions?\b|"
+    r"\b(?:create|generate)\s+(?:an?\s+)?(?:quiz|mcqs?|assessment)\b"
     r")",
     re.IGNORECASE,
 )
@@ -67,9 +82,9 @@ CONVERSATION_MODE_RE = re.compile(
     re.IGNORECASE,
 )
 QUESTION_COUNT_RE = re.compile(
-    r"\b(?:(\d{1,2})\s*-?\s*(?:questions?|mcqs?|qs?)|"
+    r"\b(?:(\d{1,2})\s*-?\s*(?:questions?|mcqs?|qs?|assessment)|"
     r"(?:questions?|mcqs?|qs?)\s*[:=]?\s*(\d{1,2})|"
-    r"(?:with|of|for)\s+(\d{1,2})\s*-?\s*(?:questions?|mcqs?)?)\b",
+    r"(?:with|of|for)\s+(\d{1,2})\s*-?\s*(?:questions?|mcqs?|assessment)?)\b",
     re.IGNORECASE,
 )
 
@@ -537,6 +552,199 @@ def _build_source_material(
     return material, sources, ""
 
 
+def _question_key(q: Dict[str, Any]) -> str:
+    return re.sub(r"\s+", " ", str(q.get("question") or "").strip().lower())
+
+
+def _merge_quiz_batch(
+    collected: List[Dict[str, Any]],
+    batch_questions: List[Dict[str, Any]],
+    *,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Append unique questions from a batch until ``limit`` is reached."""
+    seen = {_question_key(q) for q in collected if _question_key(q)}
+    for q in batch_questions:
+        key = _question_key(q)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        collected.append(q)
+        if len(collected) >= limit:
+            break
+    return collected
+
+
+def _generate_quiz_batch(
+    *,
+    n_questions: int,
+    mode: str,
+    material: str,
+    topic_hint: str,
+    llm_provider: Optional[str],
+    avoid: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Ask the LLM for ``n_questions`` MCQs; retry with compact material / without
+    avoid-list when the first attempt is empty or unparseable.
+    """
+    # Scale token budget with batch size so 5-question JSON is less likely to truncate.
+    token_budget = min(4096, max(settings.LLM_MAX_NEW_TOKENS, 1024 + n_questions * 350))
+
+    def _raw(n: int, src: str, *, use_avoid: bool) -> Optional[dict]:
+        avoid_block = ""
+        if use_avoid and avoid:
+            listed = "\n".join(f"- {q}" for q in avoid[:16])
+            avoid_block = (
+                "\n\nDo NOT repeat or paraphrase these existing questions; "
+                f"write {n} NEW ones:\n{listed}\n"
+            )
+        return _llm_json(
+            system=QUIZ_SYSTEM_PROMPT,
+            user=QUIZ_USER_TEMPLATE.format(
+                mode=mode,
+                num_questions=n,
+                max_questions=MAX_QUESTION_COUNT,
+                topic_hint=topic_hint,
+                source_material=src,
+            )
+            + avoid_block,
+            llm_provider=llm_provider,
+            max_tokens=token_budget,
+        )
+
+    def _parse(raw: Optional[dict], n: int) -> List[Dict[str, Any]]:
+        if not raw:
+            return []
+        quiz_batch = _normalize_quiz_payload(raw, mode=mode, num_questions=n)
+        return list((quiz_batch or {}).get("questions") or [])
+
+    questions = _parse(_raw(n_questions, material, use_avoid=True), n_questions)
+    if questions:
+        return questions
+
+    # Compact material retry (common when long context + JSON truncates).
+    retry_material = material[:4500]
+    logger.info(
+        "Quiz batch retry mode=%s n=%s (compact material)",
+        mode,
+        n_questions,
+    )
+    questions = _parse(_raw(n_questions, retry_material, use_avoid=True), n_questions)
+    if questions:
+        return questions
+
+    # Avoid-list can confuse small models into emitting nothing — retry without it.
+    if avoid:
+        logger.info(
+            "Quiz batch retry mode=%s n=%s (without avoid list)",
+            mode,
+            n_questions,
+        )
+        questions = _parse(
+            _raw(n_questions, retry_material, use_avoid=False), n_questions
+        )
+        if questions:
+            return questions
+
+    return []
+
+
+def _collect_quiz_questions(
+    *,
+    ask_n: int,
+    mode: str,
+    material: str,
+    topic_hint: str,
+    llm_provider: Optional[str],
+    seed: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Collect exactly ``ask_n`` unique MCQs when evidence allows.
+
+    Strategy (tuned for small local models that truncate large JSON):
+    1. If ``ask_n`` <= ``QUIZ_FILL_BATCH_SIZE``, one-shot the full count.
+    2. Otherwise build entirely in batches of ``QUIZ_FILL_BATCH_SIZE`` (never
+       one-shot 10/15/20 — that reliably truncates on 3B models).
+    3. Retry empty/truncated/all-duplicate batches until streak/attempt caps.
+    """
+    collected: List[Dict[str, Any]] = list(seed or [])
+    if len(collected) >= ask_n:
+        return collected[:ask_n]
+
+    attempts = 0
+    empty_streak = 0
+
+    # Safe one-shot only for small quizzes (matches proven 5-question path).
+    if not collected and ask_n <= QUIZ_FILL_BATCH_SIZE:
+        attempts += 1
+        first = _generate_quiz_batch(
+            n_questions=ask_n,
+            mode=mode,
+            material=material,
+            topic_hint=topic_hint,
+            llm_provider=llm_provider,
+        )
+        before = len(collected)
+        collected = _merge_quiz_batch(collected, first, limit=ask_n)
+        if len(collected) == before:
+            empty_streak += 1
+        else:
+            empty_streak = 0
+        logger.info(
+            "Quiz one-shot mode=%s requested=%s got_unique=%s",
+            mode,
+            ask_n,
+            len(collected),
+        )
+
+    while (
+        len(collected) < ask_n
+        and empty_streak < QUIZ_MAX_EMPTY_STREAK
+        and attempts < QUIZ_MAX_BATCH_ATTEMPTS
+    ):
+        need = ask_n - len(collected)
+        batch_n = min(QUIZ_FILL_BATCH_SIZE, need)
+        avoid = [str(q.get("question") or "") for q in collected]
+        logger.info(
+            "Quiz fill batch mode=%s have=%s need=%s batch_n=%s attempt=%s",
+            mode,
+            len(collected),
+            need,
+            batch_n,
+            attempts + 1,
+        )
+        attempts += 1
+        before = len(collected)
+        batch = _generate_quiz_batch(
+            n_questions=batch_n,
+            mode=mode,
+            material=material,
+            topic_hint=topic_hint,
+            llm_provider=llm_provider,
+            avoid=avoid or None,
+        )
+        # If the model ignored batch_n and returned nothing usable, retry once
+        # asking for a single new question (still grounded).
+        if not batch and batch_n > 1:
+            attempts += 1
+            batch = _generate_quiz_batch(
+                n_questions=1,
+                mode=mode,
+                material=material,
+                topic_hint=topic_hint,
+                llm_provider=llm_provider,
+                avoid=avoid or None,
+            )
+        collected = _merge_quiz_batch(collected, batch, limit=ask_n)
+        if len(collected) == before:
+            empty_streak += 1
+        else:
+            empty_streak = 0
+
+    return collected[:ask_n]
+
+
 def generate_quiz_response(
     question: str,
     user_id: str,
@@ -588,12 +796,10 @@ def generate_quiz_response(
             "quiz": None,
         }
 
-    # Cap a single request; small local models (e.g. 3B) truncate large JSON,
-    # so we fill toward ask_n in batches instead of silently falling back to 3.
+    # Cap a single request. Prefer one-shot for the full count; if the model
+    # returns a partial set, fill remaining slots in batches. Never silently
+    # ship a short quiz (e.g. 3 of 10) as success.
     ask_n = min(resolved.num_questions, MAX_QUESTION_COUNT)
-    # One-shot for small quizzes (exact count); larger asks fill in batches of 3.
-    batch_size = 3
-    one_shot_max = 5
     compact_material = material[:7000]
 
     if resolved.mode == "summary":
@@ -627,120 +833,16 @@ def generate_quiz_response(
         )
         quiz_material = compact_material
 
-    def _generate_raw(n_questions: int, material: str, *, avoid: Optional[List[str]] = None) -> Optional[dict]:
-        avoid_block = ""
-        if avoid:
-            listed = "\n".join(f"- {q}" for q in avoid[:12])
-            avoid_block = (
-                "\n\nDo NOT repeat or paraphrase these existing questions; "
-                f"write {n_questions} NEW ones:\n{listed}\n"
-            )
-        return _llm_json(
-            system=QUIZ_SYSTEM_PROMPT,
-            user=QUIZ_USER_TEMPLATE.format(
-                mode=resolved.mode,
-                num_questions=n_questions,
-                max_questions=MAX_QUESTION_COUNT,
-                topic_hint=resolved.topic_hint,
-                source_material=material,
-            )
-            + avoid_block,
-            llm_provider=llm_provider,
-            max_tokens=min(max(settings.LLM_MAX_NEW_TOKENS, 2048), 4096),
-        )
-
-    def _question_key(q: Dict[str, Any]) -> str:
-        return re.sub(r"\s+", " ", str(q.get("question") or "").strip().lower())
-
-    def _merge_batch(
-        collected: List[Dict[str, Any]],
-        batch_questions: List[Dict[str, Any]],
-        *,
-        limit: int,
-    ) -> List[Dict[str, Any]]:
-        seen = {_question_key(q) for q in collected if _question_key(q)}
-        for q in batch_questions:
-            key = _question_key(q)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            collected.append(q)
-            if len(collected) >= limit:
-                break
-        return collected
-
-    def _generate_batch(
-        n_questions: int,
-        material: str,
-        *,
-        mode: str,
-        avoid: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        raw = _generate_raw(n_questions, material, avoid=avoid)
-        quiz_batch = (
-            _normalize_quiz_payload(raw, mode=mode, num_questions=n_questions)
-            if raw
-            else None
-        )
-        questions = list((quiz_batch or {}).get("questions") or [])
-        if questions:
-            return questions
-        # Compact material retry for truncated JSON from small models.
-        retry_material = material[:4500]
-        logger.info(
-            "Quiz batch retry mode=%s n=%s (compact material)",
-            mode,
-            n_questions,
-        )
-        raw = _generate_raw(n_questions, retry_material, avoid=avoid)
-        quiz_batch = (
-            _normalize_quiz_payload(raw, mode=mode, num_questions=n_questions)
-            if raw
-            else None
-        )
-        return list((quiz_batch or {}).get("questions") or [])
-
-    collected: List[Dict[str, Any]] = []
     quiz_mode = resolved.mode
-    # Prefer one shot for <=5 so "4 questions" is not capped at batch_size=3 first.
-    first_n = ask_n if ask_n <= one_shot_max else batch_size
-    collected = _merge_batch(
-        collected,
-        _generate_batch(first_n, quiz_material, mode=quiz_mode),
-        limit=ask_n,
+    collected = _collect_quiz_questions(
+        ask_n=ask_n,
+        mode=quiz_mode,
+        material=quiz_material,
+        topic_hint=resolved.topic_hint,
+        llm_provider=llm_provider,
     )
 
-    # Fill remaining questions in batches of `batch_size` (keeps JSON small for 3B).
-    empty_batches = 0
-    while len(collected) < ask_n and empty_batches < 4:
-        need = ask_n - len(collected)
-        batch_n = min(batch_size, need)
-        avoid = [str(q.get("question") or "") for q in collected]
-        logger.info(
-            "Quiz fill batch mode=%s have=%s need=%s batch_n=%s",
-            quiz_mode,
-            len(collected),
-            need,
-            batch_n,
-        )
-        before = len(collected)
-        collected = _merge_batch(
-            collected,
-            _generate_batch(
-                batch_n,
-                quiz_material,
-                mode=quiz_mode,
-                avoid=avoid,
-            ),
-            limit=ask_n,
-        )
-        if len(collected) == before:
-            empty_batches += 1
-        else:
-            empty_batches = 0
-
-    # Conversation quizzes with thin history: fall back to document evidence on the
-    # same topic so Ollama can still emit grounded MCQs (never invent facts).
+    # Conversation quizzes with thin history: top up from document evidence.
     if (
         len(collected) < ask_n
         and resolved.mode == "conversation"
@@ -766,33 +868,41 @@ def generate_quiz_response(
         )
         if doc_material:
             sources = doc_sources or sources
-            empty_batches = 0
-            while len(collected) < ask_n and empty_batches < 4:
-                need = ask_n - len(collected)
-                batch_n = min(batch_size, need)
-                avoid = [str(q.get("question") or "") for q in collected]
-                before = len(collected)
-                collected = _merge_batch(
-                    collected,
-                    _generate_batch(
-                        batch_n,
-                        doc_material[:7000],
-                        mode="conversation",
-                        avoid=avoid,
-                    ),
-                    limit=ask_n,
-                )
-                if len(collected) == before:
-                    empty_batches += 1
-                else:
-                    empty_batches = 0
+            collected = _collect_quiz_questions(
+                ask_n=ask_n,
+                mode="conversation",
+                material=doc_material[:7000],
+                topic_hint=resolved.topic_hint,
+                llm_provider=llm_provider,
+                seed=collected,
+            )
 
-    if not collected:
-        answer_parts.append(
-            "\n\nI couldn't generate a valid quiz from the available evidence. "
-            "Please try again or ask for fewer questions."
+    if len(collected) < ask_n:
+        have = len(collected)
+        msg = (
+            f"I could only generate {have} of {ask_n} grounded quiz questions "
+            f"from the available evidence. Please try again or ask for fewer questions."
+            if have
+            else (
+                "I couldn't generate a valid quiz from the available evidence. "
+                "Please try again or ask for fewer questions."
+            )
         )
-        return {"answer": "".join(answer_parts).strip(), "sources": sources, "quiz": None}
+        if resolved.mode == "summary":
+            answer_parts.append(f"\n\n{msg}")
+        else:
+            answer_parts = [msg]
+        logger.warning(
+            "Quiz under-generated mode=%s have=%s want=%s — returning error (no short quiz)",
+            quiz_mode,
+            have,
+            ask_n,
+        )
+        return {
+            "answer": "".join(answer_parts).strip(),
+            "sources": sources,
+            "quiz": None,
+        }
 
     # Re-id questions in order for a stable client experience.
     for idx, q in enumerate(collected[:ask_n], start=1):

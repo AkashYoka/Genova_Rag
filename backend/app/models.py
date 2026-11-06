@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     Boolean,
     Enum as SQLAlchemyEnum,
+    Index,
     UniqueConstraint,
     text,
 )
@@ -391,6 +392,14 @@ class ChatMessage(Base):
     Persistent log of conversations between users and the AI analyst.
     """
     __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index(
+            "ix_chat_messages_session_user_created",
+            "session_id",
+            "user_id",
+            "created_at",
+        ),
+    )
 
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)

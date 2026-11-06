@@ -272,6 +272,11 @@ def _migrate_schema():
     
     # Ensure index exists on session_id
     _ensure_index("chat_messages", "ix_chat_messages_session_id", "session_id")
+    _ensure_index(
+        "chat_messages",
+        "ix_chat_messages_session_user_created",
+        "session_id, user_id, created_at",
+    )
 
 
     # Migrate documents — embedding cache tracking

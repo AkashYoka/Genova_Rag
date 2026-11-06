@@ -374,6 +374,15 @@ export default function ChatPanel({
     fetchSessionHistory(activeSessionId);
   }, [activeSessionId, fetchSessionHistory]);
 
+  // Abort an in-flight stream when the user switches sessions so tokens and
+  // persistence cannot land on the previous conversation.
+  useEffect(() => {
+    if (!streaming) return;
+    abortControllerRef.current?.abort();
+    setStreaming(false);
+    setIsTyping(false);
+  }, [activeSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Document-scoped history only when there is no chat session selected.
   useEffect(() => {
     if (activeSessionId) {
@@ -444,6 +453,10 @@ export default function ChatPanel({
       setInput("");
       return;
     }
+
+    // Always read the live store value at send-time so a just-switched
+    // session is never overwritten by a stale React closure.
+    const sessionIdForRequest = useChatStore.getState().activeSessionId;
 
     setInput("");
     setAttachPickerOpen(false);
@@ -551,7 +564,7 @@ export default function ChatPanel({
               document_id: null,
               document_ids: documentIds,
               attachments: attachmentsSnapshot,
-              session_id: activeSessionId,
+              session_id: sessionIdForRequest,
               llm_provider: llmProvider,
             }),
           );
@@ -689,7 +702,7 @@ export default function ChatPanel({
             question,
             document_id: null,
             document_ids: documentIds,
-            session_id: activeSessionId,
+            session_id: sessionIdForRequest,
             llm_provider: llmProvider,
           },
           abortController.signal,

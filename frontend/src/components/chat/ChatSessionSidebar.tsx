@@ -50,17 +50,20 @@ export default function ChatSessionSidebar() {
 
   const handleSaveRename = async (id: string, e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!editTitle.trim()) {
-      setEditingId(null);
-      return;
-    }
+    const nextTitle = editTitle.trim();
+    // Leave edit mode immediately so a hung rename cannot block session clicks.
+    setEditingId(null);
+    if (!nextTitle) return;
     try {
-      await renameSession(id, editTitle.trim());
+      await renameSession(id, nextTitle);
     } catch (err) {
       console.error(err);
-    } finally {
-      setEditingId(null);
     }
+  };
+
+  const handleCancelRename = () => {
+    setEditingId(null);
+    setEditTitle("");
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
@@ -75,8 +78,17 @@ export default function ChatSessionSidebar() {
   };
 
   const handleSelectSession = async (id: string) => {
+    // Always clear rename mode so an in-progress edit cannot swallow clicks
+    // or leave a session permanently unselectable.
+    setEditingId(null);
+    // Set active id first so any concurrent send reads the new session from
+    // the store (ChatPanel uses getState().activeSessionId at send-time).
     setActiveSessionId(id);
     await fetchSessionHistory(id);
+    // Re-assert in case another create/select raced during the history fetch.
+    if (useChatStore.getState().activeSessionId !== id) {
+      setActiveSessionId(id);
+    }
     setMobileOpen(false);
   };
 
@@ -136,7 +148,9 @@ export default function ChatSessionSidebar() {
                 tabIndex={isEditing ? -1 : 0}
                 aria-current={isActive ? "true" : undefined}
                 aria-label={`Open chat session ${session.title}`}
-                onClick={() => !isEditing && handleSelectSession(session.id)}
+                onClick={() => {
+                  void handleSelectSession(session.id);
+                }}
                 onKeyDown={(e) => handleSessionKeyDown(session, e)}
                 className={cn(
                   "group flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-all duration-200 cursor-pointer border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
@@ -162,6 +176,13 @@ export default function ChatSessionSidebar() {
                         className="h-6 text-xs px-1 py-0 bg-background/50 border-input w-full"
                         autoFocus
                         onBlur={() => handleSaveRename(session.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleCancelRename();
+                          }
+                        }}
                         aria-label={`Rename chat session ${session.title}`}
                       />
                     </form>

@@ -50,9 +50,34 @@ def persist_document_keywords(document, chunks, db) -> None:
     Out:  None (mutates document and stages it with ``db.add``)
 
     Connects to: indexing pipeline after chunks exist (not the ask path).
+    Never overwrites existing keywords with an empty extraction result.
     """
-    raw_texts = [c["text"] for c in chunks]
+    raw_texts: List[str] = []
+    for chunk in chunks or []:
+        if isinstance(chunk, dict):
+            text = (chunk.get("text") or chunk.get("content") or "").strip()
+        elif isinstance(chunk, str):
+            text = chunk.strip()
+        else:
+            continue
+        if text:
+            raw_texts.append(text)
+
+    if not raw_texts:
+        logger.info(
+            "Skipping keyword persist for document %s — no usable chunk text",
+            getattr(document, "id", None),
+        )
+        return
+
     kws = extract_keywords(raw_texts, top_n=10)
+    if not kws:
+        logger.info(
+            "Skipping keyword persist for document %s — empty extraction",
+            getattr(document, "id", None),
+        )
+        return
+
     document.keywords = json.dumps(kws)
     db.add(document)
 
@@ -133,36 +158,32 @@ def get_llm_client(llm_provider: Optional[str] = None):
     return InferenceClient()
 
 
-def _format_chat_history(messages: List[Dict[str, str]], *, max_turns: int = 6, max_chars: int = 500) -> str:
-    """Serialize prior turns for the prompt (truncated to limit topic bleed).
+def _format_chat_history(
+    messages: List[Dict[str, str]],
+    *,
+    max_turns: int = 24,
+    max_chars: int = 1200,
+) -> str:
+    """Serialize prior turns for the prompt via DB-backed conversation memory helpers.
 
     Exact example
     -------------
     IN:  []  →  OUT: ""
     IN:  [{"role":"user","content":"What about asthma?"},
           {"role":"assistant","content":"Indicated for ages 6+."}]
-    OUT:
-      Previous conversation:
-      User: What about asthma?
-      Assistant: Indicated for ages 6+.
+    OUT includes a Previous conversation header with User/Assistant lines.
 
-    For the first XOLAIR CSU question in a new session, history is empty → "".
+    For the first question in a new session, history is empty → "".
     """
     if not messages:
         return ""
-    # Keep only the most recent turns; truncate long assistant replies.
-    trimmed = list(messages[-max_turns:])
-    lines = [
-        "Previous conversation (context only — answer the CURRENT question; "
-        "do not mix in unrelated earlier topics unless asked):"
-    ]
-    for msg in trimmed:
-        role = "User" if msg.get("role") == "user" else "Assistant"
-        content = (msg.get("content") or "").strip()
-        if len(content) > max_chars:
-            content = content[: max_chars - 3].rstrip() + "..."
-        lines.append(f"{role}: {content}")
-    return "\n".join(lines)
+    from app.services.conversation_memory import build_prompt_history
+
+    return build_prompt_history(
+        messages,
+        recent_limit=max_turns,
+        max_chars_per_msg=max_chars,
+    )
 
 
 def _build_chat_llm():
@@ -250,68 +271,28 @@ def get_agent_executor(
     return executor, pdf_tool, formatted_history
 
 def is_greeting(question: str) -> bool:
-    """True iff normalized question is in the fixed greetings set.
+    """True iff normalized question is in the fixed greetings set."""
+    from app.services.conversation_memory import is_greeting as _is_greeting
 
-    Exact example
-    -------------
-    is_greeting("Hello!") → True   # skips retrieve
-    is_greeting(
-      "Does the XOLAIR prescribing label recommend every-2-week dosing for "
-      "chronic spontaneous urticaria (CSU)?"
-    ) → False  # continues to RAG
-    """
-    greetings = {
-        "hi", "hello", "hey", "how are you", "what's up", "whats up",
-        "good morning", "good evening", "good afternoon", "thanks", "thank you",
-        "bye", "goodbye", "help", "what can you do", "who are you",
-    }
-    return question.lower().strip().rstrip("!?.") in greetings
+    return _is_greeting(question)
 
 
 def is_capability_question(question: str) -> bool:
     """True for product/capability questions that must not drift into document RAG."""
-    q = (question or "").lower().strip()
-    if not q:
-        return False
-    if is_greeting(q):
-        return True
-    markers = (
-        "what can you do",
-        "what genova can",
-        "what you can help",
-        "how can you help",
-        "list what you can do",
-        "when no pdf",
-        "when no document",
-        "no pdf is attached",
-        "no document is attached",
-        "without relying on a specific attachment",
-        "briefly say what genova",
-        "who are you",
+    from app.services.conversation_memory import (
+        is_capability_question as _is_capability,
     )
-    return any(m in q for m in markers)
+
+    return _is_capability(question)
 
 
 def is_chat_memory_question(question: str) -> bool:
     """True when the user asks to answer from chat memory / this session only."""
-    q = (question or "").lower().strip()
-    if not q:
-        return False
-    markers = (
-        "from memory of this chat",
-        "from memory of this session",
-        "from this chat session",
-        "from our conversation",
-        "from the conversation",
-        "from chat history",
-        "with no documents attached",
-        "with no document attached",
-        "no documents attached",
-        "no document attached",
-        "without any document",
-        "without a document attached",
+    from app.services.conversation_memory import (
+        is_chat_memory_question as _is_memory,
     )
-    return any(m in q for m in markers)
+
+    return _is_memory(question)
 
 
 def _maybe_quiz_intent(question: str, document_id: Optional[str], document_ids: Optional[List[str]]):
@@ -659,17 +640,112 @@ def _merge_sources(
     return merged
 
 
+def _classify_turn_intent(
+    question: str,
+    chat_history: Optional[List[Dict[str, str]]],
+    *,
+    has_attach: bool,
+):
+    """Classify this turn so routing does not hard-gate on attachment alone."""
+    from app.services.conversation_memory import classify_query_intent
+
+    intent = classify_query_intent(
+        question, chat_history, has_attach=has_attach
+    )
+    logger.info(
+        "Query intent=%s has_attach=%s history_turns=%s q=%r",
+        intent.value,
+        has_attach,
+        len(chat_history or []),
+        (question or "")[:120],
+    )
+    return intent
+
+
+def _should_prefer_chat_memory(
+    question: str,
+    chat_history: Optional[List[Dict[str, str]]],
+    *,
+    has_attach: bool,
+) -> bool:
+    """Prefer session history over corpus/document retrieval for this turn."""
+    from app.services.conversation_memory import QueryIntent
+
+    intent = _classify_turn_intent(
+        question, chat_history, has_attach=has_attach
+    )
+    return intent is QueryIntent.CHAT_MEMORY
+
+
+def _try_special_turn_answer(
+    question: str,
+    chat_history: Optional[List[Dict[str, str]]],
+    *,
+    has_attach: bool,
+    llm_provider: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Handle capability and chat-memory turns before any retrieve/graph call.
+
+    Attachment must NOT suppress capability or conversation-memory intents.
+    Hybrid/document/general return None so the caller continues into RAG.
+    """
+    from app.services.conversation_memory import QueryIntent
+
+    intent = _classify_turn_intent(
+        question, chat_history, has_attach=has_attach
+    )
+    if intent is QueryIntent.CAPABILITY:
+        return _capability_answer(
+            question, chat_history, llm_provider=llm_provider
+        )
+    if intent is QueryIntent.CHAT_MEMORY:
+        # Pure memory answers should not re-surface PDF citation chips unless
+        # the user is explicitly asking about previously discussed document facts.
+        prior = (
+            _prior_sources_from_history(chat_history)
+            if is_document_oriented_question_safe(question)
+            else []
+        )
+        return _chat_memory_answer(
+            question,
+            chat_history,
+            llm_provider=llm_provider,
+            prior_sources=prior,
+        )
+    return None
+
+
+def is_document_oriented_question_safe(question: str) -> bool:
+    from app.services.conversation_memory import is_document_oriented_question
+
+    return is_document_oriented_question(question)
+
+
 def _capability_answer(
     question: str,
+    chat_history: Optional[List[Dict[str, str]]] = None,
     *,
     llm_provider: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Answer product/capability questions without retrieving documents."""
+    """Answer product/capability questions without retrieving documents.
+
+    Prior conversation is still injected so a later follow-up about the
+    document topic remains coherent after a capability digression.
+    """
     provider = normalize_llm_provider(llm_provider)
+    history = _format_chat_history(chat_history) if chat_history else ""
     answer = ""
     client = None
     try:
         client = get_llm_client(llm_provider=provider)
+        user_content = GREETING_PROMPT.format(question=question)
+        if history:
+            user_content = (
+                f"{history}\n\n"
+                "The user is now asking about product capabilities (not document content). "
+                f"{user_content}"
+            )
         response = client.chat_completion(
             messages=[
                 {
@@ -677,10 +753,12 @@ def _capability_answer(
                     "content": (
                         "You are Document AI Analyst for Genova. Answer briefly about "
                         "product capabilities only. Do not discuss medical drugs, "
-                        "doses, invoices, or any document content."
+                        "doses, invoices, project names, or any document content. "
+                        "Conversation history is provided only so you stay oriented; "
+                        "do not digress into it unless the user asks."
                     ),
                 },
-                {"role": "user", "content": GREETING_PROMPT.format(question=question)},
+                {"role": "user", "content": user_content},
             ],
             model=llm_model_for_provider(provider),
             max_tokens=256,
@@ -710,12 +788,27 @@ def _chat_memory_answer(
     chat_history: Optional[List[Dict[str, str]]] = None,
     *,
     llm_provider: Optional[str] = None,
+    prior_sources: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Answer from chat history only — no corpus retrieval / no document sources."""
+    from app.services.conversation_memory import resolve_deterministic_memory_answer
+
+    deterministic = resolve_deterministic_memory_answer(question, chat_history)
+    if deterministic:
+        return {
+            "answer": deterministic,
+            "sources": list(prior_sources or []),
+        }
+
     provider = normalize_llm_provider(llm_provider)
     history = _format_chat_history(chat_history) if chat_history else ""
     user_prompt = (
-        "No PDF is attached. Answer ONLY from the conversation history below. "
+        "Answer ONLY from the conversation history below. "
+        "Ignore any attached PDFs or corpus for this turn — the user is asking "
+        "about the chat itself or facts they already stated. "
+        "Every prior User turn counts — including statements that are not phrased "
+        "as questions. When asked for the first/previous question or message, "
+        "quote that User turn verbatim. "
         "Do not invent document facts. If the history is insufficient, say you "
         "cannot determine the answer from this chat alone.\n\n"
         f"{history or '(No prior conversation.)'}\n\n"
@@ -749,11 +842,24 @@ def _chat_memory_answer(
         logger.warning("Chat-memory answer unavailable: %s", exc)
     if not answer:
         answer = MALFORMED_OUTPUT_MESSAGE
-    result: Dict[str, Any] = {"answer": answer, "sources": []}
+    result: Dict[str, Any] = {
+        "answer": answer,
+        "sources": list(prior_sources or []),
+    }
     usage = getattr(client, "last_usage", None) if client is not None else None
     if isinstance(usage, dict) and usage:
         result["usage"] = usage
     return result
+
+
+def _prior_sources_from_history(
+    chat_history: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    if not chat_history:
+        return []
+    from app.services.conversation_memory import last_assistant_sources
+
+    return last_assistant_sources(chat_history)
 
 
 def _generate_answer_direct(
@@ -792,12 +898,14 @@ def _generate_answer_direct(
        not every 2 weeks. [Source: xolair_prescribing.pdf, Page 9]"
     """
     has_attach = bool(document_id or _unique_document_ids(document_ids))
-    if not has_attach and is_capability_question(question):
-        return _capability_answer(question, llm_provider=llm_provider)
-    if not has_attach and is_chat_memory_question(question):
-        return _chat_memory_answer(
-            question, chat_history, llm_provider=llm_provider
-        )
+    special = _try_special_turn_answer(
+        question,
+        chat_history,
+        has_attach=has_attach,
+        llm_provider=llm_provider,
+    )
+    if special is not None:
+        return special
 
     attach_ids = _unique_document_ids(document_ids)
     graph_evidence = _collect_graph_evidence(question, user_id, document_id, document_ids)
@@ -821,6 +929,14 @@ def _generate_answer_direct(
         )
         sources = _sources_from_chunks(chunks)
         if not chunks and not graph_evidence:
+            # Fall back to session memory when corpus has nothing but history does.
+            if chat_history:
+                return _chat_memory_answer(
+                    question,
+                    chat_history,
+                    llm_provider=llm_provider,
+                    prior_sources=_prior_sources_from_history(chat_history),
+                )
             return {
                 "answer": (
                     "I couldn't find sufficient information in the uploaded documents "
@@ -899,19 +1015,16 @@ def _generate_answer_stream_direct(
     data: {"type":"done"}
     """
     has_attach = bool(document_id or _unique_document_ids(document_ids))
-    if not has_attach and (
-        is_capability_question(question) or is_chat_memory_question(question)
-    ):
-        result = (
-            _capability_answer(question, llm_provider=llm_provider)
-            if is_capability_question(question)
-            else _chat_memory_answer(
-                question, chat_history, llm_provider=llm_provider
-            )
-        )
-        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
-        yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer') or ''})}\n\n"
-        usage = result.get("usage")
+    special = _try_special_turn_answer(
+        question,
+        chat_history,
+        has_attach=has_attach,
+        llm_provider=llm_provider,
+    )
+    if special is not None:
+        yield f"data: {json.dumps({'type': 'sources', 'data': special.get('sources') or []})}\n\n"
+        yield f"data: {json.dumps({'type': 'token', 'data': special.get('answer') or ''})}\n\n"
+        usage = special.get("usage")
         if isinstance(usage, dict) and usage:
             yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -942,6 +1055,20 @@ def _generate_answer_stream_direct(
         )
         sources = _sources_from_chunks(chunks)
         if not chunks and not graph_evidence:
+            if chat_history:
+                result = _chat_memory_answer(
+                    question,
+                    chat_history,
+                    llm_provider=llm_provider,
+                    prior_sources=_prior_sources_from_history(chat_history),
+                )
+                yield f"data: {json.dumps({'type': 'sources', 'data': result.get('sources') or []})}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer') or ''})}\n\n"
+                usage = result.get("usage")
+                if isinstance(usage, dict) and usage:
+                    yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
             msg = (
                 "I couldn't find sufficient information in the uploaded documents "
                 "to answer this question."
@@ -991,6 +1118,7 @@ def _generate_answer_stream_direct(
     except Exception as e:
         logger.error("Direct stream error (%s): %s", provider, e)
         yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+        return
 
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
@@ -1054,13 +1182,16 @@ def generate_answer(
             logger.error("Quiz generation error: %s", e)
             raise ExternalServiceException("Quiz", str(e)) from e
 
-    # ── Handle greetings / capability (no document retrieve) ─────────────────
-    if is_capability_question(question) and not (document_id or document_ids):
-        return _capability_answer(question, llm_provider=provider)
-    if is_chat_memory_question(question) and not (document_id or document_ids):
-        return _chat_memory_answer(
-            question, chat_history, llm_provider=provider
-        )
+    # ── Capability / chat-memory (attachment must not suppress these) ───────
+    has_attach = bool(document_id or document_ids)
+    special = _try_special_turn_answer(
+        question,
+        chat_history,
+        has_attach=has_attach,
+        llm_provider=provider,
+    )
+    if special is not None:
+        return special
 
     # Local Ollama / Bedrock: direct retrieve-then-generate
     if provider in {"ollama", "bedrock"} or (
@@ -1177,20 +1308,18 @@ def generate_answer_stream(
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
-    # ── Handle greetings / capability / chat-memory (no document retrieve) ───
-    if not (document_id or document_ids) and (
-        is_capability_question(question) or is_chat_memory_question(question)
-    ):
-        result = (
-            _capability_answer(question, llm_provider=provider)
-            if is_capability_question(question)
-            else _chat_memory_answer(
-                question, chat_history, llm_provider=provider
-            )
-        )
-        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
-        yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer') or ''})}\n\n"
-        usage = result.get("usage")
+    # ── Capability / chat-memory (attachment must not suppress these) ────────
+    has_attach = bool(document_id or document_ids)
+    special = _try_special_turn_answer(
+        question,
+        chat_history,
+        has_attach=has_attach,
+        llm_provider=provider,
+    )
+    if special is not None:
+        yield f"data: {json.dumps({'type': 'sources', 'data': special.get('sources') or []})}\n\n"
+        yield f"data: {json.dumps({'type': 'token', 'data': special.get('answer') or ''})}\n\n"
+        usage = special.get("usage")
         if isinstance(usage, dict) and usage:
             yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"

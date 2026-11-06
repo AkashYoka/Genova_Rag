@@ -272,11 +272,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const data = await api.get<{ messages: ChatMsg[] }>(
         `/api/v1/chat/history/session/${id}`,
       );
+      // Ignore stale responses if the user already switched sessions.
+      if (get().activeSessionId !== id) return;
       set({ messages: data.messages });
     } catch (err) {
       console.error("Failed to fetch session history:", err);
     } finally {
-      set({ historyLoading: false });
+      if (get().activeSessionId === id) {
+        set({ historyLoading: false });
+      }
     }
   },
 

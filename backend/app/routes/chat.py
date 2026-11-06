@@ -19,9 +19,11 @@ from app.auth import get_current_user
 from app.cache import get_cached_payload, get_cached_response, set_cached_response
 from app.database import get_db
 from app.exceptions import (
+    AppException,
     NotFoundException,
     UnauthorizedException,
-    ValidationException, )
+    ValidationException,
+)
 from app.metrics import record_query_response_time
 from app.models import User, ChatMessage, Document, ChatSession
 from app.rate_limit import CHAT_QUERY_RATE_LIMIT, check_chat_ws_rate_limit, limiter
@@ -412,44 +414,36 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                     {"id": str(doc.id), "filename": doc.original_name} for doc in docs
                 ]
 
-        # Resolve or create session
-        if not session_id:
-            session = db.query(ChatSession).filter(ChatSession.user_id == user.id).first()
-            if not session:
-                session = ChatSession(user_id=user.id, title="Default Chat")
-                db.add(session)
-                db.commit()
-                db.refresh(session)
-            session_id = session.id
+        # Resolve owned session (validates foreign session IDs)
+        try:
+            session = _resolve_owned_session(db, user.id, session_id)
+        except NotFoundException as exc:
+            await websocket.send_json({"type": "error", "data": str(exc)})
+            await websocket.close()
+            return
+        session_id = session.id
 
-        # Build chat history
-        recent_messages = (
-            db.query(ChatMessage)
-            .filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.user_id == user.id,
-            )
-            .order_by(ChatMessage.created_at.desc())
-            .limit(12)
-            .all()
-        )
-        recent_messages.reverse()
-        chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
+        chat_history = _load_prompt_chat_history(db, user.id, session_id)
 
         # Save user message (attachments stored in sources_json for history chips)
         user_sources = None
         if attachments_meta:
             user_sources = _enriched_sources_payload([], attachments=attachments_meta)
         save_doc_id = document_id or (document_ids[0] if document_ids else None)
-        _save_message(
-            db,
-            user.id,
-            save_doc_id,
-            "user",
-            question,
-            sources=user_sources,
-            session_id=session_id,
-        )
+        try:
+            _save_message(
+                db,
+                user.id,
+                save_doc_id,
+                "user",
+                question,
+                sources=user_sources,
+                session_id=session_id,
+            )
+        except Exception as e:
+            await websocket.send_json({"type": "error", "data": f"Failed to persist message: {e}"})
+            await websocket.close()
+            return
 
         # Stream answer using existing generator and forward structured events
         try:
@@ -458,6 +452,8 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             sources: list = []
             quiz_payload = None
             graph_payload = None
+            stream_completed = False
+            stream_failed = False
             for chunk in generate_answer_stream(
                 question=question,
                 user_id=user.id,
@@ -473,6 +469,9 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                         event_type = event_payload.get("type")
                         if event_type == "usage":
                             last_usage = event_payload.get("data")
+                        elif event_type == "error":
+                            stream_failed = True
+                            stream_completed = False
                         elif event_type == "token":
                             full_answer += event_payload.get("data") or ""
                         elif event_type == "sources":
@@ -482,6 +481,8 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                         elif event_type == "graph":
                             graph_payload = event_payload.get("data")
                         if event_type == "done":
+                            if not stream_failed:
+                                stream_completed = True
                             continue
                         await websocket.send_json(event_payload)
                     else:
@@ -491,7 +492,12 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                     await websocket.send_json({"type": "token", "data": chunk})
 
             assistant_message_id = None
-            if full_answer or quiz_payload:
+            # Persist only completed non-empty assistant turns (or quiz payloads)
+            if (
+                stream_completed
+                and not stream_failed
+                and (full_answer.strip() or quiz_payload)
+            ):
                 save_sources = _enriched_sources_payload(
                     sources,
                     quiz=quiz_payload,
@@ -507,17 +513,19 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                     full_answer,
                     save_sources,
                     session_id=session_id,
+                    allow_empty=bool(quiz_payload),
                 )
-                _record_assistant_usage(
-                    db,
-                    user_id=user.id,
-                    usage=last_usage,
-                    session_id=session_id,
-                    message_id=assistant_message_id,
-                    document_id=document_id,
-                    llm_provider=llm_provider,
-                    quiz=quiz_payload,
-                )
+                if assistant_message_id:
+                    _record_assistant_usage(
+                        db,
+                        user_id=user.id,
+                        usage=last_usage,
+                        session_id=session_id,
+                        message_id=assistant_message_id,
+                        document_id=document_id,
+                        llm_provider=llm_provider,
+                        quiz=quiz_payload,
+                    )
 
             # Notify client (include Bedrock usage when present)
             done_event = {"type": "done"}
@@ -525,9 +533,12 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 done_event["usage"] = last_usage
             if assistant_message_id:
                 done_event["message_id"] = str(assistant_message_id)
+            if not stream_completed:
+                done_event["incomplete"] = True
             await websocket.send_json(done_event)
 
         except WebSocketDisconnect:
+            # Client gone — user message already persisted; do not invent assistant text
             return
         except Exception as e:
             await websocket.send_json({"type": "error", "data": str(e)})
@@ -696,7 +707,7 @@ def get_session_history(
             ChatMessage.session_id == session_id,
             ChatMessage.user_id == user.id,
         )
-        .order_by(ChatMessage.created_at.asc())
+        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
         .all()
     )
 
@@ -836,30 +847,55 @@ def ask_question(
                 doc.last_accessed_at = datetime.now(timezone.utc)
             db.commit()
 
-        # Resolve or create session
-        session_id = payload.session_id
-        if not session_id:
-            session = db.query(ChatSession).filter(ChatSession.user_id == user.id).first()
-            if not session:
-                session = ChatSession(user_id=user.id, title="Default Chat")
-                db.add(session)
-                db.commit()
-                db.refresh(session)
-            session_id = session.id
+        # Resolve owned session (never accept foreign session IDs)
+        session = _resolve_owned_session(db, user.id, payload.session_id)
+        session_id = session.id
 
-        # Build chat history from last 6 exchanges
-        recent_messages = (
-            db.query(ChatMessage)
-            .filter(
-                ChatMessage.session_id == session_id,
-                ChatMessage.user_id == user.id,
+        # DB-backed history for this session only (before current turn)
+        chat_history = _load_prompt_chat_history(db, user.id, session_id)
+
+        attach_meta = None
+        if payload.document_ids:
+            attach_docs = (
+                db.query(Document)
+                .filter(Document.id.in_(payload.document_ids), Document.user_id == user.id)
+                .all()
             )
-            .order_by(ChatMessage.created_at.desc())
-            .limit(12)
-            .all()
+            attach_meta = _attachments_from_docs(attach_docs)
+        elif payload.document_id:
+            one = (
+                db.query(Document)
+                .filter(Document.id == payload.document_id, Document.user_id == user.id)
+                .first()
+            )
+            if one:
+                attach_meta = _attachments_from_docs([one])
+        user_sources = (
+            _enriched_sources_payload([], attachments=attach_meta) if attach_meta else None
         )
-        recent_messages.reverse()
-        chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
+        msg_doc_id = _message_document_fk(payload.document_id, payload.document_ids)
+
+        # Persist user turn first so context survives generator/LLM failures
+        try:
+            _save_message(
+                db,
+                user.id,
+                msg_doc_id,
+                "user",
+                payload.question,
+                sources=user_sources,
+                session_id=session_id,
+            )
+        except AppException:
+            raise
+        except Exception as exc:
+            logger.exception("Failed to persist user message for session %s", session_id)
+            raise AppException(
+                "DATABASE_ERROR",
+                "Failed to persist chat message. The message was not saved.",
+                500,
+                {"error": str(exc)[:200]},
+            ) from exc
 
         cache_doc_key = str(payload.document_id or "")
         if payload.document_ids:
@@ -871,27 +907,42 @@ def ask_question(
         from app.rag.utils.quiz import is_quiz_request
 
         quiz_intent_request = is_quiz_request(payload.question)
-        # Cache check — return instantly if this (user, document, question) was answered before
+        cached_payload = None
         if not quiz_intent_request:
             cached_payload = get_cached_payload(
                 user_id=user.id,
                 document_id=cache_doc_key,
                 question=cache_question,
+                session_id=str(session_id),
             )
-            if cached_payload is not None:
-                logger.debug("Returning cached response for question: %s", payload.question[:40])
-                cached_sources = []
-                for item in cached_payload.get("sources") or []:
-                    if isinstance(item, dict):
-                        try:
-                            cached_sources.append(SourceChunk(**item))
-                        except Exception:
-                            continue
-                return ChatResponse(
-                    answer=cached_payload.get("answer") or "",
-                    sources=cached_sources,
-                    document_id=payload.document_id,
+
+        if cached_payload is not None:
+            logger.debug("Returning cached response for question: %s", payload.question[:40])
+            answer = cached_payload.get("answer") or ""
+            raw_sources = cached_payload.get("sources") or []
+            save_sources = _enriched_sources_payload(raw_sources)
+            if answer.strip():
+                _save_message(
+                    db,
+                    user.id,
+                    msg_doc_id,
+                    "assistant",
+                    answer,
+                    save_sources,
+                    session_id=session_id,
                 )
+            cached_sources = []
+            for item in raw_sources:
+                if isinstance(item, dict):
+                    try:
+                        cached_sources.append(SourceChunk(**item))
+                    except Exception:
+                        continue
+            return ChatResponse(
+                answer=answer,
+                sources=cached_sources,
+                document_id=payload.document_id,
+            )
 
         result = generate_answer(
             question=payload.question,
@@ -913,16 +964,16 @@ def ask_question(
 
         # Store result in cache for future identical questions (skip interactive quizzes)
         quiz_data = result.get("quiz")
-        if not quiz_data and not quiz_intent_request:
+        if not quiz_data and not quiz_intent_request and (result.get("answer") or "").strip():
             set_cached_response(
                 user_id=user.id,
                 document_id=cache_doc_key,
                 question=cache_question,
                 answer=result["answer"],
                 sources=result.get("sources") or [],
+                session_id=str(session_id),
             )
 
-        # Save to chat history
         save_sources = _enriched_sources_payload(
             result.get("sources") or [],
             quiz=quiz_data,
@@ -930,54 +981,27 @@ def ask_question(
             llm_provider=payload.llm_provider,
             graph=result.get("graph"),
         )
-        attach_meta = None
-        if payload.document_ids:
-            attach_docs = (
-                db.query(Document)
-                .filter(Document.id.in_(payload.document_ids), Document.user_id == user.id)
-                .all()
-            )
-            attach_meta = _attachments_from_docs(attach_docs)
-        elif payload.document_id:
-            one = (
-                db.query(Document)
-                .filter(Document.id == payload.document_id, Document.user_id == user.id)
-                .first()
-            )
-            if one:
-                attach_meta = _attachments_from_docs([one])
-        user_sources = (
-            _enriched_sources_payload([], attachments=attach_meta) if attach_meta else None
-        )
-        msg_doc_id = _message_document_fk(payload.document_id, payload.document_ids)
-        _save_message(
-            db,
-            user.id,
-            msg_doc_id,
-            "user",
-            payload.question,
-            sources=user_sources,
-            session_id=session_id,
-        )
         assistant_message_id = _save_message(
             db,
             user.id,
             msg_doc_id,
             "assistant",
-            result["answer"],
+            result.get("answer") or "",
             save_sources,
             session_id=session_id,
+            allow_empty=bool(quiz_data),
         )
-        _record_assistant_usage(
-            db,
-            user_id=user.id,
-            usage=result.get("usage"),
-            session_id=session_id,
-            message_id=assistant_message_id,
-            document_id=msg_doc_id,
-            llm_provider=payload.llm_provider,
-            quiz=quiz_data,
-        )
+        if assistant_message_id:
+            _record_assistant_usage(
+                db,
+                user_id=user.id,
+                usage=result.get("usage"),
+                session_id=session_id,
+                message_id=assistant_message_id,
+                document_id=msg_doc_id,
+                llm_provider=payload.llm_provider,
+                quiz=quiz_data,
+            )
 
         safe_sources = []
         for s in result.get("sources") or []:
@@ -1083,30 +1107,11 @@ def ask_question_stream(
 
     started_at = time.perf_counter()
 
-    # Resolve or create session
-    session_id = payload.session_id
-    if not session_id:
-        session = db.query(ChatSession).filter(ChatSession.user_id == user.id).first()
-        if not session:
-            session = ChatSession(user_id=user.id, title="Default Chat")
-            db.add(session)
-            db.commit()
-            db.refresh(session)
-        session_id = session.id
+    session = _resolve_owned_session(db, user.id, payload.session_id)
+    session_id = session.id
 
-    # Build chat history from last 6 exchanges (before saving current message)
-    recent_messages = (
-        db.query(ChatMessage)
-        .filter(
-            ChatMessage.session_id == session_id,
-            ChatMessage.user_id == user.id,
-        )
-        .order_by(ChatMessage.created_at.desc())
-        .limit(12)
-        .all()
-    )
-    recent_messages.reverse()
-    chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
+    # History before current user turn
+    chat_history = _load_prompt_chat_history(db, user.id, session_id)
 
     cache_doc_key = str(payload.document_id or "")
     if payload.document_ids:
@@ -1133,16 +1138,20 @@ def ask_question_stream(
     )
     msg_doc_id = _message_document_fk(payload.document_id, payload.document_ids)
 
-    # Save user message immediately
-    _save_message(
-        db,
-        user.id,
-        msg_doc_id,
-        "user",
-        payload.question,
-        sources=user_sources,
-        session_id=session_id,
-    )
+    # Save user message immediately (survives stream failures / disconnects)
+    try:
+        _save_message(
+            db,
+            user.id,
+            msg_doc_id,
+            "user",
+            payload.question,
+            sources=user_sources,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.exception("Failed to persist user message for stream session %s", session_id)
+        raise
 
     # Cache check before starting the stream (skip quiz intents entirely)
     from app.rag.utils.quiz import is_quiz_request as _is_quiz_request
@@ -1156,11 +1165,22 @@ def ask_question_stream(
             user_id=user.id,
             document_id=cache_doc_key,
             question=stream_cache_question,
+            session_id=str(session_id),
         )
         if cached_payload is not None:
             logger.debug("Returning cached stream response for question: %s", payload.question[:40])
             cached_answer = cached_payload.get("answer") or ""
             cached_sources = cached_payload.get("sources") or []
+            if cached_answer.strip():
+                _save_message(
+                    db,
+                    user.id,
+                    msg_doc_id,
+                    "assistant",
+                    cached_answer,
+                    _enriched_sources_payload(cached_sources),
+                    session_id=session_id,
+                )
 
             async def cached_event_stream():
                 # Emit sources first so citation chips work on cache hits.
@@ -1193,6 +1213,9 @@ def ask_question_stream(
         quiz_payload = None
         graph_payload = None
         last_usage = None
+        stream_completed = False
+        stream_failed = False
+        assistant_persisted = False
 
         try:
             for chunk in generate_answer_stream(
@@ -1208,35 +1231,52 @@ def ask_question_stream(
                 try:
                     if chunk.startswith("data: "):
                         data = json.loads(chunk[6:].strip())
-                        if data.get("type") == "usage":
+                        event_type = data.get("type")
+                        if event_type == "usage":
                             last_usage = data.get("data")
-                        elif data.get("type") == "done":
+                        elif event_type == "error":
+                            stream_failed = True
+                            stream_completed = False
+                        elif event_type == "done":
+                            if not stream_failed:
+                                stream_completed = True
                             # Capture usage from done payload before replacing with timed done.
                             if data.get("usage"):
                                 last_usage = data.get("usage")
                             continue  # We will yield our own done event with response time
-                        if data.get("type") == "token":
+                        if event_type == "token":
                             full_answer += data.get("data", "")
-                        elif data.get("type") == "sources":
+                        elif event_type == "sources":
                             sources = data.get("data", [])
-                        elif data.get("type") == "quiz":
+                        elif event_type == "quiz":
                             quiz_payload = data.get("data")
-                        elif data.get("type") == "graph":
+                        elif event_type == "graph":
                             graph_payload = data.get("data")
                 except Exception:
                     pass
                 yield chunk
 
+            # Only persist a completed stream — interrupted/failed streams skip assistant save
+            if stream_failed or not stream_completed:
+                logger.warning(
+                    "Stream ended without completion for session %s; skipping assistant persist",
+                    session_id,
+                )
+                elapsed_ms = round((time.perf_counter() - started_at) * 1000)
+                yield f"data: {json.dumps({'type': 'done', 'response_time_ms': elapsed_ms, 'incomplete': True})}\n\n"
+                return
+
             # Cache the full answer for future identical questions
             # Include provider in cache key so Ollama/Bedrock answers stay separate.
             # Skip quiz intents entirely (success or failure) so retries stay live.
-            if full_answer and not quiz_payload and not stream_quiz_intent:
+            if full_answer.strip() and not quiz_payload and not stream_quiz_intent:
                 set_cached_response(
                     user_id=user.id,
                     document_id=cache_doc_key,
                     question=stream_cache_question,
                     answer=full_answer,
                     sources=sources or [],
+                    session_id=str(session_id),
                 )
 
             # Save assistant response to history (include usage metadata when present)
@@ -1253,26 +1293,38 @@ def ask_question_stream(
             )
 
             assistant_message_id = None
-            with get_db_session() as save_db:
-                assistant_message_id = _save_message(
-                    save_db,
-                    user.id,
-                    msg_doc_id,
-                    "assistant",
-                    full_answer,
-                    save_sources,
-                    session_id=session_id,
-                )
-                _record_assistant_usage(
-                    save_db,
-                    user_id=user.id,
-                    usage=last_usage,
-                    session_id=session_id,
-                    message_id=assistant_message_id,
-                    document_id=msg_doc_id,
-                    llm_provider=payload.llm_provider,
-                    quiz=quiz_payload,
-                )
+            if (full_answer.strip() or quiz_payload) and not assistant_persisted:
+                try:
+                    with get_db_session() as save_db:
+                        assistant_message_id = _save_message(
+                            save_db,
+                            user.id,
+                            msg_doc_id,
+                            "assistant",
+                            full_answer,
+                            save_sources,
+                            session_id=session_id,
+                            allow_empty=bool(quiz_payload),
+                        )
+                        if assistant_message_id:
+                            assistant_persisted = True
+                            _record_assistant_usage(
+                                save_db,
+                                user_id=user.id,
+                                usage=last_usage,
+                                session_id=session_id,
+                                message_id=assistant_message_id,
+                                document_id=msg_doc_id,
+                                llm_provider=payload.llm_provider,
+                                quiz=quiz_payload,
+                            )
+                except Exception:
+                    logger.exception(
+                        "Failed to persist assistant stream message for session %s",
+                        session_id,
+                    )
+                    yield f"data: {json.dumps({'type': 'error', 'data': 'Failed to persist assistant response'})}\n\n"
+                    return
 
             # Log streaming response RAG completion
             chunks_count = len(sources)
@@ -1288,6 +1340,10 @@ def ask_question_stream(
             if assistant_message_id:
                 done_payload["message_id"] = str(assistant_message_id)
             yield f"data: {json.dumps(done_payload)}\n\n"
+        except Exception as exc:
+            logger.exception("Streaming RAG failed for session %s: %s", session_id, exc)
+            # Do not persist a misleading completed assistant message on failure
+            yield f"data: {json.dumps({'type': 'error', 'data': str(exc)})}\n\n"
         finally:
             record_query_response_time(time.perf_counter() - started_at)
 
@@ -1571,6 +1627,39 @@ def _attachments_from_docs(docs: list) -> list:
     return [{"id": str(doc.id), "filename": doc.original_name} for doc in docs]
 
 
+def _resolve_owned_session(
+    db: Session,
+    user_id: str,
+    session_id: Optional[str] = None,
+) -> ChatSession:
+    """Resolve a session owned by the user (DB is source of truth)."""
+    from app.services.conversation_memory import resolve_session
+
+    try:
+        return resolve_session(
+            db,
+            user_id=user_id,
+            session_id=session_id,
+            create_if_missing=True,
+        )
+    except ValueError as exc:
+        raise NotFoundException("Chat session") from exc
+
+
+def _load_prompt_chat_history(
+    db: Session,
+    user_id: str,
+    session_id: str,
+) -> list:
+    """Load DB-backed history dicts for the agent prompt (excludes current turn)."""
+    from app.services.conversation_memory import load_prompt_history
+
+    dicts, _ = load_prompt_history(
+        db, user_id=str(user_id), session_id=str(session_id)
+    )
+    return dicts
+
+
 def _save_message(
     db: Session,
     user_id: str,
@@ -1579,33 +1668,27 @@ def _save_message(
     content: str,
     sources: list = None,
     session_id: Optional[str] = None,
+    *,
+    allow_empty: bool = False,
 ):
-    """Save a chat message to the database. Returns the new message id."""
+    """Save a chat message to the database. Returns the new message id or None."""
+    from app.services.conversation_memory import persist_chat_message
+
     if not session_id:
-        session = db.query(ChatSession).filter(ChatSession.user_id == user_id).first()
-        if not session:
-            session = ChatSession(user_id=user_id, title="Default Chat")
-            db.add(session)
-            db.commit()
-            db.refresh(session)
+        session = _resolve_owned_session(db, user_id, None)
         session_id = session.id
 
-    sources_payload = None
-    if sources is not None:
-        # Accept either a plain list of chunks or an enriched metadata dict.
-        sources_payload = json.dumps(sources)
-    msg = ChatMessage(
-        user_id=user_id,
-        document_id=document_id,
-        session_id=session_id,
+    msg = persist_chat_message(
+        db,
+        user_id=str(user_id),
+        session_id=str(session_id),
         role=role,
         content=content,
-        sources_json=sources_payload,
+        document_id=document_id,
+        sources=sources,
+        allow_empty=allow_empty,
     )
-    db.add(msg)
-    db.commit()
-    db.refresh(msg)
-    return msg.id
+    return msg.id if msg is not None else None
 
 
 def _format_markdown(doc, messages) -> str:

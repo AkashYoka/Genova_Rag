@@ -137,19 +137,25 @@ def _lru_delete(key: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def make_cache_key(user_id: str, document_id: str, question: str) -> str:
+def make_cache_key(
+    user_id: str,
+    document_id: str,
+    question: str,
+    session_id: str = "",
+) -> str:
     """
-    Generate a stable, short cache key from user_id + document_id + question.
+    Generate a stable, short cache key from user_id + session + document + question.
 
     SHA-256 gives us a 64-char hex string that is:
     - Always the same length regardless of question length
-    - Unique per (user_id, document_id, question) triple — user_id is
-      required so two different users asking the identical question never
-      collide on the same cache entry, even when document_id is empty
-      (cross-document queries against a user's own private knowledge base)
+    - Unique per (user_id, session_id, document_id, question) — session_id
+      prevents cross-conversation cache leakage for identical questions
     - Safe for Redis keys and dict keys
     """
-    raw = f"{user_id}:{document_id}:{question.strip().lower()}"
+    raw = (
+        f"{user_id}:{session_id or ''}:{document_id}:"
+        f"{question.strip().lower()}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -169,12 +175,17 @@ def _decode_cache_payload(raw: str):
     return None
 
 
-def get_cached_payload(user_id: str, document_id: str, question: str) -> Optional[dict]:
+def get_cached_payload(
+    user_id: str,
+    document_id: str,
+    question: str,
+    session_id: str = "",
+) -> Optional[dict]:
     """
-    Look up a cached answer (+ sources) for a (user_id, document_id, question) triple.
+    Look up a cached answer (+ sources) for a scoped question key.
     Returns ``{"answer": str, "sources": list}`` on hit, None on miss.
     """
-    key = make_cache_key(user_id, document_id, question)
+    key = make_cache_key(user_id, document_id, question, session_id=session_id)
     r = _get_redis()
 
     if r is not None:
@@ -195,12 +206,19 @@ def get_cached_payload(user_id: str, document_id: str, question: str) -> Optiona
     return None
 
 
-def get_cached_response(user_id: str, document_id: str, question: str) -> Optional[str]:
+def get_cached_response(
+    user_id: str,
+    document_id: str,
+    question: str,
+    session_id: str = "",
+) -> Optional[str]:
     """
-    Look up a cached answer for a (user_id, document_id, question) triple.
+    Look up a cached answer for a scoped question key.
     Returns the answer string on hit, None on miss.
     """
-    payload = get_cached_payload(user_id, document_id, question)
+    payload = get_cached_payload(
+        user_id, document_id, question, session_id=session_id
+    )
     if payload is None:
         return None
     return payload.get("answer")
@@ -212,13 +230,14 @@ def set_cached_response(
     question: str,
     answer: str,
     sources: Optional[list] = None,
+    session_id: str = "",
 ) -> None:
     """
     Store an answer (and optional citation sources). Tries Redis first; falls back to LRU.
     TTL is controlled by the CACHE_TTL environment variable.
     """
     _ensure_config()
-    key = make_cache_key(user_id, document_id, question)
+    key = make_cache_key(user_id, document_id, question, session_id=session_id)
     serialised = json.dumps({"answer": answer, "sources": sources or []})
     r = _get_redis()
 
