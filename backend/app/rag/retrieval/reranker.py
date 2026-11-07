@@ -15,11 +15,12 @@ Common example question:
 """
 
 import logging
-from typing import List, Dict, Any, Optional
-
-from sentence_transformers import CrossEncoder
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 from app.config import get_settings
+
+if TYPE_CHECKING:
+    from sentence_transformers import CrossEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,9 @@ class Reranker:
         settings = get_settings()
         self.model_name = model_name or settings.RERANKER_MODEL
         self.device = device
-        self._model: Optional[CrossEncoder] = None
+        self._model: Optional["CrossEncoder"] = None
 
-    def _load_model(self) -> CrossEncoder:
+    def _load_model(self) -> "CrossEncoder":
         """First-use load of sentence_transformers.CrossEncoder(max_length=512).
 
         Exact example
@@ -54,6 +55,13 @@ class Reranker:
         → self._model = CrossEncoder(...); subsequent calls reuse it.
         """
         if self._model is None:
+            try:
+                from sentence_transformers import CrossEncoder
+            except ImportError as exc:
+                raise ImportError(
+                    "sentence-transformers is required when RERANKER_ENABLED=true. "
+                    "Install with: pip install -r backend/requirements-dev.txt"
+                ) from exc
             logger.info(f"Loading reranker: {self.model_name}")
             self._model = CrossEncoder(
                 self.model_name,

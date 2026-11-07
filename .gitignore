@@ -43,3 +43,6 @@ frontend/test-results/
 
 .freebuff/
 .taste-skill/
+# Local AWS feasibility test artifacts
+.aws-feasibility-efs/
+

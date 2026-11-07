@@ -1,0 +1,20 @@
+# Dev / eval / optional local-ML extras (not required for Bedrock prod image)
+-r requirements.txt
+
+# Tests
+pytest
+pytest-cov
+
+# RAG evaluation
+ragas>=0.3.0
+
+# Local cross-encoder reranker + HF sentence-transformer embeddings
+# (only if RERANKER_ENABLED=true or EMBEDDING_PROVIDER=huggingface)
+sentence-transformers
+transformers
+
+# Optional OCR backend (OCR_BACKEND=easyocr)
+easyocr>=1.7.1
+
+# Optional process manager if not using uvicorn directly
+gunicorn
