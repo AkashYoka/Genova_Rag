@@ -260,7 +260,15 @@ def get_embedding_model() -> _Embedder:
                 base_url=settings.OLLAMA_BASE_URL,
             )
         elif provider == "huggingface":
-            from langchain_huggingface import HuggingFaceEmbeddings
+            try:
+                from langchain_huggingface import HuggingFaceEmbeddings
+            except ImportError as exc:
+                raise RuntimeError(
+                    "EMBEDDING_PROVIDER=huggingface requires langchain-huggingface "
+                    "(and typically sentence-transformers). Install with: "
+                    "pip install -r backend/requirements-dev.txt "
+                    "(production default is EMBEDDING_PROVIDER=ollama)."
+                ) from exc
 
             _embedding_model = HuggingFaceEmbeddings(
                 model_name=settings.EMBEDDING_MODEL,

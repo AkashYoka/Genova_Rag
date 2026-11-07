@@ -35,10 +35,8 @@ FROM python:3.11-slim
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME=/app/data/huggingface
-ENV TRANSFORMERS_CACHE=/app/data/huggingface
 
-# HuggingFace Spaces runs as user 1000
+# Non-root runtime user (uid 1000 — match EFS access point on ECS)
 RUN useradd -m -u 1000 appuser
 
 WORKDIR /app
@@ -65,7 +63,6 @@ RUN mkdir -p /app/data/uploads /app/data/chroma_db /app/data/graphs && \
 # Switch to non-root user
 USER appuser
 
-# HuggingFace Spaces requires port 7860
 EXPOSE 7860
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]

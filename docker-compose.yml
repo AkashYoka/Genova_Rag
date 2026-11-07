@@ -1,20 +1,71 @@
-version: '3.8'
+# Genova — local / ECS-parity stack
+# Services: redis (Celery broker), app (API), worker (Celery), frontend (nginx)
+# Database: Amazon RDS MySQL via DATABASE_URL (no local MySQL container)
+# Object storage: Amazon S3 via env (IAM role or AWS_* credentials)
+# LLM: Amazon Bedrock via env (AWS_BEARER_TOKEN_BEDROCK and/or IAM)
+#
+# Required in .env (see .env.example):
+#   SECRET_KEY, FIELD_ENCRYPTION_KEY, DATABASE_URL
+# Optional: S3_*, BEDROCK_*, AWS_*, OLLAMA_* (embeddings), NEXT_PUBLIC_API_URL
+#
+# Start:  docker compose up -d --build
+# Data:   named volume app_data → /app/data (swap for EFS on ECS)
 
 x-logging: &default-logging
-  driver: "json-file"
+  driver: json-file
   options:
     max-size: "10m"
     max-file: "5"
 
+# Shared env for API + worker (no secrets hardcoded)
+x-backend-environment: &backend-environment
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+  FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?Set FIELD_ENCRYPTION_KEY in .env}
+  DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to your RDS MySQL URL}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  UPLOAD_DIR: /app/data/uploads
+  CHROMA_PERSIST_DIR: ${CHROMA_PERSIST_DIR:-/app/data/chroma_db}
+  GRAPH_PERSIST_DIR: ${GRAPH_PERSIST_DIR:-/app/data/graphs}
+  LOG_FILE: /app/data/logs/app.log
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/2}
+  LLM_PROVIDER: ${LLM_PROVIDER:-bedrock}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+  EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
+  BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-us.amazon.nova-2-lite-v1:0}
+  BEDROCK_REGION: ${BEDROCK_REGION:-us-east-1}
+  AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+  AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+  S3_BUCKET: ${S3_BUCKET:-}
+  S3_BASE_PREFIX: ${S3_BASE_PREFIX:-NoteBase}
+  S3_REGION: ${S3_REGION:-}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+  S3_PDFS_PREFIX: ${S3_PDFS_PREFIX:-pdfs}
+  S3_NOTES_PREFIX: ${S3_NOTES_PREFIX:-sticky_notes}
+  S3_SERVER_SIDE_ENCRYPTION: ${S3_SERVER_SIDE_ENCRYPTION:-}
+  AWS_REGION: ${AWS_REGION:-}
+  AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+  RERANKER_ENABLED: ${RERANKER_ENABLED:-false}
+
 services:
-  # Redis broker/result backend for Celery document processing
   redis:
     image: redis:7-alpine
     container_name: pdf_rag_redis
     restart: unless-stopped
     logging: *default-logging
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -22,244 +73,68 @@ services:
       retries: 5
       start_period: 5s
 
-  # ── MySQL 8.4 LTS Database ───────────────────────────────
-  mysql:
-    image: mysql:8.4
-    container_name: pdf_rag_mysql
-    restart: unless-stopped
-    logging: *default-logging
-    command: >
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_0900_ai_ci
-      --explicit_defaults_for_timestamp=ON
-      --max-allowed-packet=64M
-    environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-pdf_rag}
-      MYSQL_USER: ${MYSQL_USER:-pdf_rag_user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-pdf_rag_pass}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-pdf_rag_root_pass}
-    ports:
-      - "${MYSQL_PORT:-3306}:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./scripts/init_mysql.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
-  # ── Legacy PostgreSQL (opt-in, migration window only) ────
-  # Kept so the pre-migration stack can still be started to dump/verify
-  # existing data before MySQL is promoted. Not started by default:
-
-
-  # ── Application (CPU profile) ────────────────────────────
   app:
     build: .
+    image: genova_rag-app:latest
     container_name: pdf_rag_app
-    profiles: ["cpu"]
+    restart: unless-stopped
     logging: *default-logging
     ports:
-      - "7860:7860"
+      - "${APP_PORT:-7860}:7860"
     volumes:
-      - app_data:/app/data
+      # Local named volume; on ECS mount the same path from EFS
+      - ${APP_DATA_MOUNT:-app_data}:/app/data
     environment:
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
-      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-pdf_rag_user}:${MYSQL_PASSWORD:-pdf_rag_pass}@mysql:3306/${MYSQL_DATABASE:-pdf_rag}?charset=utf8mb4
-      - UPLOAD_DIR=/app/data/uploads
-      - CHROMA_PERSIST_DIR=/app/data/chroma_db
-      - GRAPH_PERSIST_DIR=/app/data/graphs
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - DEVICE=cpu
-      - S3_BUCKET=${S3_BUCKET:-}
-      - S3_REGION=${S3_REGION:-}
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
-      - S3_PDFS_PREFIX=${S3_PDFS_PREFIX:-pdfs}
-      - S3_NOTES_PREFIX=${S3_NOTES_PREFIX:-sticky_notes}
-      - S3_SERVER_SIDE_ENCRYPTION=${S3_SERVER_SIDE_ENCRYPTION:-}
-      - AWS_REGION=${AWS_REGION:-}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      <<: *backend-environment
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7860/api/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:7860/api/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
+      retries: 5
+      start_period: 120s
 
-  # ── Application (GPU profile) ────────────────────────────
-  app-gpu:
-    build: .
-    container_name: pdf_rag_app
-    profiles: ["gpu"]
-    logging: *default-logging
-    ports:
-      - "7860:7860"
-    volumes:
-      - app_data:/app/data
-    environment:
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
-      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-pdf_rag_user}:${MYSQL_PASSWORD:-pdf_rag_pass}@mysql:3306/${MYSQL_DATABASE:-pdf_rag}?charset=utf8mb4
-      - UPLOAD_DIR=/app/data/uploads
-      - CHROMA_PERSIST_DIR=/app/data/chroma_db
-      - GRAPH_PERSIST_DIR=/app/data/graphs
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - DEVICE=cuda
-      - S3_BUCKET=${S3_BUCKET:-}
-      - S3_REGION=${S3_REGION:-}
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
-      - S3_PDFS_PREFIX=${S3_PDFS_PREFIX:-pdfs}
-      - S3_NOTES_PREFIX=${S3_NOTES_PREFIX:-sticky_notes}
-      - S3_SERVER_SIDE_ENCRYPTION=${S3_SERVER_SIDE_ENCRYPTION:-}
-      - AWS_REGION=${AWS_REGION:-}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7860/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # Celery worker (CPU profile)
   worker:
-    build: .
+    image: genova_rag-app:latest
     container_name: pdf_rag_worker
-    profiles: ["cpu"]
+    restart: unless-stopped
     logging: *default-logging
-    command: celery -A app.celery_app.celery_app worker --loglevel=info
+    build: .
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info"]
     volumes:
-      - app_data:/app/data
+      - ${APP_DATA_MOUNT:-app_data}:/app/data
     environment:
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
-      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-pdf_rag_user}:${MYSQL_PASSWORD:-pdf_rag_pass}@mysql:3306/${MYSQL_DATABASE:-pdf_rag}?charset=utf8mb4
-      - UPLOAD_DIR=/app/data/uploads
-      - CHROMA_PERSIST_DIR=/app/data/chroma_db
-      - GRAPH_PERSIST_DIR=/app/data/graphs
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - DEVICE=cpu
-      - S3_BUCKET=${S3_BUCKET:-}
-      - S3_REGION=${S3_REGION:-}
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
-      - S3_PDFS_PREFIX=${S3_PDFS_PREFIX:-pdfs}
-      - S3_NOTES_PREFIX=${S3_NOTES_PREFIX:-sticky_notes}
-      - S3_SERVER_SIDE_ENCRYPTION=${S3_SERVER_SIDE_ENCRYPTION:-}
-      - AWS_REGION=${AWS_REGION:-}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      <<: *backend-environment
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
-
-  # Celery worker (GPU profile)
-  worker-gpu:
-    build: .
-    container_name: pdf_rag_worker
-    profiles: ["gpu"]
-    logging: *default-logging
-    command: celery -A app.celery_app.celery_app worker --loglevel=info
-    volumes:
-      - app_data:/app/data
-    environment:
-      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
-      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-pdf_rag_user}:${MYSQL_PASSWORD:-pdf_rag_pass}@mysql:3306/${MYSQL_DATABASE:-pdf_rag}?charset=utf8mb4
-      - UPLOAD_DIR=/app/data/uploads
-      - CHROMA_PERSIST_DIR=/app/data/chroma_db
-      - GRAPH_PERSIST_DIR=/app/data/graphs
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - DEVICE=cuda
-      - S3_BUCKET=${S3_BUCKET:-}
-      - S3_REGION=${S3_REGION:-}
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
-      - S3_PDFS_PREFIX=${S3_PDFS_PREFIX:-pdfs}
-      - S3_NOTES_PREFIX=${S3_NOTES_PREFIX:-sticky_notes}
-      - S3_SERVER_SIDE_ENCRYPTION=${S3_SERVER_SIDE_ENCRYPTION:-}
-      - AWS_REGION=${AWS_REGION:-}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    depends_on:
-      mysql:
+      app:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
 
-  # ── Frontend (Next.js static export served by nginx) ─────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:7860}
+    image: genova_rag-frontend:latest
     container_name: pdf_rag_frontend
-    profiles: ["cpu", "gpu"]
+    restart: unless-stopped
     logging: *default-logging
     ports:
-      - "3000:3000"
-    restart: unless-stopped
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      app:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 20s
 
-  # ── Adminer (optional — for local MySQL inspection) ──────
-  adminer:
-    image: adminer:latest
-    container_name: pdf_rag_adminer
-    restart: unless-stopped
-    profiles: ["debug"]
-    logging: *default-logging
-    environment:
-      ADMINER_DEFAULT_SERVER: mysql
-    ports:
-      - "5050:8080"
-    depends_on:
-      mysql:
-        condition: service_healthy
-
 volumes:
-  mysql_data:
-  # Retained so the legacy PostgreSQL profile can still read pre-migration data.
-  postgres_data:
   app_data:
+  redis_data:

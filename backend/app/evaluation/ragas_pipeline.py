@@ -7,8 +7,6 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable, Iterable, Optional
 
-from huggingface_hub import InferenceClient
-
 from app.config import get_settings
 from app.rag.embeddings.embeddings import embed_query
 from app.rag.retrieval.graph_retriever import get_entity_context
@@ -124,6 +122,14 @@ def generate_grounded_answer(question: str, contexts: list[str]) -> str:
     """Generate an answer using only retrieved contexts."""
     if not contexts:
         return "I do not have enough retrieved context to answer this question."
+
+    try:
+        from huggingface_hub import InferenceClient
+    except ImportError as exc:
+        raise RuntimeError(
+            "RAGAS evaluation requires huggingface-hub. "
+            "Install with: pip install -r backend/requirements-dev.txt"
+        ) from exc
 
     # huggingface_hub resolves credentials from the standard HF environment /
     # cached login, so no token is referenced in application settings.

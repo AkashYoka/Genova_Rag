@@ -12,9 +12,14 @@ ragas>=0.3.0
 # (only if RERANKER_ENABLED=true or EMBEDDING_PROVIDER=huggingface)
 sentence-transformers
 transformers
+langchain-huggingface
+huggingface-hub
 
 # Optional OCR backend (OCR_BACKEND=easyocr)
 easyocr>=1.7.1
+
+# Optional richer PDF partition (pulls Torch/CUDA — keep out of prod image)
+unstructured[pdf]
 
 # Optional process manager if not using uvicorn directly
 gunicorn

@@ -1,5 +1,5 @@
-# ── Genova backend — production runtime (Bedrock LLM + Ollama/HF embeddings) ──
-# Optional ML/eval/test packages: see requirements-dev.txt
+# ── Genova backend — production runtime (Bedrock LLM + Ollama embeddings) ──
+# Optional ML/eval/HF packages: see requirements-dev.txt
 
 # Core Framework
 fastapi
@@ -31,12 +31,13 @@ httpx
 boto3>=1.39.0
 
 # Document Processing
+# PDF extract order in chunker: pdfplumber → PyMuPDF → OCR
+# (unstructured[pdf] is optional — see requirements-dev.txt; pulls Torch/CUDA)
 PyMuPDF
 pymupdf4llm
 google-genai
 pdfplumber
 python-docx
-unstructured[pdf]
 pypdf
 reportlab
 
@@ -44,7 +45,6 @@ reportlab
 langchain
 langchain-classic
 langchain-community
-langchain-huggingface
 langchain-text-splitters
 langsmith
 rank-bm25
@@ -53,9 +53,6 @@ rank-bm25
 chromadb
 networkx>=3.3
 spacy>=3.7
-
-# LLM helpers (HF Inference client still used by optional HF code paths)
-huggingface-hub
 
 # Production
 slowapi

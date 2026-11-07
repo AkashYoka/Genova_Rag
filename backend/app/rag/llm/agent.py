@@ -153,7 +153,14 @@ def get_llm_client(llm_provider: Optional[str] = None):
             model=settings.LLM_MODEL,
         )
 
-    from huggingface_hub import InferenceClient
+    try:
+        from huggingface_hub import InferenceClient
+    except ImportError as exc:
+        raise RuntimeError(
+            "LLM_PROVIDER=huggingface requires huggingface-hub. "
+            "Install with: pip install -r backend/requirements-dev.txt "
+            "(production uses LLM_PROVIDER=bedrock)."
+        ) from exc
 
     return InferenceClient()
 
@@ -211,8 +218,15 @@ def _build_chat_llm():
             max_tokens=settings.LLM_MAX_NEW_TOKENS,
         )
 
-    from langchain_huggingface import HuggingFaceEndpoint
-    from langchain_huggingface.chat_models import ChatHuggingFace
+    try:
+        from langchain_huggingface import HuggingFaceEndpoint
+        from langchain_huggingface.chat_models import ChatHuggingFace
+    except ImportError as exc:
+        raise RuntimeError(
+            "HuggingFace LangChain packages are not installed. "
+            "Install with: pip install -r backend/requirements-dev.txt "
+            "(production uses Bedrock / Ollama direct RAG)."
+        ) from exc
 
     llm = HuggingFaceEndpoint(
         repo_id=settings.LLM_MODEL,

@@ -6,13 +6,10 @@ import ast
 import json
 import logging
 import operator as op
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Type
 
 from ddgs import DDGS
-from huggingface_hub.inference._generated.types.chat_completion import (
-    ChatCompletionInputFunctionDefinition,
-    ChatCompletionInputTool,
-)
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -20,6 +17,23 @@ from app.graph.retrieval import get_entity_context
 from app.rag.retrieval.retriever import retrieve
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ToolFunction:
+    """HF-free stand-in for ChatCompletionInputFunctionDefinition attribute shape."""
+
+    name: str
+    description: str
+    parameters: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ToolSpec:
+    """HF-free stand-in for ChatCompletionInputTool attribute shape (tests/tools)."""
+
+    function: _ToolFunction
+    type: str = "tool"
 
 # ── Math Helper ──────────────────────────────────────
 
@@ -240,10 +254,10 @@ class WebSearchTool(BaseTool):
         return web_search(query)
 
 
-# ── HuggingFace Tool Definitions ──────────────────────
+# ── Optional tool schemas (attribute-compatible with former HF types) ──
 
-CALCULATOR_TOOL = ChatCompletionInputTool(
-    function=ChatCompletionInputFunctionDefinition(
+CALCULATOR_TOOL = _ToolSpec(
+    function=_ToolFunction(
         name="calculator",
         description=(
             "Evaluate a simple arithmetic expression. "
@@ -260,11 +274,10 @@ CALCULATOR_TOOL = ChatCompletionInputTool(
             "required": ["expression"],
         },
     ),
-    type="tool",
 )
 
-WEB_SEARCH_TOOL = ChatCompletionInputTool(
-    function=ChatCompletionInputFunctionDefinition(
+WEB_SEARCH_TOOL = _ToolSpec(
+    function=_ToolFunction(
         name="web_search",
         description=(
             "Search the web using DuckDuckGo for current information not found in the uploaded documents. "
@@ -286,7 +299,6 @@ WEB_SEARCH_TOOL = ChatCompletionInputTool(
             "required": ["query"],
         },
     ),
-    type="tool",
 )
 
 TOOL_PROMPT = (
