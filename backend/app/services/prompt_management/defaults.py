@@ -207,7 +207,15 @@ def global_task_defaults() -> dict[str, tuple[str, str, str]]:
         "comparison": (
             "Multi-Document Comparison",
             "Guidance injected when answering across more than one document.",
-            fallback.MULTI_DOC_COMPARISON_GUIDANCE.strip(),
+            (
+                fallback.MULTI_DOC_COMPARISON_GUIDANCE.strip()
+                + "\n\nBased on the following document excerpts, answer the comparison "
+                "question. Attribute every fact to its source with "
+                "[Source: filename, Page X]. Do not ask for more documents — the "
+                "excerpts below are the full evidence available.\n\n"
+                "## Document Context\n\n{context}\n\n"
+                "## User Question\n\n{question}\n\n## Comparison Answer\n"
+            ),
         ),
         "summarization": (
             "Summarization",

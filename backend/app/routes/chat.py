@@ -13,6 +13,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -25,7 +26,7 @@ from app.exceptions import (
     ValidationException,
 )
 from app.metrics import record_query_response_time
-from app.models import User, ChatMessage, Document, ChatSession
+from app.models import User, ChatMessage, Document, ChatSession, ResponseFeedback
 from app.rate_limit import CHAT_QUERY_RATE_LIMIT, check_chat_ws_rate_limit, limiter
 from app.rag.utils.security import UnsafePromptError, validate_user_input
 from app.schemas import (
@@ -723,6 +724,7 @@ def generate_answer(
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
     llm_provider: Optional[str] = None,
+    session_id: Optional[str] = None,
 ):
     from app.rag.llm.agent import generate_answer as _generate_answer
 
@@ -734,6 +736,7 @@ def generate_answer(
         top_k=top_k,
         chat_history=chat_history,
         llm_provider=llm_provider,
+        session_id=session_id,
     )
 
 
@@ -745,6 +748,7 @@ def generate_answer_stream(
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
     llm_provider: Optional[str] = None,
+    session_id: Optional[str] = None,
 ):
     from app.rag.llm.agent import generate_answer_stream as _generate_answer_stream
 
@@ -756,6 +760,7 @@ def generate_answer_stream(
         top_k=top_k,
         chat_history=chat_history,
         llm_provider=llm_provider,
+        session_id=session_id,
     )
 
 
@@ -952,6 +957,7 @@ def ask_question(
             top_k=payload.top_k,
             chat_history=chat_history,
             llm_provider=payload.llm_provider,
+            session_id=str(session_id),
         )
 
         # Bind chunks retrieved to request state and context variables
@@ -1171,8 +1177,9 @@ def ask_question_stream(
             logger.debug("Returning cached stream response for question: %s", payload.question[:40])
             cached_answer = cached_payload.get("answer") or ""
             cached_sources = cached_payload.get("sources") or []
+            cached_message_id = None
             if cached_answer.strip():
-                _save_message(
+                cached_message_id = _save_message(
                     db,
                     user.id,
                     msg_doc_id,
@@ -1194,7 +1201,10 @@ def ask_question_stream(
                     if piece:
                         yield f"data: {json.dumps({'type': 'token', 'data': piece})}\n\n"
                         await asyncio.sleep(0.012)
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                done_payload = {"type": "done"}
+                if cached_message_id:
+                    done_payload["message_id"] = str(cached_message_id)
+                yield f"data: {json.dumps(done_payload)}\n\n"
 
             return StreamingResponse(
                 cached_event_stream(),
@@ -1226,6 +1236,7 @@ def ask_question_stream(
                 top_k=payload.top_k,
                 chat_history=chat_history,
                 llm_provider=payload.llm_provider,
+                session_id=str(session_id),
             ):
                 # Parse to accumulate full answer for history
                 try:
@@ -1519,6 +1530,22 @@ def clear_chat_history(
     return {"message": "Chat history cleared"}
 
 
+# Predefined reason categories accepted from the chat UI. A response can be
+# rated with a category, a free-text comment, or both.
+_FEEDBACK_REASONS = {
+    "up": {"accurate", "helpful", "clear", "well_cited", "other"},
+    "down": {
+        "inaccurate",
+        "incomplete",
+        "not_relevant",
+        "unclear",
+        "poor_citation",
+        "too_long",
+        "other",
+    },
+}
+
+
 @router.patch("/feedback/{message_id}")
 def submit_feedback(
     message_id: str,
@@ -1526,7 +1553,11 @@ def submit_feedback(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Submit thumbs up/down feedback for an assistant message."""
+    """Submit Like/Dislike feedback for one assistant response.
+
+    Stores a snapshot of the user's question and the assistant's complete
+    response alongside the rating. A response can be rated only once.
+    """
     msg = db.query(ChatMessage).filter(
         ChatMessage.id == message_id,
         ChatMessage.user_id == user.id,
@@ -1536,9 +1567,69 @@ def submit_feedback(
         raise NotFoundException("Message")
     if msg.role != "assistant":
         raise ValidationException("Can only provide feedback on assistant messages")
+    if not (msg.content or "").strip():
+        raise ValidationException("Cannot rate an empty response")
 
+    if payload.reason:
+        allowed = _FEEDBACK_REASONS[payload.feedback]
+        if payload.reason not in allowed:
+            raise ValidationException(
+                f"Unknown feedback reason '{payload.reason}'"
+            )
+
+    existing = (
+        db.query(ResponseFeedback)
+        .filter(ResponseFeedback.message_id == msg.id)
+        .first()
+    )
+    if existing:
+        raise AppException(
+            "FEEDBACK_EXISTS",
+            "Feedback has already been submitted for this response",
+            409,
+        )
+
+    # Find the user's prompt that produced this response. Prefer the same
+    # conversation so the feedback stays attached to the exact turn.
+    question_query = db.query(ChatMessage).filter(
+        ChatMessage.user_id == msg.user_id,
+        ChatMessage.role == "user",
+        ChatMessage.created_at <= msg.created_at,
+    )
+    if msg.session_id:
+        question_query = question_query.filter(
+            ChatMessage.session_id == msg.session_id
+        )
+    elif msg.document_id:
+        question_query = question_query.filter(
+            ChatMessage.document_id == msg.document_id
+        )
+    question_msg = question_query.order_by(
+        ChatMessage.created_at.desc(), ChatMessage.id.desc()
+    ).first()
+
+    feedback = ResponseFeedback(
+        user_id=msg.user_id,
+        session_id=msg.session_id,
+        message_id=msg.id,
+        question_message_id=question_msg.id if question_msg else None,
+        question=question_msg.content if question_msg else "",
+        response=msg.content or "",
+        feedback=payload.feedback,
+        reason=payload.reason,
+        comment=payload.comment,
+    )
     msg.feedback = payload.feedback
-    db.commit()
+    db.add(feedback)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise AppException(
+            "FEEDBACK_EXISTS",
+            "Feedback has already been submitted for this response",
+            409,
+        ) from exc
     db.refresh(msg)
 
     return _message_response_from_row(msg)

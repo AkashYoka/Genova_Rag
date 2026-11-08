@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Shield,
   Sparkles,
+  ThumbsUp,
   Users,
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ import { api, CONNECTION_ERROR_MESSAGE } from "@/lib/api";
 import { formatBytes, formatTime, formatUsd, isAdminUser } from "@/lib/admin";
 import { useAuth } from "@/lib/auth";
 import { RequireAuth } from "@/components/auth/RequireAuth";
+import { FeedbackManagementPanel } from "@/components/admin/FeedbackManagementPanel";
 import { PromptManagementPanel } from "@/components/admin/PromptManagementPanel";
 import {
   LedgerBarChart,
@@ -49,6 +51,7 @@ type Section =
   | "users"
   | "usage"
   | "rag"
+  | "feedback"
   | "prompts"
   | "integrations"
   | "database"
@@ -182,6 +185,7 @@ const NAV: LedgerNavItem[] = [
   { id: "users", label: "Users", icon: <Users /> },
   { id: "usage", label: "AI Usage", icon: <Sparkles /> },
   { id: "rag", label: "RAG", icon: <FileText /> },
+  { id: "feedback", label: "User Feedback", icon: <ThumbsUp /> },
   { id: "prompts", label: "Prompt Management", icon: <MessageSquareText /> },
   { id: "integrations", label: "Integrations", icon: <Network /> },
   { id: "database", label: "Database", icon: <Database /> },
@@ -297,6 +301,9 @@ function AdminPageContent() {
         }
       }       else if (section === "usage") await loadUsage();
       else if (section === "rag") await loadDocs();
+      else if (section === "feedback") {
+        /* FeedbackManagementPanel loads its own data */
+      }
       else if (section === "prompts") {
         /* PromptManagementPanel loads its own data */
       }
@@ -370,6 +377,9 @@ function AdminPageContent() {
     }
     if (section === "rag") {
       return `${docs?.total ?? "—"} indexed documents · ${failedDocs} failed`;
+    }
+    if (section === "feedback") {
+      return "Likes, dislikes, and the reasoning behind every rated response";
     }
     if (section === "prompts") {
       return "Automatic domain detection · layered Global + Domain + Task prompts";
@@ -462,9 +472,11 @@ function AdminPageContent() {
                       ? "AI usage"
                       : section === "rag"
                         ? "RAG indexing"
-                        : section === "prompts"
-                          ? "Prompt Management"
-                          : section === "integrations"
+                        : section === "feedback"
+                          ? "User feedback"
+                          : section === "prompts"
+                            ? "Prompt Management"
+                            : section === "integrations"
                             ? "Integrations"
                             : section === "database"
                               ? "Database"
@@ -1121,6 +1133,8 @@ function AdminPageContent() {
                 </LedgerPanel>
               </div>
             ) : null}
+
+            {section === "feedback" ? <FeedbackManagementPanel /> : null}
 
             {section === "prompts" ? <PromptManagementPanel /> : null}
 

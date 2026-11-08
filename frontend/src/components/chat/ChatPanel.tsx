@@ -410,6 +410,7 @@ export default function ChatPanel({
           role: string;
           content: string;
           sources?: SourceChunk[];
+          feedback?: "up" | "down" | null;
           graph?: GraphContextInfo | null;
         }>;
       }>(`/api/v1/chat/history/${documentId}`)
@@ -422,6 +423,7 @@ export default function ChatPanel({
             role: m.role as "user" | "assistant",
             content: m.content,
             sources: m.sources || [],
+            feedback: m.feedback ?? null,
             graph: m.graph ?? null,
           })),
         );

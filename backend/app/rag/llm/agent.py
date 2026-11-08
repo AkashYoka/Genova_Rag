@@ -37,6 +37,7 @@ def _resolve_runtime_prompts(
     *,
     question: str,
     user_id: str,
+    session_id: Optional[str] = None,
     document_id: Optional[str] = None,
     document_ids: Optional[List[str]] = None,
     chat_history: Optional[List[Dict[str, Any]]] = None,
@@ -66,6 +67,7 @@ def _resolve_runtime_prompts(
             question=question,
             prompt_type=task,
             user_id=user_id,
+            session_id=session_id,
             document_ids=attach_ids,
             retrieved_context=retrieved_context,
             chat_history=chat_history,
@@ -967,6 +969,7 @@ def _generate_answer_direct(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     llm_provider: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Retrieve-then-generate (non-streaming) for Ollama or Bedrock.
 
@@ -1005,6 +1008,37 @@ def _generate_answer_direct(
         return special
 
     attach_ids = _unique_document_ids(document_ids)
+
+    # No documents attached: do not search the whole user corpus (that pollutes
+    # domain detection and leaks unrelated chunks). Prefer session memory, else
+    # refuse with the standard insufficient-info message after logging General.
+    if not has_attach:
+        _resolve_runtime_prompts(
+            question=question,
+            user_id=user_id,
+            document_id=None,
+            document_ids=[],
+            chat_history=chat_history,
+            retrieved_context=None,
+            llm_provider=llm_provider,
+            prompt_type="rag",
+            session_id=session_id,
+        )
+        if chat_history:
+            return _chat_memory_answer(
+                question,
+                chat_history,
+                llm_provider=llm_provider,
+                prior_sources=_prior_sources_from_history(chat_history),
+            )
+        return {
+            "answer": (
+                "I couldn't find sufficient information in the uploaded documents "
+                "to answer this question."
+            ),
+            "sources": [],
+        }
+
     graph_evidence = _collect_graph_evidence(question, user_id, document_id, document_ids)
     graph_info = _graph_payload(graph_evidence)
     graph_block = f"\n\n{graph_evidence.context}" if graph_evidence else ""
@@ -1060,6 +1094,7 @@ def _generate_answer_direct(
         retrieved_context=context[:2000] if context else None,
         llm_provider=llm_provider,
         prompt_type="rag",
+        session_id=session_id,
     )
     user_prompt = resolved.format_task(context=context, question=question)
     history = _format_chat_history(chat_history) if chat_history else ""
@@ -1099,6 +1134,7 @@ def _generate_answer_stream_direct(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     llm_provider: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Generator[str, None, None]:
     """Streaming twin of ``_generate_answer_direct`` (SSE lines for WS/HTTP stream).
 
@@ -1139,6 +1175,42 @@ def _generate_answer_stream_direct(
 
     yield f"data: {json.dumps({'type': 'status', 'data': 'retrieving'})}\n\n"
     attach_ids = _unique_document_ids(document_ids)
+
+    if not has_attach:
+        _resolve_runtime_prompts(
+            question=question,
+            user_id=user_id,
+            document_id=None,
+            document_ids=[],
+            chat_history=chat_history,
+            retrieved_context=None,
+            llm_provider=llm_provider,
+            prompt_type="rag",
+            session_id=session_id,
+        )
+        if chat_history:
+            result = _chat_memory_answer(
+                question,
+                chat_history,
+                llm_provider=llm_provider,
+                prior_sources=_prior_sources_from_history(chat_history),
+            )
+            yield f"data: {json.dumps({'type': 'sources', 'data': result.get('sources') or []})}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer') or ''})}\n\n"
+            usage = result.get("usage")
+            if isinstance(usage, dict) and usage:
+                yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+        msg = (
+            "I couldn't find sufficient information in the uploaded documents "
+            "to answer this question."
+        )
+        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
+        yield f"data: {json.dumps({'type': 'token', 'data': msg})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
     graph_evidence = _collect_graph_evidence(question, user_id, document_id, document_ids)
     graph_info = _graph_payload(graph_evidence)
     graph_block = f"\n\n{graph_evidence.context}" if graph_evidence else ""
@@ -1204,6 +1276,7 @@ def _generate_answer_stream_direct(
         retrieved_context=context[:2000] if context else None,
         llm_provider=llm_provider,
         prompt_type="rag",
+        session_id=session_id,
     )
     user_prompt = resolved.format_task(context=context, question=question)
     history = _format_chat_history(chat_history) if chat_history else ""
@@ -1256,6 +1329,7 @@ def generate_answer(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     llm_provider: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Public non-streaming entry used by ``/chat/ask``.
 
@@ -1285,6 +1359,18 @@ def generate_answer(
         from app.rag.utils.quiz import generate_quiz_response
 
         try:
+            # Still resolve/log domain + prompt selection for observability.
+            _resolve_runtime_prompts(
+                question=question,
+                user_id=user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+                chat_history=chat_history,
+                retrieved_context=None,
+                llm_provider=provider,
+                prompt_type="rag",
+                session_id=session_id,
+            )
             return generate_quiz_response(
                 question,
                 user_id,
@@ -1324,6 +1410,7 @@ def generate_answer(
                 top_k,
                 chat_history,
                 llm_provider=provider,
+                session_id=session_id,
             )
         except Exception as e:
             logger.error("%s direct RAG error: %s", label, e)
@@ -1386,6 +1473,7 @@ def generate_answer_stream(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     llm_provider: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Generator[str, None, None]:
     """Public streaming entry for WebSocket ``/chat/ws`` and ``POST /chat/ask/stream``.
 
@@ -1409,6 +1497,17 @@ def generate_answer_stream(
         from app.rag.utils.quiz import generate_quiz_stream
 
         try:
+            _resolve_runtime_prompts(
+                question=question,
+                user_id=user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+                chat_history=chat_history,
+                retrieved_context=None,
+                llm_provider=provider,
+                prompt_type="rag",
+                session_id=session_id,
+            )
             yield from generate_quiz_stream(
                 question,
                 user_id,
@@ -1453,6 +1552,7 @@ def generate_answer_stream(
             top_k,
             chat_history,
             llm_provider=provider,
+            session_id=session_id,
         )
         return
 

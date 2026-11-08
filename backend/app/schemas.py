@@ -489,7 +489,19 @@ class ChatResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    feedback: Optional[str] = Field(None, pattern="^(up|down)?$")
+    """Thumbs up/down plus the user's reason and optional comment."""
+
+    feedback: str = Field(..., pattern="^(up|down)$")
+    reason: Optional[str] = Field(None, max_length=64)
+    comment: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("reason", "comment")
+    @classmethod
+    def _blank_to_none(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
 
 
 class AttachedDocument(BaseModel):
@@ -533,9 +545,6 @@ class ChunkSettings(BaseModel):
 
 class UploadUrl(BaseModel):
     url: str
-
-class FeedbackRequest(BaseModel):
-    feedback: Optional[str] = Field(None, pattern="^(up|down)?$")
 
 
 # ── Chat Session ──────────────────────────────────────
@@ -771,6 +780,38 @@ class AdminApiKeySummaryResponse(BaseModel):
     total_keys: int = 0
     active_keys: int = 0
     by_user: List[AdminApiKeyUserSummary] = []
+
+
+class AdminFeedbackItem(BaseModel):
+    id: str
+    user_id: str
+    username: Optional[str] = None
+    email: Optional[str] = None
+    question: str
+    response: str
+    feedback: str
+    reason: Optional[str] = None
+    comment: Optional[str] = None
+    session_id: Optional[str] = None
+    message_id: str
+    question_message_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class AdminFeedbackSummary(BaseModel):
+    total: int = 0
+    likes: int = 0
+    dislikes: int = 0
+    satisfaction_percentage: float = 0.0
+
+
+class AdminFeedbackResponse(BaseModel):
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+    pages: int = 0
+    summary: AdminFeedbackSummary = Field(default_factory=AdminFeedbackSummary)
+    items: List[AdminFeedbackItem] = Field(default_factory=list)
 
 
 # ── Dynamic Prompt Management ─────────────────────────

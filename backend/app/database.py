@@ -472,6 +472,52 @@ def _migrate_schema():
                         "Migration failed for %s.%s: %s", table, column, exc
                     )
 
+    # ── Response feedback table ────────────────────────────────────────────
+    existing_tables = set(inspector.get_table_names())
+    if "response_feedback" not in existing_tables:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"""
+                    CREATE TABLE response_feedback (
+                        id                  CHAR(36)        PRIMARY KEY,
+                        user_id             CHAR(36)        NOT NULL,
+                        session_id          CHAR(36),
+                        message_id          CHAR(36)        NOT NULL,
+                        question_message_id CHAR(36),
+                        question            {text_type}     NOT NULL,
+                        response            {text_type}     NOT NULL,
+                        feedback            VARCHAR(10)     NOT NULL,
+                        reason              VARCHAR(64),
+                        comment             {text_type},
+                        created_at          {timestamp_type} NOT NULL,
+                        updated_at          {timestamp_type},
+                        CONSTRAINT uq_response_feedback_message UNIQUE (message_id),
+                        CONSTRAINT fk_response_feedback_user
+                            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+                        CONSTRAINT fk_response_feedback_session
+                            FOREIGN KEY (session_id) REFERENCES chat_sessions (id) ON DELETE CASCADE,
+                        CONSTRAINT fk_response_feedback_message
+                            FOREIGN KEY (message_id) REFERENCES chat_messages (id) ON DELETE CASCADE,
+                        CONSTRAINT fk_response_feedback_question
+                            FOREIGN KEY (question_message_id) REFERENCES chat_messages (id) ON DELETE SET NULL
+                    )
+                """))
+            _ensure_index(
+                "response_feedback", "ix_response_feedback_user_id", "user_id"
+            )
+            _ensure_index(
+                "response_feedback", "ix_response_feedback_session_id", "session_id"
+            )
+            _ensure_index(
+                "response_feedback", "ix_response_feedback_feedback", "feedback"
+            )
+            _ensure_index(
+                "response_feedback", "ix_response_feedback_created_at", "created_at"
+            )
+            logger.info("Migration: created table response_feedback")
+        except Exception as exc:
+            logger.warning("Migration skipped response_feedback: %s", exc)
+
 
 def advisory_lock(lock_id: int, timeout_seconds: int = 30):
     """Context manager that acquires a cross-process advisory lock.

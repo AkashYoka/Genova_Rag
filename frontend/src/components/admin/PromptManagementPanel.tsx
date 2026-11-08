@@ -628,18 +628,16 @@ export function PromptManagementPanel() {
               <div className="flex gap-2 rounded-[8px] border border-[var(--gd-border)] p-1">
                 <button
                   type="button"
-                  className={`flex-1 rounded-[6px] px-3 py-1.5 text-[13px] ${
-                    !advanced ? "bg-[var(--gd-surface-2)] font-medium" : ""
-                  }`}
+                  className={`flex-1 rounded-[6px] px-3 py-1.5 text-[13px] ${!advanced ? "bg-[var(--gd-surface-2)] font-medium" : ""
+                    }`}
                   onClick={() => setAdvanced(false)}
                 >
                   Simple
                 </button>
                 <button
                   type="button"
-                  className={`flex-1 rounded-[6px] px-3 py-1.5 text-[13px] ${
-                    advanced ? "bg-[var(--gd-surface-2)] font-medium" : ""
-                  }`}
+                  className={`flex-1 rounded-[6px] px-3 py-1.5 text-[13px] ${advanced ? "bg-[var(--gd-surface-2)] font-medium" : ""
+                    }`}
                   onClick={() => setAdvanced(true)}
                 >
                   Advanced

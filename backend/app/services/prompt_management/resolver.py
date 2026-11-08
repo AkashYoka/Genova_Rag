@@ -136,12 +136,13 @@ def resolve_prompts(
         system_parts.append(_fallback_content("system"))
     if domain_overlay and domain_overlay.content.strip():
         system_parts.append(domain_overlay.content.strip())
-    # Mixed-domain hint when secondary domains reported with decent confidence.
-    if detection.secondary_domains and detection.confidence < 0.85:
+    # Mixed-domain hint whenever secondary domains were detected.
+    if detection.secondary_domains:
         system_parts.append(
             "MIXED-DOMAIN NOTE: Secondary signals were "
             + ", ".join(detection.secondary_domains)
-            + ". Prefer evidence from the retrieved context; do not force a single-domain framing."
+            + ". Cover facts from each relevant domain using the retrieved context; "
+            "do not drop a clearly referenced second domain."
         )
 
     task_content = task_tpl.content if task_tpl else _fallback_content(task)

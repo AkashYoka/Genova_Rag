@@ -10,6 +10,10 @@ import {
   Pause,
   GitBranch,
   StickyNote,
+  ThumbsUp,
+  ThumbsDown,
+  Loader2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
@@ -18,6 +22,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 import { useSettingsStore } from "@/store/settings-store";
@@ -29,6 +34,36 @@ import { prepareMarkdownForMath } from "@/lib/math-markdown";
 const subscribe = () => () => {};
 const getSnapshot = () => true;
 const getServerSnapshot = () => false;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Feedback needs the persisted assistant message id (not a local placeholder). */
+function isPersistedMessageId(id: string): boolean {
+  return UUID_RE.test(id);
+}
+
+const FEEDBACK_REASONS: Record<
+  "up" | "down",
+  Array<{ id: string; label: string }>
+> = {
+  up: [
+    { id: "accurate", label: "Accurate" },
+    { id: "helpful", label: "Helpful" },
+    { id: "clear", label: "Clear" },
+    { id: "well_cited", label: "Well cited" },
+    { id: "other", label: "Other" },
+  ],
+  down: [
+    { id: "inaccurate", label: "Inaccurate" },
+    { id: "incomplete", label: "Incomplete" },
+    { id: "not_relevant", label: "Not relevant" },
+    { id: "unclear", label: "Unclear" },
+    { id: "poor_citation", label: "Poor citations" },
+    { id: "too_long", label: "Too long" },
+    { id: "other", label: "Other" },
+  ],
+};
 
 /** Local client ids look like `user-1712345678901`; API history ids are UUIDs. */
 function timestampFromMessageId(id: string): Date | null {
@@ -49,6 +84,11 @@ export default function MessageBubble({ message }: Props) {
   const messageTime = timestampFromMessageId(message.id);
   const [copied, setCopied] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<"up" | "down">("up");
+  const [feedbackReason, setFeedbackReason] = useState("");
+  const [feedbackComment, setFeedbackComment] = useState("");
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
@@ -62,6 +102,7 @@ export default function MessageBubble({ message }: Props) {
   }, []);
 
   const setCurrentBranchId = useChatStore((s) => s.setCurrentBranchId);
+  const setMessages = useChatStore((s) => s.setMessages);
   const appendMessage = useNotesStore((s) => s.appendMessage);
   const openNotes = useNotesStore((s) => s.openNotes);
 
@@ -140,6 +181,55 @@ export default function MessageBubble({ message }: Props) {
     buttonVariants({ variant: "ghost", size: "icon-xs" }),
     "h-7 w-7 rounded-md text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
   );
+
+  const showFeedbackControls =
+    !isUser &&
+    !message.isStreaming &&
+    Boolean(message.content) &&
+    (isPersistedMessageId(message.id) || Boolean(message.feedback));
+
+  const openFeedback = (type: "up" | "down") => {
+    if (message.feedback) return;
+    setFeedbackType(type);
+    setFeedbackReason("");
+    setFeedbackComment("");
+    setFeedbackOpen(true);
+  };
+
+  const submitFeedback = async () => {
+    if (message.feedback || feedbackSubmitting) return;
+    if (feedbackType === "down" && !feedbackReason) {
+      toast.error("Choose a reason before submitting feedback.");
+      return;
+    }
+    setFeedbackSubmitting(true);
+    try {
+      await api.patch(
+        `/api/v1/chat/feedback/${encodeURIComponent(message.id)}`,
+        {
+          feedback: feedbackType,
+          reason: feedbackReason || null,
+          comment: feedbackComment.trim() || null,
+        },
+      );
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === message.id ? { ...m, feedback: feedbackType } : m,
+        ),
+      );
+      setFeedbackOpen(false);
+      toast.success("Thanks — your feedback was saved.");
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "";
+      toast.error(
+        /already|exists|submitted/i.test(detail)
+          ? "You already submitted feedback for this response."
+          : detail || "Could not save feedback",
+      );
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
 
   return (
     <div
@@ -292,8 +382,163 @@ export default function MessageBubble({ message }: Props) {
                     <TooltipContent>Add to notes</TooltipContent>
                   </Tooltip>
                 )}
+
+                {showFeedbackControls && (
+                  <>
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        className={cn(
+                          actionBtn,
+                          message.feedback === "up" &&
+                            "bg-[var(--gd-accent-soft)] text-[var(--gd-accent)]",
+                        )}
+                        onClick={() => openFeedback("up")}
+                        disabled={
+                          Boolean(message.feedback) || feedbackSubmitting
+                        }
+                        aria-label="Like response"
+                        aria-pressed={message.feedback === "up"}
+                      >
+                        <ThumbsUp className="w-3.5 h-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {message.feedback === "up" ? "Liked" : "Like response"}
+                      </TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                      <TooltipTrigger
+                        type="button"
+                        className={cn(
+                          actionBtn,
+                          message.feedback === "down" &&
+                            "bg-[var(--gd-negative)]/10 text-[var(--gd-negative)]",
+                        )}
+                        onClick={() => openFeedback("down")}
+                        disabled={
+                          Boolean(message.feedback) || feedbackSubmitting
+                        }
+                        aria-label="Dislike response"
+                        aria-pressed={message.feedback === "down"}
+                      >
+                        <ThumbsDown className="w-3.5 h-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {message.feedback === "down"
+                          ? "Disliked"
+                          : "Dislike response"}
+                      </TooltipContent>
+                    </Tooltip>
+
+                    {message.feedback ? (
+                      <span className="ml-1 inline-flex items-center gap-1 text-[11px] text-[var(--gd-muted)]">
+                        <Check className="h-3 w-3 text-[var(--gd-positive)]" />
+                        Feedback saved
+                      </span>
+                    ) : null}
+                  </>
+                )}
               </div>
             )}
+
+            {feedbackOpen && !message.feedback ? (
+              <div className="mt-2 rounded-[10px] border border-[var(--gd-border)] bg-[var(--gd-surface)] p-3">
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[13px] font-medium">
+                      {feedbackType === "up"
+                        ? "What did you like about this response?"
+                        : "What went wrong with this response?"}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-[var(--gd-muted)]">
+                      {feedbackType === "up"
+                        ? "Pick a reason or add a note — both are optional."
+                        : "Choose a reason so we can improve. A note is optional."}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFeedbackOpen(false)}
+                    aria-label="Close feedback"
+                    className="rounded p-0.5 text-[var(--gd-muted)] transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div
+                  className="mb-2 flex flex-wrap gap-1.5"
+                  role="group"
+                  aria-label="Feedback reason"
+                >
+                  {FEEDBACK_REASONS[feedbackType].map((reason) => (
+                    <button
+                      key={reason.id}
+                      type="button"
+                      aria-pressed={feedbackReason === reason.id}
+                      onClick={() =>
+                        setFeedbackReason((current) =>
+                          current === reason.id ? "" : reason.id,
+                        )
+                      }
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-[12px] transition-colors",
+                        feedbackReason === reason.id
+                          ? "border-[var(--gd-accent)] bg-[var(--gd-accent-soft)] text-[var(--gd-accent)]"
+                          : "border-[var(--gd-border)] text-[var(--gd-muted)] hover:border-[var(--gd-accent)]/40 hover:text-[var(--gd-text)]",
+                      )}
+                    >
+                      {reason.label}
+                    </button>
+                  ))}
+                </div>
+
+                <textarea
+                  className="min-h-[64px] w-full resize-y rounded-[8px] border border-[var(--gd-border)] bg-transparent p-2 text-[13px] leading-relaxed outline-none focus:border-[var(--gd-accent)]"
+                  maxLength={2000}
+                  value={feedbackComment}
+                  onChange={(e) => setFeedbackComment(e.target.value)}
+                  placeholder={
+                    feedbackType === "up"
+                      ? "What worked well? (optional)"
+                      : "Tell us more (optional)"
+                  }
+                />
+
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] text-[var(--gd-muted)]">
+                    {feedbackType === "down" && !feedbackReason
+                      ? "A reason is required for dislikes."
+                      : `${feedbackComment.length}/2000`}
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFeedbackOpen(false)}
+                      disabled={feedbackSubmitting}
+                      className="h-7 rounded-md px-2 text-[12px] text-[var(--gd-muted)] transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void submitFeedback()}
+                      disabled={
+                        feedbackSubmitting ||
+                        (feedbackType === "down" && !feedbackReason)
+                      }
+                      className="inline-flex h-7 items-center gap-1.5 rounded-md bg-[var(--gd-primary)] px-2.5 text-[12px] font-medium text-[var(--gd-primary-ink)] transition-opacity disabled:opacity-50"
+                    >
+                      {feedbackSubmitting ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      Submit
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {(messageTime ||
               message.usage ||

@@ -3,12 +3,12 @@ Admin-only operational statistics and database maintenance routes.
 """
 import json
 import shutil
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, text, inspect
+from sqlalchemy import func, or_, text, inspect
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_admin
@@ -23,8 +23,12 @@ from app.models import (
     User,
     Workspace,
     WorkspaceMember,
+    ResponseFeedback,
 )
 from app.schemas import (
+    AdminFeedbackItem,
+    AdminFeedbackResponse,
+    AdminFeedbackSummary,
     AdminApiKeySummaryResponse,
     AdminDocumentItem,
     AdminDocumentsResponse,
@@ -459,3 +463,126 @@ def admin_api_keys_summary(
         "active_keys": int(active),
         "by_user": by_user,
     }
+
+
+def _parse_feedback_bound(value: Optional[str], *, end_of_day: bool) -> Optional[datetime]:
+    """Parse a YYYY-MM-DD or ISO-8601 bound into an aware UTC datetime."""
+    if not value or not value.strip():
+        return None
+    cleaned = value.strip()
+    try:
+        if len(cleaned) == 10:
+            day = date.fromisoformat(cleaned)
+            parsed = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+            if end_of_day:
+                parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
+            return parsed
+        parsed = datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date. Use YYYY-MM-DD or an ISO-8601 timestamp.",
+        ) from exc
+
+
+@router.get(
+    "/feedback",
+    response_model=AdminFeedbackResponse,
+    summary="List user response feedback",
+    description=(
+        "Returns Like/Dislike ratings with the exact question and response, "
+        "filterable by type, user/question/response text, and date range."
+    ),
+)
+def admin_list_feedback(
+    feedback: Optional[str] = Query(None, pattern="^(up|down)$"),
+    search: Optional[str] = Query(None, max_length=200),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(get_current_admin),
+):
+    """Admin-only feedback ledger with summary, filters, and pagination."""
+    query = db.query(ResponseFeedback, User).outerjoin(
+        User, ResponseFeedback.user_id == User.id
+    )
+
+    if feedback:
+        query = query.filter(ResponseFeedback.feedback == feedback)
+
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                User.username.ilike(like),
+                User.email.ilike(like),
+                ResponseFeedback.question.ilike(like),
+                ResponseFeedback.response.ilike(like),
+            )
+        )
+
+    start_dt = _parse_feedback_bound(start, end_of_day=False)
+    end_dt = _parse_feedback_bound(end, end_of_day=True)
+    if start_dt:
+        query = query.filter(ResponseFeedback.created_at >= start_dt)
+    if end_dt:
+        query = query.filter(ResponseFeedback.created_at <= end_dt)
+
+    total = query.count()
+    rows = (
+        query.order_by(ResponseFeedback.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    # Summary reflects all feedback, not just the current filter/page.
+    counts = dict(
+        db.query(ResponseFeedback.feedback, func.count(ResponseFeedback.id))
+        .group_by(ResponseFeedback.feedback)
+        .all()
+    )
+    likes = int(counts.get("up", 0))
+    dislikes = int(counts.get("down", 0))
+    rated = likes + dislikes
+    satisfaction = round((likes / rated) * 100, 1) if rated else 0.0
+
+    items = [
+        AdminFeedbackItem(
+            id=str(row.id),
+            user_id=str(row.user_id),
+            username=user.username if user else None,
+            email=user.email if user else None,
+            question=row.question or "",
+            response=row.response or "",
+            feedback=row.feedback,
+            reason=row.reason,
+            comment=row.comment,
+            session_id=str(row.session_id) if row.session_id else None,
+            message_id=str(row.message_id),
+            question_message_id=(
+                str(row.question_message_id) if row.question_message_id else None
+            ),
+            created_at=row.created_at,
+        )
+        for row, user in rows
+    ]
+
+    return AdminFeedbackResponse(
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=(total + page_size - 1) // page_size,
+        summary=AdminFeedbackSummary(
+            total=rated,
+            likes=likes,
+            dislikes=dislikes,
+            satisfaction_percentage=satisfaction,
+        ),
+        items=items,
+    )

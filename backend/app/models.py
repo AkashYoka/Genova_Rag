@@ -434,6 +434,70 @@ class ChatMessage(Base):
     session = relationship("ChatSession", back_populates="messages")
 
 
+class ResponseFeedback(Base):
+    """A user's rating of one assistant response, with full context.
+
+    One row per rated response. ``question`` and ``response`` are snapshots so
+    an admin can review exactly what the user saw even if history is edited
+    or deleted later; the message/session ids keep it traceable.
+    """
+
+    __tablename__ = "response_feedback"
+    __table_args__ = (
+        UniqueConstraint(
+            "message_id",
+            name="uq_response_feedback_message",
+        ),
+        Index(
+            "ix_response_feedback_created_feedback",
+            "created_at",
+            "feedback",
+        ),
+    )
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        GUID,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    session_id = Column(
+        GUID,
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    message_id = Column(
+        GUID,
+        ForeignKey("chat_messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    question_message_id = Column(
+        GUID,
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    question = Column(LongText, nullable=False)
+    response = Column(LongText, nullable=False)
+    feedback = Column(String(10), nullable=False, index=True)  # "up" | "down"
+    reason = Column(String(64), nullable=True)
+    comment = Column(LongText, nullable=True)
+    created_at = Column(
+        Timestamp,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+    updated_at = Column(
+        Timestamp,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class LLMUsage(Base):
     """Per-request AI usage ledger for authenticated users.
 
