@@ -32,7 +32,8 @@ x-backend-environment: &backend-environment
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
   CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/2}
-  LLM_PROVIDER: ${LLM_PROVIDER:-bedrock}
+  LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+  LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
   EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
   OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
   EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}

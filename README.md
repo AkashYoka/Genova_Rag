@@ -190,6 +190,7 @@ Genova_Rag/
 ### Prerequisites
 
 - Python **3.11+**
+- [uv](https://docs.astral.sh/uv/) (fast installer; keeps using `requirements.txt`)
 - Node.js **20+**
 - [Ollama](https://ollama.com/) with:
 
@@ -198,13 +199,20 @@ ollama pull qwen2.5:3b
 ollama pull nomic-embed-text
 ```
 
+Install uv (Windows PowerShell):
+
+```powershell
+irm https://astral.sh/uv/install.ps1 | iex
+```
+
 ### Backend
 
 ```powershell
 cd backend
-python -m venv .venv
+uv venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+uv pip install -r requirements.txt
+# Optional eval/HF extras: uv pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 7860
 ```
 
@@ -235,10 +243,10 @@ Copy [`.env.example`](.env.example) only if you want file-based config. **Do not
 
 ### Docker (optional)
 
+Requires a `.env` with at least `SECRET_KEY`, `FIELD_ENCRYPTION_KEY`, and `DATABASE_URL` (see `.env.example`).
+
 ```bash
-docker compose --profile cpu up --build
-# GPU: docker compose --profile gpu up --build
-# Adminer: add --profile debug  → http://localhost:5050
+docker compose up --build
 ```
 
 ---

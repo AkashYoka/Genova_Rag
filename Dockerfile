@@ -5,8 +5,14 @@
 # --------------------------------------------------------
 FROM python:3.11-slim AS python-builder
 
+# uv is builder-only (not copied into the runtime image)
+COPY --from=ghcr.io/astral-sh/uv:0.8.15 /uv /usr/local/bin/uv
+
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+# Copy into venv instead of hardlinking (safer across Docker layers)
+ENV UV_LINK_MODE=copy
+ENV UV_COMPILE_BYTECODE=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -17,13 +23,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-RUN python -m venv "$VIRTUAL_ENV"
+# Same path convention as before (/opt/venv)
+RUN uv venv "$VIRTUAL_ENV"
 
+# requirements.txt first for layer cache when app code changes
 COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt && \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install -r requirements.txt && \
     python -m spacy download en_core_web_sm && \
-    pip cache purge && \
     find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + && \
     find /opt/venv -type f -name "*.pyc" -delete
 

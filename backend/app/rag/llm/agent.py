@@ -146,11 +146,12 @@ def get_llm_client(llm_provider: Optional[str] = None):
             check_ollama_reachable,
         )
 
+        ollama_model = llm_model_for_provider("ollama")
         check_ollama_reachable(settings.OLLAMA_BASE_URL)
-        check_ollama_model(settings.OLLAMA_BASE_URL, settings.LLM_MODEL)
+        check_ollama_model(settings.OLLAMA_BASE_URL, ollama_model)
         return OllamaChatClient(
             base_url=settings.OLLAMA_BASE_URL,
-            model=settings.LLM_MODEL,
+            model=ollama_model,
         )
 
     try:

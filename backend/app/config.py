@@ -297,13 +297,20 @@ class Settings(BaseSettings):
                     self, "CHROMA_PERSIST_DIR", "./data/chroma_db_ollama_nomic"
                 )
         
-        if self.LLM_PROVIDER == "ollama":
-            if "LLM_MODEL" not in os.environ and "/" in self.LLM_MODEL:
+        # LLM_MODEL is always the Ollama chat model (default qwen2.5:3b).
+        # Bedrock uses BEDROCK_MODEL_ID via llm_model_for_provider() so the
+        # frontend can switch Ollama <-> Nova without poisoning Ollama's model id.
+        if "LLM_MODEL" not in os.environ:
+            model = (self.LLM_MODEL or "").strip()
+            looks_like_bedrock = (
+                model == (self.BEDROCK_MODEL_ID or "").strip()
+                or model.startswith("us.")
+                or model.startswith("amazon.")
+                or "nova" in model.lower()
+                or ("/" in model and not model.startswith("qwen"))
+            )
+            if not model or looks_like_bedrock:
                 object.__setattr__(self, "LLM_MODEL", "qwen2.5:3b")
-        
-        elif self.LLM_PROVIDER == "bedrock":
-            if "LLM_MODEL" not in os.environ:
-                object.__setattr__(self, "LLM_MODEL", self.BEDROCK_MODEL_ID)
 
         return self
 
