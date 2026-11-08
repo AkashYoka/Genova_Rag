@@ -31,6 +31,69 @@ from app.rag.prompts.prompts import (
     RAG_PROMPT_TEMPLATE,
     SYSTEM_PROMPT,
 )
+
+
+def _resolve_runtime_prompts(
+    *,
+    question: str,
+    user_id: str,
+    document_id: Optional[str] = None,
+    document_ids: Optional[List[str]] = None,
+    chat_history: Optional[List[Dict[str, Any]]] = None,
+    retrieved_context: Optional[str] = None,
+    llm_provider: Optional[str] = None,
+    prompt_type: str = "rag",
+):
+    """Assemble Global Base + Domain Overlay + Task prompt from DB.
+
+    Falls back to hardcoded ``prompts.py`` constants if resolution fails.
+    """
+    from app.database import SessionLocal
+    from app.services.prompt_management.resolver import (
+        ResolvedPrompts,
+        infer_task_type,
+        resolve_prompts,
+    )
+
+    attach_ids = _unique_document_ids(document_ids)
+    if document_id and document_id not in attach_ids:
+        attach_ids = [document_id, *attach_ids]
+    task = prompt_type if prompt_type != "rag" else infer_task_type(question, "rag")
+    db = SessionLocal()
+    try:
+        resolved = resolve_prompts(
+            db,
+            question=question,
+            prompt_type=task,
+            user_id=user_id,
+            document_ids=attach_ids,
+            retrieved_context=retrieved_context,
+            chat_history=chat_history,
+            llm_provider=llm_provider,
+            persist_execution=True,
+        )
+        db.commit()
+        return resolved
+    except Exception as exc:
+        logger.warning("Dynamic prompt resolution failed; using static prompts: %s", exc)
+        db.rollback()
+        return ResolvedPrompts(
+            domain="general",
+            confidence=0.0,
+            was_fallback=True,
+            system_prompt=SYSTEM_PROMPT,
+            task_prompt=(
+                GREETING_PROMPT
+                if task == "greeting"
+                else AGENT_SYSTEM_PROMPT
+                if task == "agent"
+                else RAG_PROMPT_TEMPLATE
+            ),
+            prompt_type=task,
+            rationale=f"static fallback: {exc}",
+        )
+    finally:
+        db.close()
 from app.exceptions import ExternalServiceException
 from app.rag.utils.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
 from app.rag.utils.tools import PDFSearchTool, MathTool, WebSearchTool
@@ -262,8 +325,27 @@ def get_agent_executor(
 
     chat_llm = _build_chat_llm()
 
-    # Setup Agent
-    agent_prompt_text = AGENT_SYSTEM_PROMPT
+    # Setup Agent — prefer DB agent template + domain overlay
+    try:
+        resolved = _resolve_runtime_prompts(
+            question="agent_setup",
+            user_id=user_id,
+            document_id=document_id,
+            document_ids=document_ids,
+            chat_history=chat_history,
+            prompt_type="agent",
+        )
+        agent_prompt_text = resolved.task_prompt or AGENT_SYSTEM_PROMPT
+        for block in (resolved.system_prompt or "").split("\n\n"):
+            if block.strip().startswith("DOMAIN FOCUS"):
+                agent_prompt_text = agent_prompt_text.replace(
+                    "Begin!",
+                    block.strip() + "\n\nBegin!",
+                    1,
+                )
+                break
+    except Exception:
+        agent_prompt_text = AGENT_SYSTEM_PROMPT
     if document_ids and len(document_ids) > 1:
         agent_prompt_text = agent_prompt_text.replace(
             "Begin!",
@@ -969,7 +1051,17 @@ def _generate_answer_direct(
         context = f"{context}{graph_block}"
         sources = _merge_sources(sources, graph_evidence.sources)
 
-    user_prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)
+    resolved = _resolve_runtime_prompts(
+        question=question,
+        user_id=user_id,
+        document_id=document_id,
+        document_ids=document_ids,
+        chat_history=chat_history,
+        retrieved_context=context[:2000] if context else None,
+        llm_provider=llm_provider,
+        prompt_type="rag",
+    )
+    user_prompt = resolved.format_task(context=context, question=question)
     history = _format_chat_history(chat_history) if chat_history else ""
     if history:
         user_prompt = f"{history}\n\n{user_prompt}"
@@ -978,7 +1070,7 @@ def _generate_answer_direct(
     client = get_llm_client(llm_provider=provider)
     response = client.chat_completion(
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": resolved.system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         model=llm_model_for_provider(provider),
@@ -1103,7 +1195,17 @@ def _generate_answer_stream_direct(
         sources = _merge_sources(sources, graph_evidence.sources)
 
     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
-    user_prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)
+    resolved = _resolve_runtime_prompts(
+        question=question,
+        user_id=user_id,
+        document_id=document_id,
+        document_ids=document_ids,
+        chat_history=chat_history,
+        retrieved_context=context[:2000] if context else None,
+        llm_provider=llm_provider,
+        prompt_type="rag",
+    )
+    user_prompt = resolved.format_task(context=context, question=question)
     history = _format_chat_history(chat_history) if chat_history else ""
     if history:
         user_prompt = f"{history}\n\n{user_prompt}"
@@ -1114,7 +1216,7 @@ def _generate_answer_stream_direct(
         client = get_llm_client(llm_provider=provider)
         stream = client.chat_completion(
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": resolved.system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             model=llm_model_for_provider(provider),

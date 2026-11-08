@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 import httpx
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet

@@ -108,53 +108,66 @@ def test_pdf_table_detection_separates_table_from_paragraph(monkeypatch):
     assert "| Alpha | $10 |" in chunks[1]["text"]
 
 
-def test_unstructured_table_detection(monkeypatch):
-    # Create fake Unstructured Table and Text element classes
-    class FakeTableClass:
-        pass
+def test_camelot_primary_tables_dedupe_pdfplumber(monkeypatch):
+    """Camelot wins over overlapping pdfplumber tables; metadata is preserved."""
 
-    class FakeTable(FakeTableClass):
-        def __init__(self):
-            self.rows = [["Name", "Amount"], ["Delta", "$40"]]
-            self.page_number = 3
+    class FakeTable:
+        bbox = (40, 90, 300, 160)
 
-    class FakeText:
-        def __init__(self):
-            self.text = "Intro paragraph"
-            self.page_number = 3
+        def extract(self):
+            return [["Name", "Amount"], ["Alpha", "$10"]]
 
-    def fake_partition_pdf(filename):
-        return [FakeText(), FakeTable()]
+    class FakePage:
+        width = 400
+        height = 200
 
-    # Insert fake unstructured modules
-    monkeypatch.setitem(sys.modules, "unstructured", types.SimpleNamespace())
-    monkeypatch.setitem(sys.modules, "unstructured.partition", types.SimpleNamespace())
-    monkeypatch.setitem(
-        sys.modules,
-        "unstructured.partition.pdf",
-        types.SimpleNamespace(partition_pdf=fake_partition_pdf),
-    )
-    monkeypatch.setitem(sys.modules, "unstructured.documents", types.SimpleNamespace())
-    monkeypatch.setitem(
-        sys.modules,
-        "unstructured.documents.elements",
-        types.SimpleNamespace(Table=FakeTableClass),
-    )
+        def find_tables(self):
+            return [FakeTable()]
 
+        def extract_words(self):
+            return [
+                {"text": "Intro", "x0": 40, "x1": 70, "top": 20, "bottom": 30},
+                {"text": "paragraph", "x0": 75, "x1": 140, "top": 20, "bottom": 30},
+            ]
+
+    class FakePdf:
+        pages = [FakePage()]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    fake_pdfplumber = types.SimpleNamespace(open=lambda _filepath: FakePdf())
+    monkeypatch.setitem(sys.modules, "pdfplumber", fake_pdfplumber)
     monkeypatch.setattr(chunker, "extract_pdf_images", lambda _filepath: [])
+    monkeypatch.setattr(
+        chunker,
+        "_extract_tables_with_camelot",
+        lambda _filepath: [
+            chunker._make_table_record(
+                rows=[["Name", "Amount"], ["Alpha", "$10"]],
+                page=1,
+                extractor="camelot",
+                flavor="lattice",
+                bbox=[0.1, 0.45, 0.75, 0.8],
+                accuracy=97.5,
+            )
+        ],
+    )
+    monkeypatch.setattr(chunker, "_extract_tables_with_docling", lambda _filepath: [])
 
-    chunks = chunk_document("sample.pdf")
-
-    # Expect two chunks: text then table
-    assert len(chunks) >= 2
-    assert chunks[0]["chunk_type"] == "text"
-    assert "Intro paragraph" in chunks[0]["text"]
-    # find a table chunk
+    chunks = chunk_document("report.pdf")
     table_chunks = [c for c in chunks if c.get("chunk_type") == "table"]
-    assert table_chunks, "No table chunks produced by Unstructured path"
-    assert table_chunks[0]["page"] == 3
-    assert "| Name | Amount |" in table_chunks[0]["text"]
-    assert "| Delta | $40 |" in table_chunks[0]["text"]
+
+    assert len(table_chunks) == 1
+    assert table_chunks[0]["table_extractor"] == "camelot"
+    assert table_chunks[0]["table_flavor"] == "lattice"
+    assert "table_json" in table_chunks[0]
+    assert "| Alpha | $10 |" in table_chunks[0]["text"]
+    text_chunks = [c for c in chunks if c.get("chunk_type") == "text"]
+    assert text_chunks and "Intro paragraph" in text_chunks[0]["text"]
 
 
 # ── _table_to_markdown edge cases ────────────────────────────────────────────
@@ -306,18 +319,24 @@ def test_pdf_empty_table_is_not_emitted(monkeypatch):
 def test_pdf_table_index_increments_per_page(monkeypatch):
     """table_index must restart at 0 for each page (pdfplumber path)."""
 
-    class FakeTable:
-        bbox = (0, 50, 200, 150)
+    class FakeTableTop:
+        bbox = (0, 20, 200, 90)
 
         def extract(self):
-            return [["H"], ["V"]]
+            return [["H1"], ["V1"]]
+
+    class FakeTableBottom:
+        bbox = (0, 110, 200, 180)
+
+        def extract(self):
+            return [["H2"], ["V2"]]
 
     class FakePage:
         width = 200
         height = 200
 
         def find_tables(self):
-            return [FakeTable(), FakeTable()]
+            return [FakeTableTop(), FakeTableBottom()]
 
         def extract_words(self):
             return []
@@ -334,6 +353,8 @@ def test_pdf_table_index_increments_per_page(monkeypatch):
     fake_pdfplumber = types.SimpleNamespace(open=lambda _: FakePdf())
     monkeypatch.setitem(sys.modules, "pdfplumber", fake_pdfplumber)
     monkeypatch.setattr(chunker, "extract_pdf_images", lambda _: [])
+    monkeypatch.setattr(chunker, "_extract_tables_with_camelot", lambda _: [])
+    monkeypatch.setattr(chunker, "_extract_tables_with_docling", lambda _: [])
 
     chunks = chunk_document("two_tables.pdf")
     table_chunks = [c for c in chunks if c.get("chunk_type") == "table"]
@@ -450,7 +471,7 @@ def test_pdf_image_captioning_on_the_fly(monkeypatch):
 
     monkeypatch.setattr(chunker, "extract_pdf", fake_extract_pdf)
 
-    # Mock fitz.open
+    # Mock pymupdf.open (imported as fitz in chunker)
     class FakePage:
         rect = type('Rect', (), {'width': 100, 'height': 100})()
         def search_for(self, text):
@@ -466,8 +487,7 @@ def test_pdf_image_captioning_on_the_fly(monkeypatch):
         def close(self):
             pass
 
-    import fitz
-    monkeypatch.setattr(fitz, "open", lambda *args, **kwargs: FakePdf())
+    monkeypatch.setattr(chunker.fitz, "open", lambda *args, **kwargs: FakePdf())
 
     # Run chunk_document
     chunks = chunk_document("dummy.pdf")

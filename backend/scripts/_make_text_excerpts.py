@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer

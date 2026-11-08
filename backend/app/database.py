@@ -240,6 +240,8 @@ def _migrate_schema():
         ("documents", "keywords", f"ALTER TABLE documents ADD COLUMN keywords {text_type}"),
         ("documents", "s3_key", "ALTER TABLE documents ADD COLUMN s3_key VARCHAR(512)"),
         ("documents", "storage_backend", "ALTER TABLE documents ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'local'"),
+        ("documents", "detected_domain", "ALTER TABLE documents ADD COLUMN detected_domain VARCHAR(64)"),
+        ("documents", "domain_confidence", "ALTER TABLE documents ADD COLUMN domain_confidence FLOAT"),
     ]
     for table, column, ddl in docs_migrations:
         if column not in existing_docs_columns:
@@ -539,3 +541,11 @@ def init_db():
     from app import models  # noqa: F401 — import to register models
     Base.metadata.create_all(bind=engine)
     _migrate_schema()
+    try:
+        from app.services.prompt_management.seed import ensure_default_prompts
+
+        with SessionLocal() as session:
+            ensure_default_prompts(session)
+            session.commit()
+    except Exception as exc:
+        logger.warning("Prompt seed skipped: %s", exc)

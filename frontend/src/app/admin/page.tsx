@@ -10,6 +10,7 @@ import {
   HardDrive,
   HeartPulse,
   KeyRound,
+  MessageSquareText,
   Network,
   RefreshCw,
   Shield,
@@ -21,6 +22,7 @@ import { api, CONNECTION_ERROR_MESSAGE } from "@/lib/api";
 import { formatBytes, formatTime, formatUsd, isAdminUser } from "@/lib/admin";
 import { useAuth } from "@/lib/auth";
 import { RequireAuth } from "@/components/auth/RequireAuth";
+import { PromptManagementPanel } from "@/components/admin/PromptManagementPanel";
 import {
   LedgerBarChart,
   LedgerButton,
@@ -47,6 +49,7 @@ type Section =
   | "users"
   | "usage"
   | "rag"
+  | "prompts"
   | "integrations"
   | "database"
   | "health";
@@ -179,6 +182,7 @@ const NAV: LedgerNavItem[] = [
   { id: "users", label: "Users", icon: <Users /> },
   { id: "usage", label: "AI Usage", icon: <Sparkles /> },
   { id: "rag", label: "RAG", icon: <FileText /> },
+  { id: "prompts", label: "Prompt Management", icon: <MessageSquareText /> },
   { id: "integrations", label: "Integrations", icon: <Network /> },
   { id: "database", label: "Database", icon: <Database /> },
   { id: "health", label: "Health", icon: <HeartPulse /> },
@@ -291,8 +295,11 @@ function AdminPageContent() {
             /* health optional on overview */
           }
         }
-      } else if (section === "usage") await loadUsage();
+      }       else if (section === "usage") await loadUsage();
       else if (section === "rag") await loadDocs();
+      else if (section === "prompts") {
+        /* PromptManagementPanel loads its own data */
+      }
       else if (section === "integrations") await loadIntegrations();
       else if (section === "health") await loadHealth();
       setLastUpdated(new Date());
@@ -363,6 +370,9 @@ function AdminPageContent() {
     }
     if (section === "rag") {
       return `${docs?.total ?? "—"} indexed documents · ${failedDocs} failed`;
+    }
+    if (section === "prompts") {
+      return "Automatic domain detection · layered Global + Domain + Task prompts";
     }
     if (section === "users") {
       return `${filteredUsers.length} of ${users.length} accounts shown`;
@@ -452,11 +462,13 @@ function AdminPageContent() {
                       ? "AI usage"
                       : section === "rag"
                         ? "RAG indexing"
-                        : section === "integrations"
-                          ? "Integrations"
-                          : section === "database"
-                            ? "Database"
-                            : "System health"
+                        : section === "prompts"
+                          ? "Prompt Management"
+                          : section === "integrations"
+                            ? "Integrations"
+                            : section === "database"
+                              ? "Database"
+                              : "System health"
               }
               finding={finding}
               actions={
@@ -1109,6 +1121,8 @@ function AdminPageContent() {
                 </LedgerPanel>
               </div>
             ) : null}
+
+            {section === "prompts" ? <PromptManagementPanel /> : null}
 
             {section === "health" ? (
               <div className="ledger-stack">

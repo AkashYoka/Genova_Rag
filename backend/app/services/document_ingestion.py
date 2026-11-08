@@ -240,6 +240,36 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             logger.warning("Could not generate summary for document %s: %s", document_id, e)
             doc.summary = None
 
+        # Automatic domain classification for dynamic prompt selection
+        try:
+            from app.services.prompt_management.detector import classify_document_domain
+
+            sample = " ".join(
+                (c.get("text") or "")[:200] for c in (chunks or [])[:8]
+            )
+            detection = classify_document_domain(
+                db,
+                filename=original_name,
+                summary=doc.summary,
+                keywords=doc.keywords,
+                sample_text=sample,
+            )
+            doc.detected_domain = detection.domain
+            doc.domain_confidence = float(detection.confidence)
+            db.commit()
+            logger.info(
+                "Document %s domain=%s confidence=%.2f",
+                document_id,
+                detection.domain,
+                detection.confidence,
+            )
+        except Exception as e:
+            logger.warning(
+                "Domain classification skipped for document %s: %s",
+                document_id,
+                e,
+            )
+
         # ── URL extraction pass (PDF only) ────────────────────────────────
         ext = filepath.rsplit(".", 1)[-1].lower()
         if ext == "pdf":

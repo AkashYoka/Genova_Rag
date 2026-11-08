@@ -4,7 +4,7 @@ Pydantic schemas for API request/response validation.
 import json
 import re
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from datetime import datetime
 from app.models import UserRole, WorkspaceRole
 from app.password_validation import validate_password
@@ -771,6 +771,196 @@ class AdminApiKeySummaryResponse(BaseModel):
     total_keys: int = 0
     active_keys: int = 0
     by_user: List[AdminApiKeyUserSummary] = []
+
+
+# ── Dynamic Prompt Management ─────────────────────────
+
+class PromptDomainCreate(BaseModel):
+    slug: str = Field(..., min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
+    name: str = Field(..., min_length=1, max_length=120)
+    description: Optional[str] = None
+    is_active: bool = True
+    is_fallback: bool = False
+    sort_order: int = 100
+
+
+class PromptDomainUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=120)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_fallback: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+class PromptDomainResponse(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: Optional[str] = None
+    is_active: bool
+    is_builtin: bool
+    is_fallback: bool
+    sort_order: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PromptTemplateCreate(BaseModel):
+    domain_id: Optional[str] = None
+    prompt_type: str = Field(
+        ...,
+        pattern=r"^(system|rag|greeting|agent|summarization|comparison|extraction|explanation|qa)$",
+    )
+    name: str = Field(..., min_length=1, max_length=160)
+    content: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    is_active: bool = True
+    is_default: bool = False
+
+
+class PromptTemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=160)
+    content: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
+    change_note: Optional[str] = Field(None, max_length=500)
+
+
+class PromptTemplateResponse(BaseModel):
+    id: str
+    domain_id: Optional[str] = None
+    domain_slug: Optional[str] = None
+    prompt_type: str
+    name: str
+    content: str
+    description: Optional[str] = None
+    version: int
+    is_active: bool
+    is_default: bool
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PromptVersionResponse(BaseModel):
+    id: str
+    template_id: str
+    version_number: int
+    content: str
+    change_note: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PromptPreviewRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    context: str = "Sample document excerpt for preview."
+    document_ids: List[str] = []
+    prompt_type: str = "rag"
+    domain_slug: Optional[str] = None
+
+
+class PromptPreviewResponse(BaseModel):
+    domain: str
+    confidence: float
+    was_fallback: bool
+    system_prompt: str
+    task_prompt: str
+    assembled_user_prompt: str
+    rationale: Optional[str] = None
+
+
+class DomainDetectRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    document_ids: List[str] = []
+    context: Optional[str] = None
+
+
+class DomainDetectResponse(BaseModel):
+    domain: str
+    confidence: float
+    was_fallback: bool
+    secondary_domains: List[str] = []
+    rationale: Optional[str] = None
+    cache_hit: bool = False
+
+
+class PromptStatsResponse(BaseModel):
+    domains: List[Dict[str, Any]] = []
+    detections_total: int = 0
+    fallback_total: int = 0
+    low_confidence_total: int = 0
+    queries_by_domain: Dict[str, int] = {}
+    avg_confidence_by_domain: Dict[str, float] = {}
+    recent_detections: List[Dict[str, Any]] = []
+    recent_executions: List[Dict[str, Any]] = []
+
+
+class DomainCardResponse(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: Optional[str] = None
+    purpose: Optional[str] = None
+    is_active: bool
+    is_builtin: bool
+    is_fallback: bool
+    template_id: Optional[str] = None
+    template_name: Optional[str] = None
+    version: Optional[int] = None
+    is_prompt_active: bool = False
+    last_updated: Optional[datetime] = None
+    query_count: int = 0
+    avg_confidence: Optional[float] = None
+
+
+class PromptOverviewResponse(BaseModel):
+    total_domains: int = 0
+    active_domains: int = 0
+    active_prompts: int = 0
+    default_prompts: int = 0
+    detections_total: int = 0
+    fallback_total: int = 0
+    last_updated: Optional[datetime] = None
+    domains: List[DomainCardResponse] = []
+    recent_detections: List[Dict[str, Any]] = []
+
+
+class PromptTestRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    context: str = Field(
+        default=(
+            "Sample document excerpt used for admin testing only. "
+            "Replace with real excerpts when validating production prompts."
+        ),
+        min_length=1,
+    )
+    domain_slug: Optional[str] = None
+    auto_detect: bool = True
+    prompt_type: str = "rag"
+    document_ids: List[str] = []
+
+
+class PromptTestResponse(BaseModel):
+    domain: str
+    confidence: float
+    was_fallback: bool
+    prompt_version: Optional[int] = None
+    template_id: Optional[str] = None
+    template_name: Optional[str] = None
+    system_prompt_preview: str
+    answer: str
+    rationale: Optional[str] = None
 
 
 # Rebuild models for forward references

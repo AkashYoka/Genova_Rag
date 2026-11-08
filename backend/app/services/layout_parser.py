@@ -1,7 +1,7 @@
 import os
 from typing import Any, Dict, List
 
-import fitz  # PyMuPDF
+import pymupdf as fitz
 import pymupdf4llm
 from google import (
     genai,  # Since the repo uses Gemini, we'll swap to Gemini 2.5 Flash for vision tasks!

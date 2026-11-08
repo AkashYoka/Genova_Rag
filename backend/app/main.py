@@ -263,12 +263,14 @@ from app.routes.admin import router as admin_router
 from app.routes.workspaces import router as workspaces_router
 from app.routes.graph import router as graph_router
 from app.routes.usage import router as usage_router
+from app.routes.prompts import router as prompts_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(github_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(prompts_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(graph_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")

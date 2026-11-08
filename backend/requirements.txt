@@ -31,12 +31,15 @@ httpx
 boto3>=1.39.0
 
 # Document Processing
-# PDF extract order in chunker: pdfplumber → PyMuPDF → OCR
-# (unstructured[pdf] is optional — see requirements-dev.txt; pulls Torch/CUDA)
+# PDF table extract order in chunker: Camelot → Docling → pdfplumber → PyMuPDF → OCR
+# Camelot needs Ghostscript system package (apt: ghostscript) for lattice mode.
 PyMuPDF
 pymupdf4llm
 google-genai
 pdfplumber
+camelot-py>=2.0.0
+opencv-python-headless
+# docling  # optional complex/scanned-table fallback (heavy; may pull Torch) — pip install docling
 python-docx
 pypdf
 reportlab

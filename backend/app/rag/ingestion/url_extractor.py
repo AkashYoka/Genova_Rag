@@ -38,7 +38,7 @@ def extract_urls_from_pdf(filepath: str) -> List[str]:
         return []
 
     try:
-        import fitz  # PyMuPDF — already in requirements.txt
+        import pymupdf as fitz
     except ImportError:
         logger.warning("PyMuPDF not available; skipping URL extraction")
         return []

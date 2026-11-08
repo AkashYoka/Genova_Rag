@@ -136,7 +136,7 @@ class TestExtractPdfWithOcr:
         rich_text = "A" * 100
         doc, pages = _make_fitz_doc([rich_text])
 
-        monkeypatch.setattr("fitz.open", lambda path: doc)
+        monkeypatch.setattr("pymupdf.open", lambda path: doc)
         ocr_called = []
         monkeypatch.setattr(ocr_module, "ocr_page", lambda page, dpi=200: ocr_called.append(1) or "")
 
@@ -151,7 +151,7 @@ class TestExtractPdfWithOcr:
         import app.rag.ingestion.ocr as ocr_module
 
         doc, _ = _make_fitz_doc([""])  # empty page
-        monkeypatch.setattr("fitz.open", lambda path: doc)
+        monkeypatch.setattr("pymupdf.open", lambda path: doc)
         monkeypatch.setattr(ocr_module, "ocr_page", lambda page, dpi=200: "Scanned text here")
 
         result = ocr_module.extract_pdf_with_ocr(str(tmp_path / "scan.pdf"))
@@ -166,7 +166,7 @@ class TestExtractPdfWithOcr:
 
         rich = "B" * 100
         doc, _ = _make_fitz_doc([rich, ""])
-        monkeypatch.setattr("fitz.open", lambda path: doc)
+        monkeypatch.setattr("pymupdf.open", lambda path: doc)
         monkeypatch.setattr(ocr_module, "ocr_page", lambda page, dpi=200: "OCR result")
 
         result = ocr_module.extract_pdf_with_ocr(str(tmp_path / "mixed.pdf"))
@@ -181,7 +181,7 @@ class TestExtractPdfWithOcr:
         import app.rag.ingestion.ocr as ocr_module
 
         doc, _ = _make_fitz_doc([""])
-        monkeypatch.setattr("fitz.open", lambda path: doc)
+        monkeypatch.setattr("pymupdf.open", lambda path: doc)
         monkeypatch.setattr(ocr_module, "ocr_page", lambda page, dpi=200: "")
 
         result = ocr_module.extract_pdf_with_ocr(str(tmp_path / "blank.pdf"))
@@ -191,7 +191,7 @@ class TestExtractPdfWithOcr:
         import app.rag.ingestion.ocr as ocr_module
 
         doc, _ = _make_fitz_doc([""])
-        monkeypatch.setattr("fitz.open", lambda path: doc)
+        monkeypatch.setattr("pymupdf.open", lambda path: doc)
         monkeypatch.setattr(
             ocr_module, "ocr_page", MagicMock(side_effect=ImportError("no tesseract"))
         )
@@ -203,7 +203,7 @@ class TestExtractPdfWithOcr:
         import app.rag.ingestion.ocr as ocr_module
 
         doc, _ = _make_fitz_doc([""])
-        monkeypatch.setattr("fitz.open", lambda path: doc)
+        monkeypatch.setattr("pymupdf.open", lambda path: doc)
         monkeypatch.setattr(
             ocr_module, "ocr_page", MagicMock(side_effect=RuntimeError("segfault"))
         )
@@ -219,10 +219,6 @@ class TestExtractPdfOcrFallback:
         import app.rag.chunking.chunker as chunker_module
         import app.rag.ingestion.ocr as ocr_module
 
-        monkeypatch.setattr(
-            chunker_module, "extract_pdf_with_unstructured",
-            MagicMock(side_effect=Exception("unavailable")),
-        )
         monkeypatch.setattr(
             chunker_module, "extract_pdf_with_tables",
             MagicMock(side_effect=Exception("unavailable")),
@@ -247,7 +243,7 @@ class TestExtractPdfOcrFallback:
         import app.rag.ingestion.ocr as ocr_module
 
         monkeypatch.setattr(
-            chunker_module, "extract_pdf_with_unstructured",
+            chunker_module, "extract_pdf_with_tables",
             MagicMock(return_value=[{"text": "Native text", "page": 1, "chunk_type": "text"}]),
         )
         ocr_spy = MagicMock(return_value=[])

@@ -14,7 +14,7 @@ import logging
 from io import BytesIO
 from typing import Any, Dict, List, Optional
 
-import fitz  # PyMuPDF
+import pymupdf as fitz
 
 from app.config import get_settings
 

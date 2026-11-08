@@ -381,6 +381,9 @@ class Document(Base):
     completed_at = Column(Timestamp, nullable=True)
     extracted_urls = Column(LongText, nullable=True)
     keywords = Column(LongText, nullable=True)
+    # Auto-detected domain slug (medical, payment, education, …); null until classified.
+    detected_domain = Column(String(64), nullable=True, index=True)
+    domain_confidence = Column(Float, nullable=True)
 
     # Relationships
     owner = relationship("User", back_populates="documents")
@@ -648,3 +651,146 @@ class GraphIndexStatus(Base):
     attempts = Column(Integer, default=0, nullable=False)
     error = Column(LongText, nullable=True)
     updated_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+
+
+# ── Dynamic Prompt Management ─────────────────────────────────────────────────
+
+
+class PromptDomain(Base):
+    """Configurable domain used for automatic prompt selection."""
+
+    __tablename__ = "prompt_domains"
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    slug = Column(String(64), unique=True, nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    description = Column(LongText, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_builtin = Column(Boolean, default=False, nullable=False)
+    is_fallback = Column(Boolean, default=False, nullable=False)
+    sort_order = Column(Integer, default=100, nullable=False)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        Timestamp,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    templates = relationship(
+        "PromptTemplate",
+        back_populates="domain",
+        cascade="all, delete-orphan",
+    )
+
+
+class PromptTemplate(Base):
+    """Layered prompt content: global base, domain overlay, or task template."""
+
+    __tablename__ = "prompt_templates"
+    __table_args__ = (
+        UniqueConstraint(
+            "domain_id",
+            "prompt_type",
+            "name",
+            name="uq_prompt_templates_domain_type_name",
+        ),
+    )
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    # Null domain_id = global layer (base / shared task defaults).
+    domain_id = Column(
+        GUID,
+        ForeignKey("prompt_domains.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    # system | rag | greeting | agent | summarization | comparison | extraction | explanation | qa
+    prompt_type = Column(String(40), nullable=False, index=True)
+    name = Column(String(160), nullable=False)
+    content = Column(LongText, nullable=False)
+    description = Column(LongText, nullable=True)
+    version = Column(Integer, default=1, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    is_default = Column(Boolean, default=False, nullable=False)
+    created_by = Column(GUID, ForeignKey("users.id"), nullable=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        Timestamp,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    domain = relationship("PromptDomain", back_populates="templates")
+    versions = relationship(
+        "PromptVersion",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="PromptVersion.version_number.desc()",
+    )
+
+
+class PromptVersion(Base):
+    """Immutable snapshot of a prompt template for restore / audit."""
+
+    __tablename__ = "prompt_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "template_id",
+            "version_number",
+            name="uq_prompt_versions_template_version",
+        ),
+    )
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    template_id = Column(
+        GUID,
+        ForeignKey("prompt_templates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version_number = Column(Integer, nullable=False)
+    content = Column(LongText, nullable=False)
+    change_note = Column(String(500), nullable=True)
+    created_by = Column(GUID, ForeignKey("users.id"), nullable=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+
+    template = relationship("PromptTemplate", back_populates="versions")
+
+
+class DomainDetectionLog(Base):
+    """Trace of automatic domain classification decisions."""
+
+    __tablename__ = "domain_detection_logs"
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=True, index=True)
+    session_id = Column(GUID, nullable=True, index=True)
+    document_ids_json = Column(LongText, nullable=True)
+    question_preview = Column(String(500), nullable=True)
+    detected_domain = Column(String(64), nullable=False, index=True)
+    secondary_domains_json = Column(LongText, nullable=True)
+    confidence = Column(Float, default=0.0, nullable=False)
+    was_fallback = Column(Boolean, default=False, nullable=False)
+    rationale = Column(LongText, nullable=True)
+    cache_hit = Column(Boolean, default=False, nullable=False)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class PromptExecutionLog(Base):
+    """Which prompts were assembled for a chat turn."""
+
+    __tablename__ = "prompt_execution_logs"
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=True, index=True)
+    session_id = Column(GUID, nullable=True, index=True)
+    domain_slug = Column(String(64), nullable=False, index=True)
+    confidence = Column(Float, default=0.0, nullable=False)
+    prompt_type = Column(String(40), nullable=False)
+    system_template_id = Column(GUID, nullable=True)
+    system_version = Column(Integer, nullable=True)
+    task_template_id = Column(GUID, nullable=True)
+    task_version = Column(Integer, nullable=True)
+    domain_template_id = Column(GUID, nullable=True)
+    domain_version = Column(Integer, nullable=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc), index=True)

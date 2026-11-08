@@ -4,7 +4,7 @@ Supports PDF, DOCX, TXT, and Markdown files with page-level metadata.
 """
 import json
 import re
-import fitz  # PyMuPDF
+import pymupdf as fitz
 import docx
 import logging
 from typing import List, Dict, Any
@@ -166,52 +166,511 @@ def _clean_table_cell(cell: Any) -> str:
     return re.sub(r"\s+", " ", str(cell)).strip().replace("|", "\\|")
 
 
+def _normalize_table_rows(rows: List[List[Any]]) -> List[List[str]]:
+    """Pad ragged rows and clean cells while preserving empty merged-cell slots."""
+    cleaned = [
+        [_clean_table_cell(cell) for cell in (row or [])]
+        for row in (rows or [])
+    ]
+    cleaned = [row for row in cleaned if any(cell for cell in row)]
+    if not cleaned:
+        return []
+    width = max(len(row) for row in cleaned)
+    return [row + [""] * (width - len(row)) for row in cleaned]
+
+
 def _table_to_markdown(rows: List[List[Any]]) -> str:
     """Serialize extracted table rows into Markdown for retrieval."""
-    cleaned_rows = [
-        [_clean_table_cell(cell) for cell in row]
-        for row in rows
-        if row and any(_clean_table_cell(cell) for cell in row)
-    ]
-    if not cleaned_rows:
+    normalized = _normalize_table_rows(rows)
+    if not normalized:
         return ""
-
-    width = max(len(row) for row in cleaned_rows)
-    normalized = [row + [""] * (width - len(row)) for row in cleaned_rows]
 
     def fmt(row: List[str]) -> str:
         return "| " + " | ".join(row) + " |"
 
     header = normalized[0]
-    separator = ["---"] * width
+    separator = ["---"] * len(header)
     body = normalized[1:]
     return "\n".join([fmt(header), fmt(separator), *[fmt(row) for row in body]])
+
+
+def _table_to_structured_json(
+    rows: List[List[Any]],
+    *,
+    page: int,
+    extractor: str,
+    flavor: str | None = None,
+    bbox: List[float] | None = None,
+    footnotes: List[str] | None = None,
+    accuracy: float | None = None,
+) -> Dict[str, Any]:
+    """Build retrieval-friendly JSON for a table (headers, rows, metadata)."""
+    normalized = _normalize_table_rows(rows)
+    headers = normalized[0] if normalized else []
+    body = normalized[1:] if len(normalized) > 1 else []
+    return {
+        "page": page,
+        "extractor": extractor,
+        "flavor": flavor,
+        "headers": headers,
+        "rows": body,
+        "n_rows": len(normalized),
+        "n_cols": len(headers),
+        "bbox": bbox,
+        "footnotes": footnotes or [],
+        "accuracy": accuracy,
+        "markdown": _table_to_markdown(normalized),
+    }
+
+
+def _table_fingerprint(rows: List[List[Any]], page: int) -> str:
+    """Stable content fingerprint used to dedupe tables across extractors."""
+    normalized = _normalize_table_rows(rows)
+    blob = f"{page}|" + "||".join("|".join(row).lower() for row in normalized)
+    blob = re.sub(r"\s+", " ", blob).strip()
+    return blob
+
+
+def _normalize_bbox(
+    bbox: Any,
+    page_width: float | None = None,
+    page_height: float | None = None,
+    *,
+    pdf_origin: bool = False,
+) -> List[float] | None:
+    """Return a normalized [x0, top, x1, bottom] bbox in 0–1 page coordinates.
+
+    When ``pdf_origin`` is True the input is treated as PDF user-space
+    (origin bottom-left) and converted to top-left before normalizing, matching
+    pdfplumber / on-page highlight coordinates.
+    """
+    if bbox is None:
+        return None
+    try:
+        if isinstance(bbox, dict):
+            vals = [
+                bbox.get("x0", bbox.get("left")),
+                bbox.get("y0", bbox.get("top")),
+                bbox.get("x1", bbox.get("right")),
+                bbox.get("y1", bbox.get("bottom")),
+            ]
+        else:
+            vals = list(bbox)[:4]
+        nums = [float(v) for v in vals]
+    except Exception:
+        return None
+
+    if page_width and page_height and page_width > 0 and page_height > 0 and max(nums) > 1.5:
+        x0, y0, x1, y1 = nums
+        if pdf_origin:
+            top = page_height - max(y0, y1)
+            bottom = page_height - min(y0, y1)
+            return [
+                round(min(x0, x1) / page_width, 4),
+                round(top / page_height, 4),
+                round(max(x0, x1) / page_width, 4),
+                round(bottom / page_height, 4),
+            ]
+        return [
+            round(x0 / page_width, 4),
+            round(y0 / page_height, 4),
+            round(x1 / page_width, 4),
+            round(y1 / page_height, 4),
+        ]
+    return [round(v, 4) for v in nums]
+
+
+def _bbox_iou(a: List[float] | None, b: List[float] | None) -> float:
+    if not a or not b or len(a) < 4 or len(b) < 4:
+        return 0.0
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    ix0, iy0 = max(ax0, bx0), max(ay0, by0)
+    ix1, iy1 = min(ax1, bx1), min(ay1, by1)
+    iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+    area_b = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _footnote_candidates_near_bbox(
+    words: List[Dict[str, Any]],
+    bbox: tuple,
+    *,
+    max_gap: float = 36.0,
+) -> List[str]:
+    """Collect short footnote-like lines sitting just below a table bbox."""
+    if not words or not bbox:
+        return []
+    _x0, _top, _x1, bottom = bbox
+    below = [
+        w for w in words
+        if float(w.get("top", 0)) >= float(bottom) - 1
+        and float(w.get("top", 0)) <= float(bottom) + max_gap
+    ]
+    if not below:
+        return []
+    text = _words_to_text(below)
+    lines = []
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        if re.match(r"^(\*+|†+|‡+|§+|\d+[\).]|Note:|NOTES?:)", cleaned, flags=re.I):
+            lines.append(cleaned)
+        elif len(cleaned) <= 160 and cleaned[:1].islower():
+            lines.append(cleaned)
+    return lines[:6]
+
+
+def _extractor_rank(extractor: str, flavor: str | None = None) -> int:
+    """Higher rank wins during cross-extractor dedupe."""
+    flavor = (flavor or "").lower()
+    if extractor == "camelot":
+        return {"lattice": 6, "network": 5, "stream": 4, "hybrid": 5, "auto": 5}.get(flavor, 4)
+    if extractor == "docling":
+        return 3
+    if extractor == "pdfplumber":
+        return 2
+    return 0
+
+
+def _is_plausible_table(
+    rows: List[List[str]],
+    *,
+    extractor: str,
+    flavor: str | None = None,
+    accuracy: float | None = None,
+) -> bool:
+    """Drop obvious false positives (e.g. multi-column prose mistaken as tables)."""
+    if not rows or len(rows) < 2:
+        return False
+    n_cols = max(len(row) for row in rows)
+    if n_cols < 1:
+        return False
+    flavor = (flavor or "").lower()
+    # Network/stream frequently wrap narrative text; require real grid shape.
+    if extractor == "camelot" and flavor in {"network", "stream", "hybrid"}:
+        if n_cols < 2:
+            return False
+        if accuracy is not None and accuracy < 60.0:
+            return False
+        # Extremely tall 2-col blocks are usually sidebars / TOC, not tables.
+        if n_cols <= 2 and len(rows) > 25:
+            return False
+        if len(rows) > 60:
+            return False
+    return True
+
+
+def _make_table_record(
+    *,
+    rows: List[List[Any]],
+    page: int,
+    extractor: str,
+    flavor: str | None = None,
+    bbox: Any = None,
+    page_width: float | None = None,
+    page_height: float | None = None,
+    footnotes: List[str] | None = None,
+    accuracy: float | None = None,
+    pdf_origin: bool = False,
+) -> Dict[str, Any] | None:
+    normalized = _normalize_table_rows(rows)
+    if not _is_plausible_table(
+        normalized, extractor=extractor, flavor=flavor, accuracy=accuracy
+    ):
+        return None
+    markdown = _table_to_markdown(normalized)
+    if not markdown.strip():
+        return None
+    norm_bbox = _normalize_bbox(
+        bbox, page_width, page_height, pdf_origin=pdf_origin
+    )
+    structured = _table_to_structured_json(
+        normalized,
+        page=page,
+        extractor=extractor,
+        flavor=flavor,
+        bbox=norm_bbox,
+        footnotes=footnotes,
+        accuracy=accuracy,
+    )
+    return {
+        "text": markdown,
+        "page": page,
+        "chunk_type": "table",
+        "bbox": json.dumps(norm_bbox) if norm_bbox else "",
+        "table_json": json.dumps(structured, ensure_ascii=False),
+        "table_extractor": extractor,
+        "table_flavor": flavor or "",
+        "table_footnotes": json.dumps(footnotes or [], ensure_ascii=False),
+        "_fingerprint": _table_fingerprint(normalized, page),
+        "_rows": normalized,
+        "_bbox": norm_bbox,
+        "_rank": _extractor_rank(extractor, flavor),
+        "_accuracy": accuracy,
+    }
+
+
+def _dedupe_table_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep the richest copy of each table; drop near-duplicates across extractors."""
+    survivors: List[Dict[str, Any]] = []
+    for record in sorted(
+        records,
+        key=lambda item: (
+            item.get("page", 0),
+            -int(item.get("_rank", 0)),
+            -len(item.get("_rows") or []),
+        ),
+    ):
+        duplicate = False
+        for kept in survivors:
+            if kept.get("page") != record.get("page"):
+                continue
+            if kept.get("_fingerprint") == record.get("_fingerprint"):
+                duplicate = True
+                break
+            if _bbox_iou(kept.get("_bbox"), record.get("_bbox")) >= 0.55:
+                # Same region: keep higher-ranked extractor already in survivors.
+                duplicate = True
+                break
+        if not duplicate:
+            survivors.append(record)
+
+    cleaned: List[Dict[str, Any]] = []
+    for idx, record in enumerate(survivors):
+        item = {
+            key: value
+            for key, value in record.items()
+            if not key.startswith("_")
+        }
+        item["table_index"] = idx
+        cleaned.append(item)
+    return cleaned
+
+
+def _pdf_page_sizes(filepath: str) -> Dict[int, tuple[float, float]]:
+    """Return {page_number: (width, height)} for bbox normalization."""
+    try:
+        import pdfplumber
+        with pdfplumber.open(filepath) as pdf:
+            return {
+                i + 1: (float(page.width), float(page.height))
+                for i, page in enumerate(pdf.pages)
+            }
+    except Exception:
+        return {}
+
+
+def _extract_tables_with_camelot(filepath: str) -> List[Dict[str, Any]]:
+    """Primary table extractor: Camelot Lattice + Network/Stream."""
+    try:
+        import camelot
+    except Exception as exc:
+        raise ImportError("camelot-py is not installed") from exc
+
+    page_sizes = _pdf_page_sizes(filepath)
+    records: List[Dict[str, Any]] = []
+    # Lattice for ruled tables; network then stream for borderless layouts.
+    flavor_passes = ("lattice", "network", "stream")
+    for flavor in flavor_passes:
+        try:
+            tables = camelot.read_pdf(
+                filepath,
+                pages="all",
+                flavor=flavor,
+                suppress_stdout=True,
+            )
+        except TypeError:
+            # Older camelot builds may not accept suppress_stdout / network.
+            try:
+                tables = camelot.read_pdf(filepath, pages="all", flavor=flavor)
+            except Exception as exc:
+                logger.warning("Camelot flavor=%s failed: %s", flavor, exc)
+                continue
+        except Exception as exc:
+            logger.warning("Camelot flavor=%s failed: %s", flavor, exc)
+            continue
+
+        for table in tables or []:
+            try:
+                df = table.df
+                rows = df.values.tolist()
+                # Camelot keeps headers in row 0 of the DataFrame.
+                page = int(getattr(table, "page", 1) or 1)
+                report = getattr(table, "parsing_report", None) or {}
+                accuracy = None
+                try:
+                    if report.get("accuracy") is not None:
+                        accuracy = float(report["accuracy"])
+                    if report.get("page") is not None:
+                        page = int(report["page"])
+                except Exception:
+                    pass
+                bbox = getattr(table, "_bbox", None) or getattr(table, "bbox", None)
+                width_height = page_sizes.get(page)
+                record = _make_table_record(
+                    rows=rows,
+                    page=page,
+                    extractor="camelot",
+                    flavor=flavor,
+                    bbox=bbox,
+                    page_width=width_height[0] if width_height else None,
+                    page_height=width_height[1] if width_height else None,
+                    accuracy=accuracy,
+                    pdf_origin=True,
+                )
+                if record:
+                    records.append(record)
+            except Exception as exc:
+                logger.debug("Skipping Camelot table (%s): %s", flavor, exc)
+    return records
+
+
+def _extract_tables_with_docling(filepath: str) -> List[Dict[str, Any]]:
+    """Fallback table extractor for complex / scanned layouts via Docling."""
+    try:
+        from docling.document_converter import DocumentConverter
+    except Exception as exc:
+        raise ImportError("docling is not installed") from exc
+
+    records: List[Dict[str, Any]] = []
+    try:
+        converter = DocumentConverter()
+        result = converter.convert(filepath)
+        document = getattr(result, "document", result)
+    except Exception as exc:
+        logger.warning("Docling conversion failed: %s", exc)
+        return records
+
+    # Iterate table items when available; fall back to export dict walk.
+    tables = []
+    if hasattr(document, "tables") and document.tables:
+        tables = list(document.tables)
+    elif hasattr(document, "iterate_items"):
+        try:
+            tables = [
+                item for item, _path in document.iterate_items()
+                if item.__class__.__name__.lower().endswith("table")
+                or getattr(item, "label", "") == "table"
+            ]
+        except Exception:
+            tables = []
+
+    for table in tables:
+        try:
+            rows: List[List[Any]] = []
+            if hasattr(table, "export_to_dataframe"):
+                df = table.export_to_dataframe()
+                rows = [list(df.columns)] + df.values.tolist()
+            elif hasattr(table, "data") and getattr(table.data, "grid", None):
+                grid = table.data.grid
+                for row in grid:
+                    rows.append([
+                        getattr(cell, "text", None) or str(getattr(cell, "content", "") or "")
+                        for cell in row
+                    ])
+            elif hasattr(table, "to_markdown"):
+                # Last resort: parse markdown pipes back into rows.
+                md = table.to_markdown()
+                for line in str(md).splitlines():
+                    if not line.strip().startswith("|"):
+                        continue
+                    if re.match(r"^\s*\|?\s*:?-{3,}", line.strip()):
+                        continue
+                    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                    rows.append(cells)
+            else:
+                continue
+
+            page = 1
+            prov = getattr(table, "prov", None) or []
+            if prov:
+                page = int(getattr(prov[0], "page_no", None) or getattr(prov[0], "page", 1) or 1)
+            bbox = None
+            if prov and hasattr(prov[0], "bbox"):
+                bbox = prov[0].bbox
+
+            record = _make_table_record(
+                rows=rows,
+                page=page,
+                extractor="docling",
+                flavor="docling",
+                bbox=bbox,
+            )
+            if record:
+                records.append(record)
+        except Exception as exc:
+            logger.debug("Skipping Docling table: %s", exc)
+    return records
+
+
+def _extract_tables_with_pdfplumber(filepath: str) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Coordinate-based pdfplumber extraction + paragraph text outside table bboxes.
+
+    Returns ``(text_page_records, table_records)``.
+    """
+    import pdfplumber
+
+    text_pages: List[Dict[str, Any]] = []
+    table_records: List[Dict[str, Any]] = []
+
+    with pdfplumber.open(filepath) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            tables = page.find_tables() or []
+            table_bboxes = [table.bbox for table in tables]
+            words = page.extract_words() or []
+            paragraph_words = [
+                word for word in words
+                if not any(_is_word_inside_bbox(word, bbox) for bbox in table_bboxes)
+            ]
+            paragraph_text = _words_to_text(paragraph_words)
+            if paragraph_text.strip():
+                text_pages.append({
+                    "text": paragraph_text,
+                    "page": page_num,
+                    "chunk_type": "text",
+                })
+
+            page_w, page_h = float(page.width), float(page.height)
+            for table in tables:
+                rows = table.extract() or []
+                footnotes = _footnote_candidates_near_bbox(words, table.bbox)
+                record = _make_table_record(
+                    rows=rows,
+                    page=page_num,
+                    extractor="pdfplumber",
+                    flavor="find_tables",
+                    bbox=table.bbox,
+                    page_width=page_w,
+                    page_height=page_h,
+                    footnotes=footnotes,
+                )
+                if record:
+                    table_records.append(record)
+    return text_pages, table_records
 
 
 def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
     """Extract PDF text while preserving tables as separate chunks.
 
-    Extraction is attempted in order of richness:
-    1. Unstructured (tables + layout)
-    2. pdfplumber (tables + multi-column)
+    Extraction order:
+    1. Camelot 2.x (Lattice + Network/Stream) primary tables + pdfplumber text/coords
+    2. Docling fallback for complex / sparse table layouts
     3. PyMuPDF native text
-    4. OCR fallback for image-only pages (pytesseract or easyocr)
-
-    Each stage only runs if the previous one raises an exception OR
-    produces no text at all (e.g. a purely scanned PDF).
+    4. OCR fallback for image-only pages
     """
     pages: List[Dict[str, Any]] = []
 
     try:
-        pages = extract_pdf_with_unstructured(filepath)
-    except Exception as e:
-        logger.warning(f"Unstructured extraction failed, falling back: {e}")
-
-    if not pages:
-        try:
-            pages = extract_pdf_with_tables(filepath)
-        except Exception as e2:
-            logger.warning(f"pdfplumber extraction failed, falling back: {e2}")
+        pages = extract_pdf_with_tables(filepath)
+    except Exception as e2:
+        logger.warning(f"Table-aware PDF extraction failed, falling back: {e2}")
 
     if not pages:
         try:
@@ -299,102 +758,114 @@ def extract_pdf_with_pymupdf(filepath: str) -> List[Dict[str, Any]]:
     return pages
 
 
-def extract_pdf_with_unstructured(filepath: str) -> List[Dict[str, Any]]:
-    """Use Unstructured to partition PDF into elements and extract tables."""
-    try:
-        from unstructured.partition.pdf import partition_pdf
-        from unstructured.documents.elements import Table
-    except Exception as e:
-        raise ImportError("unstructured not available") from e
-
-    elements = partition_pdf(filename=filepath)
-    pages: List[Dict[str, Any]] = []
-    table_idx = 0
-
-    for elem in elements:
-        elem_type = getattr(elem, "element_type", None) or elem.__class__.__name__
-        page_num = None
-        if hasattr(elem, "page_number"):
-            page_num = getattr(elem, "page_number")
-        elif getattr(elem, "metadata", None):
-            page_num = elem.metadata.get("page_number") or elem.metadata.get("page")
-        page_num = int(page_num) if page_num else 1
-
-        if isinstance(elem, Table) or (isinstance(elem_type, str) and elem_type.lower() == "table"):
-            rows = []
-            for raw_row in getattr(elem, "rows", []) or []:
-                row = []
-                for cell in raw_row:
-                    if isinstance(cell, (list, tuple)):
-                        cell_text = " ".join(getattr(c, "text", str(c)) for c in cell)
-                    else:
-                        cell_text = getattr(cell, "text", str(cell))
-                    row.append(cell_text)
-                rows.append(row)
-
-            table_text = _table_to_markdown(rows)
-            if table_text.strip():
-                pages.append({
-                    "text": table_text,
-                    "page": page_num,
-                    "chunk_type": "table",
-                    "table_index": table_idx,
-                })
-                table_idx += 1
-        else:
-            text = getattr(elem, "text", str(elem) if elem else "")
-            if text and text.strip():
-                pages.append({
-                    "text": text,
-                    "page": page_num,
-                    "chunk_type": "text",
-                })
-
-    return pages
-
-
 def extract_pdf_with_tables(filepath: str) -> List[Dict[str, Any]]:
-    """Detect tables with pdfplumber, remove table text from paragraphs, and keep table bboxes."""
-    import pdfplumber
+    """Extract PDF text + tables for RAG chunking.
 
+    Pipeline:
+    1. pdfplumber — paragraph text + coordinate-based tables (validation/bbox)
+    2. Camelot 2.x — primary tables (Lattice for bordered, Network/Stream for borderless)
+    3. Docling — fallback when Camelot yields little/nothing (complex/scanned layouts)
+    4. Deduplicate overlapping tables across extractors (prefer Camelot > Docling > pdfplumber)
+
+    Each table record includes Markdown text, structured JSON, page, bbox, footnotes,
+    and extractor metadata suitable for chunking and retrieval.
+    """
     pages: List[Dict[str, Any]] = []
+    text_pages: List[Dict[str, Any]] = []
+    plumber_tables: List[Dict[str, Any]] = []
 
-    with pdfplumber.open(filepath) as pdf:
-        for page_num, page in enumerate(pdf.pages, start=1):
-            tables = page.find_tables()
-            table_bboxes = [table.bbox for table in tables]
+    try:
+        text_pages, plumber_tables = _extract_tables_with_pdfplumber(filepath)
+    except Exception as exc:
+        logger.warning("pdfplumber extraction failed for '%s': %s", filepath, exc)
 
-            words = page.extract_words() or []
-            paragraph_words = [
-                word for word in words
-                if not any(_is_word_inside_bbox(word, bbox) for bbox in table_bboxes)
-            ]
-            paragraph_text = _words_to_text(paragraph_words)
+    all_tables: List[Dict[str, Any]] = []
 
-            if paragraph_text.strip():
-                pages.append({
-                    "text": paragraph_text,
-                    "page": page_num,
-                    "chunk_type": "text",
-                })
+    try:
+        camelot_tables = _extract_tables_with_camelot(filepath)
+        all_tables.extend(camelot_tables)
+        logger.info(
+            "Camelot extracted %d table candidate(s) from '%s'",
+            len(camelot_tables),
+            filepath,
+        )
+    except ImportError as exc:
+        logger.info("Camelot unavailable (%s); continuing with other extractors", exc)
+    except Exception as exc:
+        logger.warning("Camelot table extraction failed: %s", exc)
 
-            for table_index, table in enumerate(tables):
-                table_text = _table_to_markdown(table.extract() or [])
-                if table_text.strip():
-                    W, H = float(page.width), float(page.height)
-                    normalized_bbox = [
-                        round(float(table.bbox[0]) / W, 4),
-                        round(float(table.bbox[1]) / H, 4),
-                        round(float(table.bbox[2]) / W, 4),
-                        round(float(table.bbox[3]) / H, 4),
-                    ]
-                    pages.append({
-                        "text": table_text,
-                        "page": page_num,
-                        "chunk_type": "table",
-                        "bbox": json.dumps(normalized_bbox),
-                        "table_index": table_index,
-                    })
+    # Docling fallback when primary extractors found few tables.
+    need_docling = len(all_tables) == 0
+    if need_docling:
+        try:
+            docling_tables = _extract_tables_with_docling(filepath)
+            all_tables.extend(docling_tables)
+            logger.info(
+                "Docling extracted %d table candidate(s) from '%s'",
+                len(docling_tables),
+                filepath,
+            )
+        except ImportError as exc:
+            logger.info("Docling unavailable (%s); continuing without it", exc)
+        except Exception as exc:
+            logger.warning("Docling table extraction failed: %s", exc)
+
+    # Validate borderless Camelot hits against pdfplumber coordinates when available.
+    plumber_by_page: Dict[int, List[Dict[str, Any]]] = {}
+    for rec in plumber_tables:
+        plumber_by_page.setdefault(int(rec.get("page", 0)), []).append(rec)
+
+    validated: List[Dict[str, Any]] = []
+    for rec in all_tables:
+        flavor = (rec.get("table_flavor") or "").lower()
+        if (
+            rec.get("table_extractor") == "camelot"
+            and flavor in {"network", "stream", "hybrid"}
+        ):
+            page = int(rec.get("page", 0))
+            plumber_peers = plumber_by_page.get(page) or []
+            if plumber_peers:
+                if not any(
+                    _bbox_iou(rec.get("_bbox"), peer.get("_bbox")) >= 0.25
+                    for peer in plumber_peers
+                ):
+                    # No spatial support from coordinate extractor — drop FP.
+                    continue
+            else:
+                # No plumber tables on this page: keep only stronger borderless hits.
+                rows = rec.get("_rows") or []
+                n_cols = max((len(r) for r in rows), default=0)
+                accuracy = rec.get("_accuracy")
+                if n_cols < 3 and (accuracy is None or float(accuracy) < 80.0):
+                    continue
+        validated.append(rec)
+
+    validated.extend(plumber_tables)
+    deduped = _dedupe_table_records(validated)
+    logger.info(
+        "Retained %d unique table(s) after dedupe for '%s'",
+        len(deduped),
+        filepath,
+    )
+
+    pages.extend(text_pages)
+    pages.extend(deduped)
+
+    if not pages:
+        # Absolute fallback: whole-page pdfplumber text so callers get something.
+        try:
+            import pdfplumber
+            with pdfplumber.open(filepath) as pdf:
+                for page_num, page in enumerate(pdf.pages, start=1):
+                    text = page.extract_text() or ""
+                    if text.strip():
+                        pages.append({
+                            "text": text,
+                            "page": page_num,
+                            "chunk_type": "text",
+                        })
+        except Exception as exc:
+            logger.warning("pdfplumber full-text fallback failed: %s", exc)
 
     return pages
 
@@ -575,14 +1046,23 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
                 chunk_type = page_data.get("chunk_type", "text")
 
                 if chunk_type == "table":
-                    all_chunks.append({
+                    table_chunk = {
                         "text": text.strip(),
                         "page": page_num,
                         "chunk_index": chunk_index,
                         "chunk_type": "table",
                         "bbox": page_data.get("bbox", ""),
                         "table_index": page_data.get("table_index", 0),
-                    })
+                    }
+                    for key in (
+                        "table_json",
+                        "table_extractor",
+                        "table_flavor",
+                        "table_footnotes",
+                    ):
+                        if page_data.get(key) not in (None, ""):
+                            table_chunk[key] = page_data[key]
+                    all_chunks.append(table_chunk)
                     chunk_index += 1
                     continue
 
