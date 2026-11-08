@@ -25,11 +25,9 @@ import { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
-// Configure PDF.js worker locally using Next.js/Webpack asset bundling
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/build/pdf.worker.min.mjs",
-  import.meta.url,
-).toString();
+// Serve the worker from /public — Turbopack's hashed /_next/static/media/*.mjs
+// path breaks pdf.js dynamic import ("Setting up fake worker failed").
+pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
 interface SearchRect {
   left: number;
