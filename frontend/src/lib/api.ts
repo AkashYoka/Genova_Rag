@@ -73,6 +73,10 @@ class ApiClient {
     return localStorage.getItem("refresh_token");
   }
 
+  private hasCookieSession(): boolean {
+    return Boolean(readCookie(AUTH_MARKER_COOKIE) || readCookie(CSRF_COOKIE));
+  }
+
   /** Public accessor — returns null for cookie sessions (WS uses cookies). */
   getAccessToken(): string | null {
     const token = this.getToken();
@@ -80,21 +84,26 @@ class ApiClient {
     return token;
   }
 
-  private getHeaders(token?: string): HeadersInit {
-    const headers: HeadersInit = {
-      "Content-Type": "application/json",
-    };
-
-    const authToken = token || this.getToken();
+  private applyAuthHeaders(
+    headers: Record<string, string>,
+    token?: string | null,
+  ): void {
+    const authToken = token === undefined ? this.getToken() : token;
+    // Never send the cookie-session sentinel as a Bearer JWT.
     if (authToken && authToken !== COOKIE_SESSION) {
       headers["Authorization"] = `Bearer ${authToken}`;
     }
-
     const csrf = readCookie(CSRF_COOKIE);
     if (csrf) {
       headers[CSRF_HEADER] = csrf;
     }
+  }
 
+  private getHeaders(token?: string): HeadersInit {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    this.applyAuthHeaders(headers, token);
     return headers;
   }
 
@@ -273,8 +282,8 @@ class ApiClient {
       return retry(newToken);
     }
 
-    // Definitive auth loss: tokens cleared by refresh, or never had a refresh token
-    if (!this.getRefreshToken()) {
+    // Definitive auth loss: no refresh JWT and no cookie-session marker left
+    if (!this.getRefreshToken() && !this.hasCookieSession()) {
       this.handleUnauthorized();
     }
     return null;
@@ -412,23 +421,27 @@ class ApiClient {
   }
 
   async postForm<T>(path: string, formData: FormData, options?: FetchOptions): Promise<T> {
-    const token = options?.token || this.getToken();
-    const headers: HeadersInit = {};
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+    // Do not set Content-Type — browser must add multipart boundary.
+    const { token, _skipRefresh, ...fetchInit } = options ?? {};
+    const headers: Record<string, string> = {};
+    this.applyAuthHeaders(headers, token);
 
     const res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
+      ...fetchInit,
       method: "POST",
       headers,
       body: formData,
-      ...options,
     });
 
-    if (res.status === 401 && !options?._skipRefresh) {
+    if (res.status === 401 && !_skipRefresh) {
       const retried = await this.handleAuthFailure(
-        (newToken) => this.postForm<T>(path, formData, { ...options, token: newToken, _skipRefresh: true }),
-        options?._skipRefresh,
+        (newToken) =>
+          this.postForm<T>(path, formData, {
+            ...options,
+            token: newToken === COOKIE_SESSION ? undefined : newToken,
+            _skipRefresh: true,
+          }),
+        _skipRefresh,
       );
       if (retried !== null) return retried;
       throw new Error(await this.getErrorMessage(res, "Unauthorized"));
@@ -493,7 +506,7 @@ class ApiClient {
           body: JSON.stringify(body),
           signal,
         });
-      } else if (!this.getRefreshToken()) {
+      } else if (!this.getRefreshToken() && !this.hasCookieSession()) {
         this.handleUnauthorized();
       }
     }
@@ -558,7 +571,7 @@ class ApiClient {
           `${this.baseUrl}${path}`,
           buildOpts(newToken),
         );
-      } else if (!this.getRefreshToken()) {
+      } else if (!this.getRefreshToken() && !this.hasCookieSession()) {
         this.handleUnauthorized();
       }
     }

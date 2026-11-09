@@ -35,6 +35,7 @@ import { RequireAuth } from "@/components/auth/RequireAuth";
 import Header from "@/components/layout/Header";
 import DocumentSettings from "@/components/document/DocumentSettings";
 import BulkActionBar from "@/components/document/BulkActionBar";
+import ProcessingPipelineStatus from "@/components/document/ProcessingPipelineStatus";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1090,50 +1091,14 @@ function DocumentLibraryPageContent() {
                           </div>
                         </td>
 
-                        {/* Status column */}
+                        {/* Status column — hover shows ingest pipeline stages */}
                         <td className="py-3 px-3">
-                          {doc.status === "ready" ? (
-                            <span className="inline-flex max-w-full items-center gap-1.5 text-xs text-[var(--gd-muted)]">
-                              <span
-                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--gd-positive)]"
-                                aria-hidden
-                              />
-                              Ready
-                            </span>
-                          ) : doc.status === "processing" ? (
-                            <span
-                              className="inline-flex max-w-full items-center gap-1.5 text-xs tabular-nums text-[var(--gd-muted)]"
-                              title={
-                                doc.processing_stage
-                                  ? `${doc.processing_stage}${typeof doc.processing_progress === "number" ? ` (${doc.processing_progress}%)` : ""}`
-                                  : "Indexing document chunks"
-                              }
-                            >
-                              <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-                              {typeof doc.processing_progress === "number"
-                                ? `${Math.round(doc.processing_progress)}%`
-                                : "Indexing"}
-                            </span>
-                          ) : doc.status === "pending" ? (
-                            <span className="inline-flex max-w-full items-center gap-1.5 text-xs text-[var(--gd-muted)]">
-                              <span
-                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--gd-warning)]"
-                                aria-hidden
-                              />
-                              Queued
-                            </span>
-                          ) : (
-                            <span
-                              className="inline-flex max-w-full items-center gap-1.5 text-xs text-[var(--gd-negative)]"
-                              title={doc.error_message || "Ingestion error"}
-                            >
-                              <span
-                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--gd-negative)]"
-                                aria-hidden
-                              />
-                              Failed
-                            </span>
-                          )}
+                          <ProcessingPipelineStatus
+                            status={doc.status}
+                            processingStage={doc.processing_stage}
+                            processingProgress={doc.processing_progress}
+                            errorMessage={doc.error_message}
+                          />
                         </td>
 
                         {/* File size column */}

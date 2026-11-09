@@ -59,8 +59,10 @@ export async function exportNotesAsPdf(
   html: string,
   options: NotesPdfOptions = {},
 ) {
-  const token = api.getAccessToken();
-  if (!token || token === "cookie") {
+  // Cookie sessions authenticate via HttpOnly cookies on downloadAuthenticated.
+  const hasCookieSession =
+    typeof document !== "undefined" && document.cookie.includes("genova_auth=");
+  if (!hasCookieSession && !api.getAccessToken()) {
     throw new Error("Sign in required to export notes as PDF");
   }
   if (!html?.trim()) {

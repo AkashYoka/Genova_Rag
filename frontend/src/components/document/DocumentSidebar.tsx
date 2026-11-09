@@ -29,6 +29,7 @@ import { Settings } from "lucide-react";
 import DocumentSettings from "./DocumentSettings";
 import DocumentCard from "./DocumentCard";
 import BulkActionBar from "./BulkActionBar";
+import ProcessingPipelineStatus from "./ProcessingPipelineStatus";
 import { toast } from "sonner";
 
 interface Props {
@@ -751,31 +752,16 @@ export default function DocumentSidebar({
                                 </span>
                               </>
                             )}
-                            {doc.status === "processing" && (
-                              <Badge
-                                variant="secondary"
-                                className="h-4 px-1.5 text-[9px] tabular-nums"
-                                title={
-                                  doc.processing_stage
-                                    ? `${doc.processing_stage}${
-                                        typeof doc.processing_progress ===
-                                        "number"
-                                          ? ` · ${doc.processing_progress}%`
-                                          : ""
-                                      }`
-                                    : undefined
-                                }
-                              >
-                                {typeof doc.processing_progress === "number"
-                                  ? t("documents.processingPercent", {
-                                      percent: Math.max(
-                                        0,
-                                        Math.min(100, doc.processing_progress),
-                                      ),
-                                    })
-                                  : t("documents.processing")}
-                              </Badge>
-                            )}
+                            {doc.status === "processing" ||
+                            doc.status === "pending" ? (
+                              <ProcessingPipelineStatus
+                                status={doc.status}
+                                processingStage={doc.processing_stage}
+                                processingProgress={doc.processing_progress}
+                                errorMessage={doc.error_message}
+                                className="shrink-0"
+                              />
+                            ) : null}
                             {doc.status === "failed" && (
                               <Badge
                                 variant="destructive"

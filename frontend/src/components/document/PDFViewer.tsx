@@ -91,11 +91,14 @@ export default function PDFViewer({
   const quoteLocateGenRef = useRef(0);
   const onPageChangeRef = useRef(onPageChange);
   onPageChangeRef.current = onPageChange;
-  // Auth header: seed from localStorage, then follow silent token refreshes
+  // Auth: prefer HttpOnly cookie session (withCredentials). Legacy Bearer JWT
+  // from localStorage is still honored during migration.
   const tokenRef = useRef<string | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem("token");
+    const legacy = localStorage.getItem("token");
+    if (legacy && legacy !== "cookie") return legacy;
+    return null;
   });
   if (typeof window !== "undefined" && tokenRef.current === null) {
     tokenRef.current = authToken;
@@ -103,13 +106,15 @@ export default function PDFViewer({
 
   useEffect(() => {
     const syncToken = (token: string | null) => {
-      tokenRef.current = token;
-      setAuthToken(token);
+      // Ignore cookie-session sentinel — pdf.js uses cookies via withCredentials.
+      const next = token && token !== "cookie" ? token : null;
+      tokenRef.current = next;
+      setAuthToken(next);
     };
 
     const onRefreshed = (e: Event) => {
       const detail = (e as CustomEvent).detail as { accessToken?: string } | undefined;
-      if (detail?.accessToken) syncToken(detail.accessToken);
+      if (detail?.accessToken !== undefined) syncToken(detail.accessToken ?? null);
     };
     const onLoggedOut = () => syncToken(null);
     const onStorage = (e: StorageEvent) => {
@@ -146,13 +151,16 @@ export default function PDFViewer({
 
   const pdfUrl = `${API_BASE}/api/v1/documents/${documentId}/pdf`;
 
-  // Configure file object with Authorization headers (memoized; updates after refresh)
+  // Cookie sessions: withCredentials sends HttpOnly access_token to the API.
+  // Legacy JWT sessions: also send Authorization Bearer.
   const fileConfig = useMemo(
     () => ({
       url: pdfUrl,
-      httpHeaders: authToken
-        ? { Authorization: `Bearer ${authToken}` }
-        : undefined,
+      withCredentials: true,
+      httpHeaders:
+        authToken && authToken !== "cookie"
+          ? { Authorization: `Bearer ${authToken}` }
+          : undefined,
     }),
     [pdfUrl, authToken],
   );
