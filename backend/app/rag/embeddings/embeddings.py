@@ -1,16 +1,11 @@
 """
 Document/query embeddings with optional Redis/LRU caching.
 
-Providers (from ``app.config.Settings``, verified defaults):
-- ollama (default): ``EMBEDDING_MODEL=nomic-embed-text``, ``EMBEDDING_DIMENSION=768``
-- huggingface: typically MiniLM 384-d when switched via env
+Provider (from ``app.config.Settings``):
+- bedrock (default): ``amazon.titan-embed-text-v2:0``, ``EMBEDDING_DIMENSION=1024``
 
 Ask-time caller: ``retriever.retrieve`` → ``embed_query(search_query)``.
 Index-time caller: ``vectorstore.store_chunks`` → ``get_embedding_model().embed_documents``.
-
-Common example question (used in all six RAG files):
-  "Does the XOLAIR prescribing label recommend every-2-week dosing for
-   chronic spontaneous urticaria (CSU)?"
 """
 import hashlib
 import json
@@ -24,7 +19,7 @@ from app.rag.utils.tracing import trace_call
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Singleton: one embedder per process (OllamaEmbeddings or HuggingFaceEmbeddings).
+# Singleton: one embedder per process (Bedrock Titan V2).
 _embedding_model = None
 
 # Cache knobs (env-overridable). TTL only applies when Redis is used.
@@ -44,22 +39,7 @@ _EX_Q = (
 
 @runtime_checkable
 class _Embedder(Protocol):
-    """Duck-typed embedder API shared by Ollama and HuggingFace wrappers.
-
-    Exact methods callers rely on
-    -----------------------------
-    embed_documents(texts: List[str]) -> List[List[float]]
-        Index path. For nomic via Ollama, each text is prefixed
-        ``search_document: `` inside ``OllamaEmbeddings._prefix`` (ollama_client.py).
-    embed_query(text: str) -> List[float]
-        Ask path. For nomic, prefixed ``search_query: `` before POST /api/embed.
-
-    Exact example (ask path, defaults)
-    ----------------------------------
-    model.embed_query(_EX_Q)
-      → List[float] with len == settings.EMBEDDING_DIMENSION (768 for nomic)
-      ILLUSTRATIVE values: [0.0123, -0.4410, 0.0881, ...]  # not a live run
-    """
+    """Duck-typed embedder API (Bedrock Titan V2)."""
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]: ...
     def embed_query(self, text: str) -> List[float]: ...
@@ -212,74 +192,36 @@ def _cache_set(key: str, vector: List[float]) -> None:
 
 
 def get_embedding_model() -> _Embedder:
-    """Lazy singleton factory for the configured embedding backend.
+    """Lazy singleton factory for Bedrock Titan embeddings.
 
-    Config read (verified defaults in config.py):
-        EMBEDDING_PROVIDER = "ollama"
-        EMBEDDING_MODEL    = "nomic-embed-text"
-        OLLAMA_BASE_URL    = "http://localhost:11434"
-        EMBEDDING_DIMENSION = 768
-
-    Branch:
-        provider == "ollama" → OllamaEmbeddings after check_ollama_reachable/model
-        provider == "huggingface" → HuggingFaceEmbeddings(device=cpu, normalize=True)
-        else → ValueError
-
-    Exact example (default branch)
-    ------------------------------
-    First call:
-      check_ollama_reachable("http://localhost:11434")
-      check_ollama_model(..., "nomic-embed-text")
-      _embedding_model = OllamaEmbeddings(model="nomic-embed-text", base_url=...)
-    Later calls: return same instance.
-
-    Side effects: process-global ``_embedding_model``; may raise if Ollama down.
-
-    Next: ``embed_query`` / ``embed_texts`` / ``vectorstore.store_chunks``.
+    Defaults:
+        EMBEDDING_PROVIDER = "bedrock"
+        EMBEDDING_MODEL    = "amazon.titan-embed-text-v2:0"
+        EMBEDDING_DIMENSION = 1024
     """
     global _embedding_model
 
     if _embedding_model is None:
-        provider = settings.EMBEDDING_PROVIDER
+        provider = (settings.EMBEDDING_PROVIDER or "bedrock").strip().lower()
         logger.info(
-            "Loading embedding model: provider=%s model=%s",
+            "Loading embedding model: provider=%s model=%s dim=%s",
             provider,
             settings.EMBEDDING_MODEL,
+            settings.EMBEDDING_DIMENSION,
         )
-        if provider == "ollama":
-            from app.rag.llm.ollama_client import (
-                OllamaEmbeddings,
-                check_ollama_model,
-                check_ollama_reachable,
-            )
-
-            check_ollama_reachable(settings.OLLAMA_BASE_URL)
-            check_ollama_model(settings.OLLAMA_BASE_URL, settings.EMBEDDING_MODEL)
-            _embedding_model = OllamaEmbeddings(
-                model=settings.EMBEDDING_MODEL,
-                base_url=settings.OLLAMA_BASE_URL,
-            )
-        elif provider == "huggingface":
-            try:
-                from langchain_huggingface import HuggingFaceEmbeddings
-            except ImportError as exc:
-                raise RuntimeError(
-                    "EMBEDDING_PROVIDER=huggingface requires langchain-huggingface "
-                    "(and typically sentence-transformers). Install with: "
-                    "pip install -r backend/requirements-dev.txt "
-                    "(production default is EMBEDDING_PROVIDER=ollama)."
-                ) from exc
-
-            _embedding_model = HuggingFaceEmbeddings(
-                model_name=settings.EMBEDDING_MODEL,
-                model_kwargs={"device": "cpu"},
-                encode_kwargs={"normalize_embeddings": True, "batch_size": 32},
-            )
-        else:
+        if provider != "bedrock":
             raise ValueError(
-                f"Unknown EMBEDDING_PROVIDER={provider!r}. "
-                "Use 'ollama' or 'huggingface'."
+                f"Unsupported EMBEDDING_PROVIDER={provider!r}. "
+                "Only 'bedrock' (amazon.titan-embed-text-v2:0) is supported."
             )
+
+        from app.rag.embeddings.bedrock_embeddings import BedrockEmbeddings
+
+        _embedding_model = BedrockEmbeddings(
+            model_id=settings.EMBEDDING_MODEL,
+            region=settings.BEDROCK_REGION,
+            dimensions=settings.EMBEDDING_DIMENSION,
+        )
         logger.info("Embedding model ready (%s)", provider)
 
     return _embedding_model

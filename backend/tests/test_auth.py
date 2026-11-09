@@ -20,9 +20,17 @@ def test_register_success(client):
 
     assert response.status_code == 201
     payload = response.json()
-    assert payload["message"] == "Registration successful. Please check your email to verify your account before logging in."
+    # REQUIRE_EMAIL_VERIFICATION defaults to false (POC): login immediately.
+    assert payload["message"] == "Registration successful. You can log in now."
     assert payload["email"] == "newuser@example.com"
-    assert payload["verification_url"].startswith("/verify-email?token=")
+    assert payload.get("verification_url") in (None, "")
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "newuser@example.com", "password": VALID_TEST_PASSWORD},
+    )
+    assert login.status_code == 200
+    assert "access_token" in login.json() or login.json().get("user", {}).get("email") == "newuser@example.com"
 
 
 def test_register_duplicate_email_or_username_conflict(client):

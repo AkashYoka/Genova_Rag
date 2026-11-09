@@ -19,12 +19,13 @@ if str(BACKEND_DIR) not in sys.path:
 os.environ["SECRET_KEY"] = "test-secret-key-that-is-long-enough"
 os.environ["DATABASE_URL"] = "sqlite:///./test_bootstrap.db"
 os.environ["DEBUG"] = "false"
-# Keep unit tests on the HuggingFace code path; local defaults are Ollama.
+# Keep unit tests on the HuggingFace LLM path; embeddings are faked below.
 os.environ["LLM_PROVIDER"] = "huggingface"
-os.environ["EMBEDDING_PROVIDER"] = "huggingface"
+os.environ["EMBEDDING_PROVIDER"] = "bedrock"
 os.environ["LLM_MODEL"] = "Qwen/Qwen2.5-72B-Instruct"
-os.environ["EMBEDDING_MODEL"] = "sentence-transformers/all-MiniLM-L6-v2"
-os.environ["EMBEDDING_DIMENSION"] = "384"
+os.environ["EMBEDDING_MODEL"] = "amazon.titan-embed-text-v2:0"
+os.environ["EMBEDDING_DIMENSION"] = "1024"
+os.environ["REQUIRE_EMAIL_VERIFICATION"] = "false"
 os.environ["UPLOAD_DIR"] = str(ROOT / "backend" / "test_uploads")
 os.environ["CHROMA_PERSIST_DIR"] = str(ROOT / "backend" / "test_chroma")
 

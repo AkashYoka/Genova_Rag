@@ -24,8 +24,11 @@ RUN apk add --no-cache libc6-compat
 
 WORKDIR /app
 
-# Copy only the manifests first so this layer is cached unless deps change
+# Copy manifests + postinstall script before npm ci.
+# package.json runs `postinstall: node scripts/copy-pdf-worker.mjs`, so the
+# script must exist in the image before install (pdfjs-dist is then available).
 COPY package.json package-lock.json ./
+COPY scripts/copy-pdf-worker.mjs ./scripts/copy-pdf-worker.mjs
 RUN npm ci --no-audit --no-fund
 
 # -----------------------------------------------------------------------------

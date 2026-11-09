@@ -1,7 +1,10 @@
 """Amazon Bedrock Nova generation via the Converse API.
 
-Authentication uses the short-lived Bedrock API key in AWS_BEARER_TOKEN_BEDROCK.
-The token is never logged or embedded in error messages.
+Auth preference:
+1. ``AWS_BEARER_TOKEN_BEDROCK`` when set (API key / bearer),
+2. otherwise the normal AWS credential chain (IAM role, env keys, shared config).
+
+Credentials are never logged or embedded in error messages.
 
 Mirrors the genova-rag BedrockNovaGenerator approach, adapted to the
 OllamaChatClient / InferenceClient chat_completion contract used by agent.py.
@@ -41,11 +44,39 @@ PRICING_NOTE = _nova_rates.get("pricing_note") or (
 
 
 class BedrockAuthError(RuntimeError):
-    """Raised when the Bedrock bearer token is missing, expired, or rejected."""
+    """Raised when Bedrock credentials are missing, expired, or rejected."""
 
 
 class BedrockProviderError(RuntimeError):
     """Raised for non-auth Bedrock failures with a safe, actionable message."""
+
+
+def _optional_bearer_token() -> str:
+    """Return AWS_BEARER_TOKEN_BEDROCK when present; otherwise empty (use IAM)."""
+    token = (os.environ.get(BEDROCK_TOKEN_ENV) or "").strip()
+    if token:
+        return token
+    token = _token_from_dotenv()
+    if token:
+        os.environ[BEDROCK_TOKEN_ENV] = token
+    return token
+
+
+def create_bedrock_runtime_client(region: str, client: Any | None = None) -> Any:
+    """Build a bedrock-runtime client using bearer token or IAM credentials."""
+    if client is not None:
+        return client
+    try:
+        import boto3
+    except ImportError as exc:
+        raise RuntimeError(
+            "boto3 is required for Bedrock. Install with: pip install boto3"
+        ) from exc
+
+    # Populate env so boto3 can pick up the bearer token when one exists.
+    # When absent, boto3 uses the default credential chain (instance/task role).
+    _optional_bearer_token()
+    return boto3.client("bedrock-runtime", region_name=region)
 
     def __init__(
         self,
@@ -133,32 +164,10 @@ class BedrockNovaChatClient:
         self._client = client
         self.last_usage: dict[str, Any] = {}
 
-    def _ensure_token(self) -> str:
-        token = (os.environ.get(BEDROCK_TOKEN_ENV) or "").strip()
-        if not token:
-            token = _token_from_dotenv()
-            if token:
-                os.environ[BEDROCK_TOKEN_ENV] = token
-        if not token:
-            raise BedrockAuthError(
-                f"{BEDROCK_TOKEN_ENV} is not set. Export a Bedrock API key "
-                "or set it in the gitignored backend/.env file."
-            )
-        return token
-
     def _client_or_create(self):
         if self._client is not None:
             return self._client
-        self._ensure_token()
-        try:
-            import boto3
-        except ImportError as exc:
-            raise RuntimeError(
-                "boto3 is required for Bedrock generation. "
-                "Install with: pip install boto3"
-            ) from exc
-        # boto3 >= 1.39 picks up AWS_BEARER_TOKEN_BEDROCK automatically.
-        self._client = boto3.client("bedrock-runtime", region_name=self.region)
+        self._client = create_bedrock_runtime_client(self.region)
         return self._client
 
     def chat_completion(
@@ -274,9 +283,9 @@ class BedrockNovaChatClient:
             )
         ):
             return BedrockAuthError(
-                "Bedrock authentication failed: the API key is missing, expired, or invalid "
+                "Bedrock authentication failed: credentials are missing, expired, or invalid "
                 f"for region {self.region} / model {self.model_id}. "
-                f"Refresh {BEDROCK_TOKEN_ENV} and confirm Nova 2 Lite access."
+                f"Use an IAM role with Bedrock access, or refresh {BEDROCK_TOKEN_ENV}."
                 + (
                     f" (HTTP {http_status}, {code})"
                     if http_status or code

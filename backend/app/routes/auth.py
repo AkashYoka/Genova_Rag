@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 from app.audit import audit_log
 
 REGISTRATION_MESSAGE = "Registration successful. Please check your email to verify your account before logging in."
+REGISTRATION_MESSAGE_NO_VERIFY = "Registration successful. You can log in now."
 VERIFICATION_RESEND_MESSAGE = "If the email is registered and unverified, a verification link has been sent."
 VERIFICATION_REQUIRED_MESSAGE = "Please verify your email before logging in"
 
@@ -91,7 +92,14 @@ def _mail_configured() -> bool:
     return bool(settings.MAIL_SERVER and settings.MAIL_FROM)
 
 
+def _email_verification_required() -> bool:
+    """When false (POC default), register creates a verified user and skips email."""
+    return bool(getattr(settings, "REQUIRE_EMAIL_VERIFICATION", False))
+
+
 def _dev_verification_url(token: str) -> str | None:
+    if not _email_verification_required():
+        return None
     if settings.ENVIRONMENT == "production" or _mail_configured():
         return None
     return f"/verify-email?token={token}"
@@ -243,32 +251,36 @@ async def register(request: Request, payload: UserRegister, db: Session = Depend
     if db.query(User).filter(User.email == payload.email).first():
         raise ConflictException("Email already registered")
 
+    require_verify = _email_verification_required()
     user = User(
         username=payload.username,
         email=payload.email,
         hashed_password=hash_password(payload.password),
         role=UserRole.user,
-        is_verified=not _mail_configured(),
+        is_verified=not require_verify,
     )
-    token = _set_verification_token(user)
+    token = _set_verification_token(user) if require_verify else None
+    if not require_verify:
+        user.verification_token_hash = None
+        user.verification_token_created_at = None
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    if _mail_configured():
+    if require_verify and _mail_configured() and token:
         await _send_verification_email(user, token)
 
     audit_log(
         action="user.register",
         user_id=str(user.id),
         result="success",
-        details={"email": user.email},
+        details={"email": user.email, "email_verification": require_verify},
     )
 
     return RegistrationResponse(
-        message=REGISTRATION_MESSAGE,
+        message=REGISTRATION_MESSAGE if require_verify else REGISTRATION_MESSAGE_NO_VERIFY,
         email=user.email,
-        verification_url=_dev_verification_url(token),
+        verification_url=_dev_verification_url(token) if token else None,
     )
 
 

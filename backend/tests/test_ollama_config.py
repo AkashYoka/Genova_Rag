@@ -12,8 +12,8 @@ from app.rag.llm.ollama_client import (
 )
 
 
-def test_ollama_settings_defaults_without_env(monkeypatch):
-    """Local defaults: Ollama + nomic-embed-text + qwen2.5:3b, no .env required."""
+def test_provider_settings_defaults_without_env(monkeypatch):
+    """Defaults: Ollama LLM locally + Bedrock Titan embeddings (1024-d)."""
     for var in (
         "LLM_PROVIDER",
         "EMBEDDING_PROVIDER",
@@ -29,14 +29,15 @@ def test_ollama_settings_defaults_without_env(monkeypatch):
     try:
         s = Settings()
         assert s.LLM_PROVIDER == "ollama"
-        assert s.EMBEDDING_PROVIDER == "ollama"
+        assert s.EMBEDDING_PROVIDER == "bedrock"
         assert s.LLM_MODEL == "qwen2.5:3b"
-        assert s.EMBEDDING_MODEL == "nomic-embed-text"
-        assert s.EMBEDDING_DIMENSION == 768
-        assert "chroma_db_ollama_nomic" in s.CHROMA_PERSIST_DIR
+        assert s.EMBEDDING_MODEL == "amazon.titan-embed-text-v2:0"
+        assert s.EMBEDDING_DIMENSION == 1024
+        assert "chroma_db_bedrock_titan_v2" in s.CHROMA_PERSIST_DIR
         assert s.OLLAMA_BASE_URL == "http://localhost:11434"
         assert s.uses_ollama_llm is True
-        assert s.uses_ollama_embeddings is True
+        assert s.uses_bedrock_embeddings is True
+        assert s.uses_ollama_embeddings is False
     finally:
         get_settings.cache_clear()
 

@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     GOOGLE_DRIVE_REDIRECT_URI: str = "http://127.0.0.1:7860/api/v1/auth/google-drive/callback"
     FRONTEND_URL: str = "http://localhost:3000"
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
+    # POC / early deploy: allow login immediately after register (no email link).
+    # Set true once SMTP is configured and verification emails are required.
+    REQUIRE_EMAIL_VERIFICATION: bool = False
 
     # ── Email verification ───────────────────────────────
     MAIL_USERNAME: str = ""
@@ -159,15 +162,15 @@ class Settings(BaseSettings):
     GRAPH_MAX_EVIDENCE_SOURCES: int = 3
 
     # ── Embeddings ───────────────────────────────────────
-    # Default: Ollama nomic-embed-text (768-d).    # to use sentence-transformers/all-MiniLM-L6-v2 (384-d) instead.
-    EMBEDDING_PROVIDER: str = "ollama"
-    EMBEDDING_MODEL: str = "nomic-embed-text"
-    EMBEDDING_DIMENSION: int = 768
+    # Production default: Amazon Titan Text Embeddings V2 (1024-d) via Bedrock.
+    EMBEDDING_PROVIDER: str = "bedrock"
+    EMBEDDING_MODEL: str = "amazon.titan-embed-text-v2:0"
+    EMBEDDING_DIMENSION: int = 1024
 
     # ── ChromaDB ─────────────────────────────────────────
-    # Separate persist dir for Ollama/nomic (768-d) so MiniLM (384-d) indexes
-    # under ./data/chroma_db are never mixed or deleted.
-    CHROMA_PERSIST_DIR: str = "./data/chroma_db_ollama_nomic"
+    # Separate persist dir for Titan V2 (1024-d) so older nomic/MiniLM indexes
+    # are never mixed.
+    CHROMA_PERSIST_DIR: str = "./data/chroma_db_bedrock_titan_v2"
 
     # ── LLM ──────────────────────────────────────────────
     # Default: local Ollama.    # Per-request ChatRequest.llm_provider can override to bedrock without changing defaults.
@@ -178,7 +181,8 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.3
     SUMMARY_MAX_TOKENS: int = 512
 
-    # Amazon Bedrock Nova 2 Lite (US inference profile). Auth: AWS_BEARER_TOKEN_BEDROCK.
+    # Amazon Bedrock Nova 2 Lite (US inference profile).
+    # Auth: AWS_BEARER_TOKEN_BEDROCK when set, else IAM / default AWS credentials.
     BEDROCK_MODEL_ID: str = "us.amazon.nova-2-lite-v1:0"
     BEDROCK_REGION: str = "us-east-1"
 
@@ -321,19 +325,32 @@ class Settings(BaseSettings):
         """
         import os
 
-        if self.EMBEDDING_PROVIDER == "ollama":
-            if "EMBEDDING_MODEL" not in os.environ and self.EMBEDDING_MODEL.startswith(
-                "sentence-transformers/"
-            ):
-                object.__setattr__(self, "EMBEDDING_MODEL", "nomic-embed-text")
-            if "EMBEDDING_DIMENSION" not in os.environ and self.EMBEDDING_DIMENSION == 384:
-                object.__setattr__(self, "EMBEDDING_DIMENSION", 768)
-            if (
-                "CHROMA_PERSIST_DIR" not in os.environ
-                and self.CHROMA_PERSIST_DIR in {"./data/chroma_db", "data/chroma_db"}
+        if self.EMBEDDING_PROVIDER == "bedrock":
+            if "EMBEDDING_MODEL" not in os.environ and (
+                not self.EMBEDDING_MODEL
+                or self.EMBEDDING_MODEL.startswith("sentence-transformers/")
+                or self.EMBEDDING_MODEL == "nomic-embed-text"
             ):
                 object.__setattr__(
-                    self, "CHROMA_PERSIST_DIR", "./data/chroma_db_ollama_nomic"
+                    self, "EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0"
+                )
+            if "EMBEDDING_DIMENSION" not in os.environ and self.EMBEDDING_DIMENSION in {
+                384,
+                768,
+            }:
+                object.__setattr__(self, "EMBEDDING_DIMENSION", 1024)
+            if (
+                "CHROMA_PERSIST_DIR" not in os.environ
+                and self.CHROMA_PERSIST_DIR
+                in {
+                    "./data/chroma_db",
+                    "data/chroma_db",
+                    "./data/chroma_db_ollama_nomic",
+                    "data/chroma_db_ollama_nomic",
+                }
+            ):
+                object.__setattr__(
+                    self, "CHROMA_PERSIST_DIR", "./data/chroma_db_bedrock_titan_v2"
                 )
         
         # LLM_MODEL is always the Ollama chat model (default qwen2.5:3b).
@@ -368,7 +385,11 @@ class Settings(BaseSettings):
 
     @property
     def uses_ollama_embeddings(self) -> bool:
-        return self.EMBEDDING_PROVIDER == "ollama"
+        return False
+
+    @property
+    def uses_bedrock_embeddings(self) -> bool:
+        return self.EMBEDDING_PROVIDER == "bedrock"
 
     def validate_production(self) -> None:
         """Validate that critical secrets are overridden in production.
