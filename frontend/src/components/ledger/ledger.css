@@ -1,26 +1,11 @@
 /* Genova ledger screens — achromatic-ledger tokens for admin + settings */
 
 .genova-ledger {
-  --gd-ground: #f2f4f7;
-  --gd-surface: #ffffff;
-  --gd-raised: #eceef2;
-  --gd-active: #e6e8ec;
-  --gd-border: #e2e5ea;
-  --gd-rule: #eef0f3;
-  --gd-text: #14171c;
-  --gd-muted: #5c636c;
-  --gd-faint: #8b919a;
-  --gd-primary: #14171c;
-  --gd-primary-ink: #ffffff;
-  --gd-data: #0f7c86;
-  --gd-accent: #0f7c86;
-  --gd-positive: #1f6b45;
-  --gd-negative: #b42318;
-  --gd-warning: #8a5a10;
+  /* Color tokens inherit from globals.css --gd-* (Signal Mesa). Layout only here. */
   --gd-sidebar: 240px;
   --gd-gap: 16px;
   --gd-pad: 24px;
-  --gd-radius: 8px;
+  --gd-radius: 10px;
   --gd-control: 36px;
   --gd-font: var(--font-sans), system-ui, sans-serif;
   --gd-display: var(--font-display), var(--font-sans), sans-serif;
@@ -30,25 +15,6 @@
   color: var(--gd-text);
   font-family: var(--gd-font);
   font-variant-numeric: tabular-nums;
-}
-
-.dark .genova-ledger {
-  --gd-ground: #121417;
-  --gd-surface: #1a1d22;
-  --gd-raised: #24282e;
-  --gd-active: #2c3138;
-  --gd-border: #2e333b;
-  --gd-rule: #22262c;
-  --gd-text: #eceef1;
-  --gd-muted: #9aa1ab;
-  --gd-faint: #7a818c;
-  --gd-primary: #eceef1;
-  --gd-primary-ink: #121417;
-  --gd-data: #3d9aa3;
-  --gd-accent: #3d9aa3;
-  --gd-positive: #5bb87a;
-  --gd-negative: #e07868;
-  --gd-warning: #c9a04a;
 }
 
 .genova-ledger .ledger-shell {

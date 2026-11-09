@@ -28,8 +28,8 @@ const resources = {
         signOut: "Sign out",
       },
       login: {
-        title: "Welcome back",
-        description: "Sign in to your Genova account",
+        title: "Sign in",
+        description: "Continue to your Genova workspace",
         fallbackError: "Login failed",
         submit: "Sign In",
         submitting: "Signing in...",

@@ -4,10 +4,9 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
-import { Brain } from "lucide-react";
 import { api } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import AuthShell from "@/components/auth/AuthShell";
 
 function VerifyEmailContent() {
   const { t } = useTranslation();
@@ -44,35 +43,33 @@ function VerifyEmailContent() {
   const displayMessage = loading ? t("verifyEmail.checking") : displayError || message;
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[300px] bg-primary/8 rounded-full blur-[100px] pointer-events-none" />
+    <AuthShell showBack={false}>
+      <div className="genova-panel p-6 sm:p-8 space-y-6">
+        <div className="space-y-1.5">
+          <h1 className="font-display text-2xl font-semibold tracking-tight">
+            {t("verifyEmail.title")}
+          </h1>
+        </div>
 
-      <Card className="w-full max-w-md relative z-10 bg-card/80 backdrop-blur-xl border-border/50 animate-fade-in-up">
-        <CardHeader className="text-center pb-2">
-          <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 rounded-xl bg-primary/15 flex items-center justify-center">
-              <Brain className="w-6 h-6 text-primary" />
-            </div>
-          </div>
-          <CardTitle className="text-2xl font-bold">{t("verifyEmail.title")}</CardTitle>
-          <CardDescription>{displayMessage}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div
-            className={
-              displayError
-                ? "p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm text-destructive"
-                : "p-3 rounded-lg bg-primary/10 border border-primary/30 text-sm text-primary"
-            }
-          >
-            {displayMessage}
-          </div>
-          <Link href="/login" className={buttonVariants({ className: "w-full h-11 text-base mt-6" })}>
-            {t("verifyEmail.signIn")}
-          </Link>
-        </CardContent>
-      </Card>
-    </div>
+        <div
+          role={displayError ? "alert" : "status"}
+          className={
+            displayError
+              ? "p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm text-destructive"
+              : "p-3 rounded-lg bg-accent border border-primary/30 text-sm text-accent-foreground"
+          }
+        >
+          {displayMessage}
+        </div>
+
+        <Link
+          href="/login"
+          className={buttonVariants({ className: "w-full h-11 text-base rounded-lg" })}
+        >
+          {t("verifyEmail.signIn")}
+        </Link>
+      </div>
+    </AuthShell>
   );
 }
 

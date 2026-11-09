@@ -345,13 +345,13 @@ function DashboardPageContent() {
 
   const titleFinding = activeDoc
     ? activeDoc.status === "ready"
-      ? "Ask this file. Answers cite pages."
+      ? "Ask about this file. Answers cite pages."
       : activeDoc.status === "failed"
         ? `Ingestion failed${activeDoc.error_message ? `: ${activeDoc.error_message}` : "."}`
-        : `Ingesting (${activeDoc.status}).`
+        : "Still indexing."
     : documents.length === 0
-      ? "Upload a PDF to start asking."
-      : `${readyCount} ready${processingCount ? `, ${processingCount} ingesting` : ""}. Select a document.`;
+      ? "Upload a PDF to get started."
+      : `${readyCount} ready${processingCount ? `, ${processingCount} indexing` : ""}. Pick one to begin.`;
 
   return (
     <div className="genova-desk flex h-screen min-w-[375px] flex-col overflow-hidden">
@@ -410,8 +410,8 @@ function DashboardPageContent() {
                 )}
               </Button>
               <div className="min-w-0 flex-1">
-                <h1 title={activeDoc?.original_name ?? "Document desk"}>
-                  {activeDoc?.original_name ?? "Document desk"}
+                <h1 title={activeDoc?.original_name ?? "No document open"}>
+                  {activeDoc?.original_name ?? "No document open"}
                 </h1>
                 <p className="sub" title={
                   activeDoc
@@ -639,7 +639,7 @@ function DashboardPageContent() {
           showCloseButton={false}
         >
           <DialogHeader className="sr-only">
-            <DialogTitle>Knowledge graph explorer</DialogTitle>
+            <DialogTitle>Knowledge graph</DialogTitle>
           </DialogHeader>
           {graphOpen ? (
             <div className="flex min-h-0 flex-1 flex-col">

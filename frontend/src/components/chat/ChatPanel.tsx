@@ -1119,7 +1119,7 @@ export default function ChatPanel({
           </div>
         ) : showEmptyState ? (
           <div className="genova-desk-chat-empty">
-            <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-full border border-[var(--gd-border)] bg-[var(--gd-raised)]">
+            <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--gd-border)] bg-[var(--gd-raised)]">
               <MessageSquare className="h-4 w-4 text-[var(--gd-muted)]" />
             </div>
             <h3>
@@ -1186,10 +1186,8 @@ export default function ChatPanel({
               </div>
             ))}
             {isTyping && (
-              <div className="flex items-center gap-1 py-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-muted)] animate-bounce [animation-delay:-0.3s]" />
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-muted)] animate-bounce [animation-delay:-0.15s]" />
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-muted)] animate-bounce" />
+              <div className="flex items-center gap-2 py-1 font-mono text-[11px] text-[var(--gd-muted)]">
+                Thinking
               </div>
             )}
           </div>
@@ -1203,7 +1201,7 @@ export default function ChatPanel({
         onClick={scrollToBottom}
         aria-label="Scroll to bottom"
         className={cn(
-          "absolute right-4 bottom-[5.5rem] z-50 rounded-full border border-[var(--gd-border)] bg-[var(--gd-surface)] p-1.5 text-[var(--gd-text)] shadow-sm transition-all duration-200 hover:bg-[var(--gd-raised)]",
+          "absolute right-4 bottom-[5.5rem] z-50 rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] p-1.5 text-[var(--gd-text)] shadow-sm transition-[opacity,transform] duration-200 hover:bg-[var(--gd-raised)]",
           showScrollButton
             ? "opacity-100 translate-y-0"
             : "opacity-0 translate-y-2 pointer-events-none",
@@ -1223,7 +1221,6 @@ export default function ChatPanel({
                   {isRecording ? (
                     <>
                       <span className="relative flex h-2 w-2 shrink-0">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--gd-negative)] opacity-60" />
                         <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--gd-negative)]" />
                       </span>
                       <span className="truncate font-medium text-[var(--gd-text)]">
@@ -1269,7 +1266,7 @@ export default function ChatPanel({
                 {attachedDocs.map((doc) => (
                   <span
                     key={doc.id}
-                    className="inline-flex max-w-[15rem] items-center gap-1.5 rounded-full border border-[var(--gd-border)] bg-[var(--gd-raised)] py-1 pr-1 pl-2.5 text-[11px] font-medium text-[var(--gd-text)]"
+                    className="inline-flex max-w-[15rem] items-center gap-1.5 rounded-md border border-[var(--gd-border)] bg-[var(--gd-raised)] py-1 pr-1 pl-2.5 text-[11px] font-medium text-[var(--gd-text)]"
                     title={doc.filename}
                   >
                     <FileText
@@ -1279,7 +1276,7 @@ export default function ChatPanel({
                     <span className="truncate">{doc.filename}</span>
                     <button
                       type="button"
-                      className="rounded-full p-0.5 text-[var(--gd-muted)] transition-colors hover:bg-[var(--gd-surface)] hover:text-[var(--gd-negative)]"
+                      className="rounded-md p-0.5 text-[var(--gd-muted)] transition-colors hover:bg-[var(--gd-surface)] hover:text-[var(--gd-negative)]"
                       aria-label={`Remove ${doc.filename}`}
                       onClick={() => removeAttachedDoc(doc.id)}
                     >
@@ -1388,7 +1385,7 @@ export default function ChatPanel({
                   onChange={(e) =>
                     setLlmProvider(e.target.value as "ollama" | "bedrock")
                   }
-                  className="h-8 max-w-[9.5rem] cursor-pointer appearance-none rounded-full bg-transparent py-0 pr-6 pl-7 text-xs font-medium text-[var(--gd-muted)] outline-none transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-8 max-w-[9.5rem] cursor-pointer appearance-none rounded-md bg-transparent py-0 pr-6 pl-7 text-xs font-medium text-[var(--gd-muted)] outline-none transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label="LLM provider"
                 >
                   <option value="ollama">Ollama</option>
@@ -1405,7 +1402,7 @@ export default function ChatPanel({
                 disabled={streaming || readyDocs.length === 0}
                 onClick={() => setAttachPickerOpen((v) => !v)}
                 className={cn(
-                  "relative mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:pointer-events-none disabled:opacity-50",
+                  "relative mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:pointer-events-none disabled:opacity-50",
                   attachPickerOpen
                     ? "bg-[var(--gd-accent-soft)] text-[var(--gd-accent)]"
                     : "text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
@@ -1415,7 +1412,7 @@ export default function ChatPanel({
               >
                 <Paperclip className="h-4 w-4" aria-hidden="true" />
                 {attachedDocs.length > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--gd-accent)] px-0.5 text-[9px] font-semibold leading-none text-white">
+                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-md bg-[var(--gd-accent)] px-0.5 text-[9px] font-medium leading-none text-white">
                     {attachedDocs.length}
                   </span>
                 )}
@@ -1452,7 +1449,7 @@ export default function ChatPanel({
                       disabled={exporting}
                       className={cn(
                         buttonVariants({ variant: "ghost", size: "icon" }),
-                        "h-8 w-8 rounded-full text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
+                        "h-8 w-8 rounded-md text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
                       )}
                       aria-label={t("chat.exportTitle")}
                       title={exporting ? "Preparing export…" : t("chat.exportTitle")}
@@ -1490,7 +1487,7 @@ export default function ChatPanel({
                       onClick={handleClear}
                       className={cn(
                         buttonVariants({ variant: "ghost", size: "icon" }),
-                        "h-8 w-8 rounded-full text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-negative)]",
+                        "h-8 w-8 rounded-md text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-negative)]",
                       )}
                       aria-label="Clear chat history"
                     >
@@ -1509,7 +1506,7 @@ export default function ChatPanel({
                   onClick={toggleRecording}
                   className={cn(
                     buttonVariants({ variant: "ghost", size: "icon" }),
-                    "mb-0.5 h-8 w-8 shrink-0 rounded-full text-[var(--gd-muted)] transition-colors",
+                    "mb-0.5 h-8 w-8 shrink-0 rounded-md text-[var(--gd-muted)] transition-colors",
                     isRecording
                       ? "animate-pulse bg-[color-mix(in_oklab,var(--gd-negative)_15%,transparent)] text-[var(--gd-negative)]"
                       : "hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
@@ -1549,7 +1546,7 @@ export default function ChatPanel({
                   onClick={streaming ? handleStop : handleSend}
                   disabled={!streaming && !input.trim()}
                   className={cn(
-                    "mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors",
+                    "mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors",
                     streaming || input.trim()
                       ? "bg-[var(--gd-text)] text-[var(--gd-surface)] hover:opacity-90"
                       : "bg-[var(--gd-raised)] text-[var(--gd-faint)]",

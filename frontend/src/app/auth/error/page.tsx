@@ -3,14 +3,8 @@
 import { Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { AlertTriangle, RefreshCcw, Home } from "lucide-react";
+import { RefreshCcw, Home } from "lucide-react";
+import AuthShell from "@/components/auth/AuthShell";
 
 const ERROR_MESSAGES: Record<string, { title: string; description: string }> = {
   csrf_mismatch: {
@@ -53,33 +47,24 @@ function AuthErrorContent() {
     ERROR_MESSAGES[errorCode] ?? ERROR_MESSAGES.default;
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[300px] bg-destructive/8 rounded-full blur-[100px] pointer-events-none" />
-
-      <Card className="w-full max-w-md relative z-10 bg-card/80 backdrop-blur-xl border-border/50">
-        <CardHeader className="text-center pb-2">
-          <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 rounded-xl bg-destructive/15 flex items-center justify-center">
-              <AlertTriangle className="w-6 h-6 text-destructive" />
-            </div>
-          </div>
-          <CardTitle className="text-2xl font-bold">{title}</CardTitle>
-          <CardDescription className="text-sm text-muted-foreground mt-1">
+    <AuthShell showBack={false}>
+      <div className="genova-panel p-6 sm:p-8 space-y-6">
+        <div className="space-y-1.5" role="alert">
+          <h1 className="font-display text-2xl font-semibold tracking-tight">
+            {title}
+          </h1>
+          <p className="text-sm leading-relaxed text-muted-foreground">
             {description}
-          </CardDescription>
-        </CardHeader>
+          </p>
+        </div>
 
-        <CardContent className="space-y-3 pt-2">
-          {errorCode !== "default" && (
-            <div className="flex justify-center">
-              <span className="text-xs font-mono bg-muted px-2 py-1 rounded-md text-muted-foreground">
-                error: {errorCode}
-              </span>
-            </div>
-          )}
+        {errorCode !== "default" && (
+          <span className="cite-keycap">error: {errorCode}</span>
+        )}
 
+        <div className="space-y-3">
           <Button
-            className="w-full h-11"
+            className="w-full h-11 rounded-lg"
             onClick={() => router.push("/login")}
           >
             <RefreshCcw className="w-4 h-4 mr-2" />
@@ -88,15 +73,15 @@ function AuthErrorContent() {
 
           <Button
             variant="outline"
-            className="w-full h-11"
+            className="w-full h-11 rounded-lg"
             onClick={() => router.push("/")}
           >
             <Home className="w-4 h-4 mr-2" />
             Go Home
           </Button>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </div>
+    </AuthShell>
   );
 }
 

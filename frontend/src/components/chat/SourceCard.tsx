@@ -151,8 +151,8 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
         aria-label={`${expanded ? "Collapse" : "Expand"} ${sources.length} cited source${sources.length > 1 ? "s" : ""}`}
         className="flex w-full items-center justify-between px-3 py-2.5 text-xs transition-colors hover:bg-[var(--gd-raised)]"
       >
-        <span className="flex items-center gap-1.5 font-medium tracking-wide text-[var(--gd-muted)]">
-          <FileText className="h-3.5 w-3.5 text-[var(--gd-accent)]" />
+        <span className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--gd-muted)]">
+          <FileText className="h-3.5 w-3.5" />
           {sources.length} source{sources.length > 1 ? "s" : ""} cited
         </span>
         {expanded ? (
@@ -188,15 +188,12 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                 >
                   <span
                     className={cn(
-                      "inline-flex h-5 items-center rounded-md border px-1.5 text-[10px] transition-colors",
-                      badgeMeta.className,
-                      canOpen
-                        ? "cursor-pointer hover:opacity-80"
-                        : "cursor-default opacity-70",
+                      "cite-keycap",
+                      !canOpen && "cursor-default opacity-70",
                     )}
+                    data-confidence={badgeMeta.label}
                   >
-                    {validPage ? `p.${src.page}` : "Page N/A"} -{" "}
-                    {badgeMeta.label}
+                    {validPage ? `p.${src.page}` : "page —"}
                   </span>
                 </TooltipTrigger>
                 <TooltipContent

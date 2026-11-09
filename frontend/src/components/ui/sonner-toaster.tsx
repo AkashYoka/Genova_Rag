@@ -10,8 +10,8 @@ export function SonnerToaster() {
       position="top-right"
       toastOptions={{
         classNames: {
-          toast: "rounded-xl border border-border/60 bg-popover/90 backdrop-blur supports-[backdrop-filter]:bg-popover/60",
-          title: "font-semibold",
+          toast: "rounded-lg border border-border bg-popover shadow-sm",
+          title: "font-medium",
           description: "text-muted-foreground",
         },
       }}

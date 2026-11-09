@@ -10,8 +10,6 @@ import {
   Upload,
   UploadCloud,
   Trash2,
-  FileCheck,
-  Clock,
   AlertCircle,
   Loader2,
   FolderOpen,
@@ -39,12 +37,13 @@ import DocumentSettings from "@/components/document/DocumentSettings";
 import BulkActionBar from "@/components/document/BulkActionBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { DocInfo, DocumentListApiResponse } from "@/types/document";
 import { normalizeDocInfo } from "@/types/document";
+// Shares the desk shell + top bar styles that Header expects (genova-desk-top).
+import "../dashboard/dashboard.css";
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "—";
@@ -591,7 +590,7 @@ function DocumentLibraryPageContent() {
   return (
     <div
       {...getRootProps()}
-      className="relative flex h-dvh flex-col overflow-hidden bg-background text-foreground"
+      className="genova-desk relative flex h-dvh flex-col overflow-hidden bg-[var(--gd-ground)] text-[var(--gd-text)]"
     >
       <input {...getInputProps()} />
 
@@ -600,13 +599,13 @@ function DocumentLibraryPageContent() {
 
       {/* Drag overlay across the entire workspace */}
       {isDragActive && (
-        <div className="pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/90 backdrop-blur-sm transition-all duration-200">
-          <UploadCloud className="h-16 w-16 animate-bounce text-primary" />
-          <p className="mt-4 text-xl font-semibold text-primary">
-            Drop files anywhere to upload
+        <div className="pointer-events-none fixed inset-0 z-50 flex flex-col items-center justify-center bg-[var(--gd-ground)]/95">
+          <UploadCloud className="h-12 w-12 text-[var(--gd-muted)]" strokeWidth={1.5} />
+          <p className="mt-4 font-display text-lg font-medium text-[var(--gd-text)]">
+            Drop files to upload
           </p>
-          <p className="text-sm text-muted-foreground">
-            Supports PDF, DOCX, TXT, and Markdown files
+          <p className="text-sm text-[var(--gd-muted)]">
+            PDF, DOCX, TXT, or Markdown
           </p>
         </div>
       )}
@@ -637,27 +636,24 @@ function DocumentLibraryPageContent() {
         {/* Workspace Top Header */}
         <div className="mb-6 flex shrink-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-                Document Library
+            <div className="flex items-baseline gap-3">
+              <h1 className="font-display text-2xl font-medium tracking-tight text-[var(--gd-text)]">
+                Documents
               </h1>
-              <Badge
-                variant="outline"
-                className="border-primary/30 bg-primary/10 text-primary text-xs font-semibold px-2.5 py-0.5"
-              >
-                {documents.length} {documents.length === 1 ? "Doc" : "Docs"}
-              </Badge>
+              <span className="text-sm tabular-nums text-[var(--gd-faint)]">
+                {documents.length}
+              </span>
             </div>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Manage, search, index, and organize documents for multi-source AI analysis.
+            <p className="mt-1 text-sm text-[var(--gd-muted)]">
+              Upload, index, and manage your sources.
               {processingCount > 0 ? (
-                <span className="ml-2 inline-flex items-center gap-1.5 text-xs text-primary font-medium">
+                <span className="ml-2 inline-flex items-center gap-1.5 text-xs text-[var(--gd-muted)]">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  {processingCount} processing
+                  {processingCount} indexing
                 </span>
               ) : readyCount > 0 ? (
-                <span className="ml-2 text-xs text-muted-foreground/80">
-                  ({readyCount} ready for chat)
+                <span className="ml-2 text-xs text-[var(--gd-faint)]">
+                  {readyCount} ready for chat
                 </span>
               ) : null}
             </p>
@@ -672,7 +668,7 @@ function DocumentLibraryPageContent() {
                 else void loadTrash();
               }}
               disabled={isLoading}
-              className="h-9 gap-1.5 text-xs cursor-pointer"
+              className="h-9 gap-1.5 rounded-lg text-xs cursor-pointer"
               title="Refresh document list"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
@@ -683,11 +679,11 @@ function DocumentLibraryPageContent() {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 gap-1.5 text-xs cursor-pointer hover:bg-muted"
+                className="h-9 gap-1.5 rounded-lg text-xs cursor-pointer"
                 title="Open Chat Assistant"
               >
-                <MessageSquare className="h-3.5 w-3.5 text-primary" />
-                <span>Open Chat</span>
+                <MessageSquare className="h-3.5 w-3.5" />
+                <span>Open chat</span>
               </Button>
             </Link>
 
@@ -696,7 +692,7 @@ function DocumentLibraryPageContent() {
               size="sm"
               onClick={openFilePicker}
               disabled={uploading}
-              className="h-9 gap-2 bg-primary text-primary-foreground hover:bg-primary/90 font-medium shadow-xs cursor-pointer"
+              className="h-9 gap-2 rounded-lg bg-[var(--gd-primary)] font-medium text-[var(--gd-primary-ink)] shadow-none hover:bg-[var(--gd-primary)]/90 cursor-pointer"
               title="Upload new documents"
             >
               {uploading ? (
@@ -704,18 +700,18 @@ function DocumentLibraryPageContent() {
               ) : (
                 <Upload className="h-4 w-4" />
               )}
-              <span>Upload Document</span>
+              <span>Upload</span>
             </Button>
           </div>
         </div>
 
         {/* Upload in-progress banner */}
         {uploading && (
-          <div className="mb-6 shrink-0 rounded-xl border border-primary/30 bg-primary/5 p-4 transition-all">
-            <div className="flex items-center justify-between text-xs text-primary font-medium mb-2">
+          <div className="mb-6 shrink-0 rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] p-4">
+            <div className="mb-2 flex items-center justify-between text-xs text-[var(--gd-muted)]">
               <span className="flex items-center gap-1.5">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Uploading document...
+                Uploading…
               </span>
               <span>{Math.round(uploadProgress)}%</span>
             </div>
@@ -725,7 +721,7 @@ function DocumentLibraryPageContent() {
 
         {/* Upload error banner */}
         {uploadError && (
-          <div className="mb-6 flex shrink-0 items-center justify-between rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+          <div className="mb-6 flex shrink-0 items-center justify-between rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
             <div className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 shrink-0" />
               <span>{uploadError}</span>
@@ -747,10 +743,10 @@ function DocumentLibraryPageContent() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="text"
-              placeholder="Search documents by name or summary..."
+              placeholder="Search documents"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-9 pl-9 pr-8 text-xs bg-muted/30 border-border/80 focus-visible:ring-primary"
+              className="h-9 rounded-lg border-[var(--gd-border)] bg-[var(--gd-surface)] pl-9 pr-8 text-sm"
             />
             {searchQuery && (
               <button
@@ -780,7 +776,7 @@ function DocumentLibraryPageContent() {
                 ) : (
                   <Trash2 className="h-3.5 w-3.5 mr-1.5" />
                 )}
-                Empty Trash
+                Empty trash
               </Button>
             )}
 
@@ -789,16 +785,16 @@ function DocumentLibraryPageContent() {
               onValueChange={handleTabChange}
               className="w-auto"
             >
-              <TabsList className="h-9 bg-muted/50 p-1">
+              <TabsList className="h-9 rounded-lg bg-[var(--gd-raised)] p-1">
                 <TabsTrigger
                   value="active"
-                  className="h-7 text-xs px-3 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-xs"
+                  className="h-7 rounded-md text-xs px-3 data-[state=active]:bg-[var(--gd-surface)] data-[state=active]:text-[var(--gd-text)] data-[state=active]:shadow-none"
                 >
                   Active ({documents.length})
                 </TabsTrigger>
                 <TabsTrigger
                   value="trash"
-                  className="h-7 text-xs px-3 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-xs"
+                  className="h-7 rounded-md text-xs px-3 data-[state=active]:bg-[var(--gd-surface)] data-[state=active]:text-[var(--gd-text)] data-[state=active]:shadow-none"
                 >
                   Trash ({trashDocuments.length})
                 </TabsTrigger>
@@ -825,7 +821,7 @@ function DocumentLibraryPageContent() {
         </div>
 
         {/* Documents Content View */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card/50 shadow-xs">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)]">
           {isLoading ? (
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6" aria-busy="true">
               {Array.from({ length: 5 }).map((_, i) => (
@@ -841,7 +837,7 @@ function DocumentLibraryPageContent() {
                       <Skeleton className="h-2.5 w-1/2" />
                     </div>
                   </div>
-                  <Skeleton className="h-5 w-20 rounded-full" />
+                  <Skeleton className="h-4 w-16" />
                   <Skeleton className="h-3.5 w-16" />
                   <Skeleton className="h-3.5 w-12" />
                   <Skeleton className="h-3.5 w-24" />
@@ -853,55 +849,55 @@ function DocumentLibraryPageContent() {
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-20 text-center">
               {searchQuery ? (
                 <>
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-muted/60 text-muted-foreground mb-4">
-                    <Search className="h-6 w-6" />
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--gd-raised)] text-[var(--gd-muted)]">
+                    <Search className="h-5 w-5" strokeWidth={1.5} />
                   </div>
-                  <h3 className="text-base font-semibold text-foreground">
-                    No documents found
+                  <h3 className="font-display text-base font-medium text-[var(--gd-text)]">
+                    No matches
                   </h3>
-                  <p className="mt-1 text-sm text-muted-foreground max-w-sm mx-auto">
-                    No documents matched &ldquo;{searchQuery}&rdquo;. Try another search term or clear the filter.
+                  <p className="mx-auto mt-1 max-w-sm text-sm text-[var(--gd-muted)]">
+                    Nothing matched &ldquo;{searchQuery}&rdquo;. Try another term or clear the search.
                   </p>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setSearchQuery("")}
-                    className="mt-4 text-xs cursor-pointer"
+                    className="mt-4 rounded-lg text-xs cursor-pointer"
                   >
-                    Clear Search
+                    Clear search
                   </Button>
                 </>
               ) : activeTab === "trash" ? (
                 <>
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-muted/60 text-muted-foreground mb-4">
-                    <Trash2 className="h-6 w-6" />
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--gd-raised)] text-[var(--gd-muted)]">
+                    <Trash2 className="h-5 w-5" strokeWidth={1.5} />
                   </div>
-                  <h3 className="text-base font-semibold text-foreground">
+                  <h3 className="font-display text-base font-medium text-[var(--gd-text)]">
                     Trash is empty
                   </h3>
-                  <p className="mt-1 text-sm text-muted-foreground max-w-sm mx-auto">
-                    Deleted documents will appear here. You can restore them or delete them permanently at any time.
+                  <p className="mx-auto mt-1 max-w-sm text-sm text-[var(--gd-muted)]">
+                    Deleted documents appear here. Restore them or delete them permanently.
                   </p>
                 </>
               ) : (
                 <>
-                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
-                    <FolderOpen className="h-8 w-8" />
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-[var(--gd-raised)] text-[var(--gd-muted)]">
+                    <FolderOpen className="h-5 w-5" strokeWidth={1.5} />
                   </div>
-                  <h3 className="text-lg font-semibold text-foreground">
-                    Your Document Library is empty
+                  <h3 className="font-display text-lg font-medium text-[var(--gd-text)]">
+                    No documents yet
                   </h3>
-                  <p className="mt-1.5 text-sm text-muted-foreground max-w-md mx-auto">
-                    Upload PDF, DOCX, TXT, or Markdown documents to begin chatting with cited answers, generating knowledge graphs, and creating flashcards.
+                  <p className="mx-auto mt-1.5 max-w-md text-sm text-[var(--gd-muted)]">
+                    Upload a PDF, DOCX, TXT, or Markdown file to ask questions with cited answers.
                   </p>
                   <div className="mt-6 flex items-center justify-center gap-3">
                     <Button
                       variant="default"
                       onClick={openFilePicker}
-                      className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2 cursor-pointer"
+                      className="gap-2 rounded-lg bg-[var(--gd-primary)] text-[var(--gd-primary-ink)] shadow-none hover:bg-[var(--gd-primary)]/90 cursor-pointer"
                     >
                       <Upload className="h-4 w-4" />
-                      <span>Upload Document</span>
+                      <span>Upload</span>
                     </Button>
                   </div>
                 </>
@@ -911,8 +907,8 @@ function DocumentLibraryPageContent() {
             <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
               <table className="w-full table-fixed border-collapse text-left text-sm">
                 <thead>
-                  <tr className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    <th className="sticky top-0 z-10 border-b border-border w-10 bg-muted py-3.5 pl-4 pr-2">
+                  <tr className="text-xs font-medium text-[var(--gd-muted)]">
+                    <th className="sticky top-0 z-10 border-b border-border w-10 bg-[var(--gd-surface)] py-3 pl-4 pr-2">
                       <input
                         type="checkbox"
                         checked={isAllSelected}
@@ -921,25 +917,25 @@ function DocumentLibraryPageContent() {
                         className="h-4 w-4 rounded-sm border border-muted-foreground/40 accent-primary cursor-pointer"
                       />
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border bg-muted py-3.5 px-3">
-                      Document Name
+                    <th className="sticky top-0 z-10 border-b border-border bg-[var(--gd-surface)] py-3 px-3">
+                      Name
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border w-[22%] bg-muted py-3.5 px-3 sm:w-[15%] md:w-[13%]">
+                    <th className="sticky top-0 z-10 border-b border-border w-[22%] bg-[var(--gd-surface)] py-3 px-3 sm:w-[15%] md:w-[13%]">
                       Status
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border hidden w-[9%] bg-muted py-3.5 px-3 text-right sm:table-cell">
-                      File Size
+                    <th className="sticky top-0 z-10 border-b border-border hidden w-[9%] bg-[var(--gd-surface)] py-3 px-3 text-right sm:table-cell">
+                      Size
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border hidden w-[7%] bg-muted py-3.5 px-3 text-right md:table-cell">
+                    <th className="sticky top-0 z-10 border-b border-border hidden w-[7%] bg-[var(--gd-surface)] py-3 px-3 text-right md:table-cell">
                       Pages
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border hidden w-[8%] bg-muted py-3.5 px-3 text-right md:table-cell">
+                    <th className="sticky top-0 z-10 border-b border-border hidden w-[8%] bg-[var(--gd-surface)] py-3 px-3 text-right md:table-cell">
                       Chunks
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border hidden w-[11%] bg-muted py-3.5 px-3 lg:table-cell">
-                      Upload Date
+                    <th className="sticky top-0 z-10 border-b border-border hidden w-[11%] bg-[var(--gd-surface)] py-3 px-3 lg:table-cell">
+                      Uploaded
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border w-[26%] bg-muted py-3.5 pl-3 pr-4 text-right sm:w-[20%] lg:w-[15%]">
+                    <th className="sticky top-0 z-10 border-b border-border w-[26%] bg-[var(--gd-surface)] py-3 pl-3 pr-4 text-right sm:w-[20%] lg:w-[15%]">
                       Actions
                     </th>
                   </tr>
@@ -961,10 +957,10 @@ function DocumentLibraryPageContent() {
                         }}
                         className={`group transition-colors duration-150 ${
                           isSelected
-                            ? "bg-primary/8"
+                            ? "bg-[var(--gd-active)]"
                             : isActive
-                              ? "bg-primary/5"
-                              : "hover:bg-muted/30"
+                              ? "bg-[var(--gd-raised)]"
+                              : "hover:bg-[var(--gd-raised)]/60"
                         } ${activeTab === "active" && doc.status === "ready" ? "cursor-pointer" : ""}`}
                       >
                         {/* Checkbox column */}
@@ -984,7 +980,7 @@ function DocumentLibraryPageContent() {
                         {/* Name & Summary column */}
                         <td className="py-3 px-3">
                           <div className="flex items-start gap-3">
-                            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/20">
+                            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--gd-raised)] text-[var(--gd-muted)]">
                               {doc.original_name.endsWith(".pdf") ? (
                                 <FileText className="h-4 w-4" />
                               ) : (
@@ -1019,7 +1015,7 @@ function DocumentLibraryPageContent() {
                                     size="icon"
                                     onClick={() => void submitRename(doc)}
                                     disabled={isRenaming}
-                                    className="h-7 w-7 text-primary hover:bg-primary/10 cursor-pointer"
+                                    className="h-7 w-7 text-[var(--gd-text)] hover:bg-[var(--gd-raised)] cursor-pointer"
                                     title="Save name"
                                   >
                                     <Check className="h-3.5 w-3.5" />
@@ -1091,17 +1087,16 @@ function DocumentLibraryPageContent() {
                         {/* Status column */}
                         <td className="py-3 px-3">
                           {doc.status === "ready" ? (
-                            <Badge
-                              variant="outline"
-                              className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 gap-1.5 max-w-full text-[11px] font-medium py-0.5 px-2"
-                            >
-                              <FileCheck className="h-3 w-3 shrink-0" />
+                            <span className="inline-flex max-w-full items-center gap-1.5 text-xs text-[var(--gd-muted)]">
+                              <span
+                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--gd-positive)]"
+                                aria-hidden
+                              />
                               Ready
-                            </Badge>
+                            </span>
                           ) : doc.status === "processing" ? (
-                            <Badge
-                              variant="outline"
-                              className="border-primary/30 bg-primary/10 text-primary gap-1.5 max-w-full text-[11px] font-medium py-0.5 px-2 tabular-nums"
+                            <span
+                              className="inline-flex max-w-full items-center gap-1.5 text-xs tabular-nums text-[var(--gd-muted)]"
                               title={
                                 doc.processing_stage
                                   ? `${doc.processing_stage}${typeof doc.processing_progress === "number" ? ` (${doc.processing_progress}%)` : ""}`
@@ -1112,24 +1107,26 @@ function DocumentLibraryPageContent() {
                               {typeof doc.processing_progress === "number"
                                 ? `${Math.round(doc.processing_progress)}%`
                                 : "Indexing"}
-                            </Badge>
+                            </span>
                           ) : doc.status === "pending" ? (
-                            <Badge
-                              variant="outline"
-                              className="border-amber-500/30 bg-amber-500/10 text-amber-400 gap-1.5 max-w-full text-[11px] font-medium py-0.5 px-2"
-                            >
-                              <Clock className="h-3 w-3 shrink-0" />
+                            <span className="inline-flex max-w-full items-center gap-1.5 text-xs text-[var(--gd-muted)]">
+                              <span
+                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--gd-warning)]"
+                                aria-hidden
+                              />
                               Queued
-                            </Badge>
+                            </span>
                           ) : (
-                            <Badge
-                              variant="destructive"
-                              className="gap-1.5 max-w-full text-[11px] font-medium py-0.5 px-2"
+                            <span
+                              className="inline-flex max-w-full items-center gap-1.5 text-xs text-[var(--gd-negative)]"
                               title={doc.error_message || "Ingestion error"}
                             >
-                              <AlertCircle className="h-3 w-3 shrink-0" />
+                              <span
+                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--gd-negative)]"
+                                aria-hidden
+                              />
                               Failed
-                            </Badge>
+                            </span>
                           )}
                         </td>
 
@@ -1146,7 +1143,7 @@ function DocumentLibraryPageContent() {
                         {/* Chunk count column */}
                         <td className="hidden py-3 px-3 text-right text-xs font-mono text-muted-foreground md:table-cell">
                           {doc.chunk_count > 0 ? (
-                            <span className="text-primary font-medium">
+                            <span className="text-[var(--gd-text)]">
                               {doc.chunk_count}
                             </span>
                           ) : (
@@ -1172,7 +1169,7 @@ function DocumentLibraryPageContent() {
                                   size="sm"
                                   onClick={() => handleOpenInWorkspace(doc)}
                                   disabled={doc.status !== "ready"}
-                                  className="h-8 gap-1.5 text-xs text-primary hover:bg-primary/10 hover:text-primary cursor-pointer px-2"
+                                  className="h-8 gap-1.5 text-xs text-[var(--gd-text)] hover:bg-[var(--gd-raised)] cursor-pointer px-2"
                                   title={`Open ${doc.original_name} in Chat Workspace`}
                                 >
                                   <MessageSquare className="h-3.5 w-3.5" />
@@ -1214,7 +1211,7 @@ function DocumentLibraryPageContent() {
                                   size="sm"
                                   onClick={(e) => void handleRestoreSingle(doc.id, e)}
                                   disabled={singleRestoringId === doc.id}
-                                  className="h-8 gap-1.5 text-xs text-primary hover:bg-primary/10 hover:text-primary cursor-pointer px-2"
+                                  className="h-8 gap-1.5 text-xs text-[var(--gd-text)] hover:bg-[var(--gd-raised)] cursor-pointer px-2"
                                   title={`Restore ${doc.original_name}`}
                                 >
                                   {singleRestoringId === doc.id ? (

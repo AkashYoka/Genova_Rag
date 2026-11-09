@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import I18nProvider from "@/components/providers/I18nProvider";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
 import MuiProvider from "@/components/providers/MuiProvider";
+import { SonnerToaster } from "@/components/ui/sonner-toaster";
 
 const display = Syne({
   variable: "--font-display",
@@ -62,7 +63,10 @@ export default function RootLayout({
           <MuiProvider>
             <AuthProvider>
               <I18nProvider>
-                <TooltipProvider>{children}</TooltipProvider>
+                <TooltipProvider>
+                  {children}
+                  <SonnerToaster />
+                </TooltipProvider>
               </I18nProvider>
             </AuthProvider>
           </MuiProvider>

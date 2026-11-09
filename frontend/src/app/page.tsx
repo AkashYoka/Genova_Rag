@@ -1,69 +1,148 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import {
   FileText,
   MessageSquare,
-  Brain,
+  Network,
+  StickyNote,
   Shield,
-  Zap,
   Search,
   ArrowRight,
+  Loader2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import Chip from "@mui/material/Chip";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import Link from "next/link";
 import Logo from "@/components/layout/Logo";
-import { Aurora } from "@/components/bits/Aurora";
-import { SpotlightCard } from "@/components/bits/SpotlightCard";
-import { FadeIn } from "@/components/bits/FadeIn";
 
 const FEATURES = [
   {
     icon: FileText,
-    title: "Multi-Format Upload",
-    desc: "PDF, DOCX, TXT, and Markdown with smart chunking",
+    title: "Multi-format upload",
+    desc: "PDF, DOCX, TXT and Markdown, chunked with page boundaries kept.",
   },
   {
     icon: Search,
-    title: "Hybrid Retrieval",
-    desc: "Vector + BM25 fused with cross-encoder reranking",
+    title: "Hybrid retrieval",
+    desc: "Vector search and BM25 fused, then reranked by a cross-encoder.",
   },
   {
     icon: MessageSquare,
-    title: "Streaming Chat",
-    desc: "Real-time answers with page-level citations",
+    title: "Streaming cited chat",
+    desc: "Answers arrive token by token, each claim tagged with its page.",
   },
   {
-    icon: Zap,
-    title: "Instant Insights",
-    desc: "Extract facts, summaries, and grounded data points",
+    icon: Network,
+    title: "Knowledge graph",
+    desc: "See entities and the links between them across your documents.",
+  },
+  {
+    icon: StickyNote,
+    title: "Sticky notes",
+    desc: "Pin findings next to the source so context stays with the note.",
   },
   {
     icon: Shield,
-    title: "Isolated Workspaces",
-    desc: "Per-user collections and JWT-secured sessions",
-  },
-  {
-    icon: Brain,
-    title: "Agentic RAG",
-    desc: "Prompt assembly, streaming tokens, source fidelity",
+    title: "Isolated workspaces",
+    desc: "Per-user collections and JWT-secured sessions.",
   },
 ];
+
+function DeskPreview() {
+  return (
+    <div
+      className="genova-panel overflow-hidden"
+      role="img"
+      aria-label="Preview of a Genova workspace: a cited answer next to a PDF page strip"
+    >
+      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate font-mono text-xs text-muted-foreground">
+            Q3-annual-report.pdf
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="h-1.5 w-1.5 rounded-full bg-signal" />
+          <span className="font-mono">Indexed · 64 pages</span>
+        </div>
+      </div>
+
+      <div className="grid sm:grid-cols-[1fr_8.5rem]">
+        <div className="space-y-4 p-5">
+          <div className="ml-auto max-w-[85%] rounded-lg bg-[var(--gd-user-bubble)] px-3.5 py-2.5 text-sm">
+            What drove operating margin in the second half?
+          </div>
+
+          <div className="space-y-3 text-sm leading-relaxed">
+            <p>
+              Operating margin rose to 18.4%, mostly from lower freight costs
+              and a shift toward the services segment
+              <span className="cite-keycap ml-1.5 align-middle">p.12</span>
+              <span className="cite-keycap ml-1 align-middle">p.31</span>.
+            </p>
+            <p className="text-muted-foreground">
+              Management expects the freight benefit to taper next year, with
+              capital spend held flat
+              <span className="cite-keycap ml-1.5 align-middle">p.47</span>.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground">
+            <span>Ask about this document</span>
+            <span className="streaming-caret ml-auto" aria-hidden="true" />
+          </div>
+        </div>
+
+        <div className="hidden border-l border-border bg-[var(--gd-raised)] p-3 sm:block">
+          <p className="mb-2 font-mono text-[11px] text-muted-foreground">
+            Cited pages
+          </p>
+          <div className="space-y-2.5">
+            {[12, 31, 47].map((page) => (
+              <div key={page} className="space-y-1">
+                <div className="space-y-1.5 rounded-md border border-border bg-card p-2">
+                  <div className="h-1.5 w-2/3 rounded-sm bg-foreground/20" />
+                  <div className="h-1 w-full rounded-sm bg-foreground/10" />
+                  <div className="h-1 w-full rounded-sm bg-foreground/10" />
+                  <div
+                    className={cn(
+                      "h-1 w-4/5 rounded-sm",
+                      page === 12 ? "bg-primary/40" : "bg-foreground/10"
+                    )}
+                  />
+                  <div className="h-1 w-3/5 rounded-sm bg-foreground/10" />
+                </div>
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  p.{page}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const subscribe = () => () => {};
+const getSnapshot = () => true;
+const getServerSnapshot = () => false;
 
 export default function HomePage() {
   const { user, loading } = useAuth();
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot,
+  );
 
   const docsUrl =
     (process.env.NEXT_PUBLIC_API_URL || "http://localhost:7860") + "/docs";
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     if (mounted && !loading && user) {
@@ -74,190 +153,150 @@ export default function HomePage() {
   if (!mounted || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse-glow h-12 w-12 rounded-full bg-primary/25" />
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col relative overflow-hidden">
-      <Aurora />
-
-      <header className="relative z-20 flex items-center justify-between px-6 py-5 max-w-6xl mx-auto w-full">
-        <div className="flex items-center gap-3">
-          <Logo size={34} />
-          <div className="leading-tight">
-            <p className="font-display text-lg font-semibold tracking-tight">
-              Genova
-            </p>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              by Yoka
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link href="/login">
-            <Button variant="ghost" className="rounded-full px-4">
-              Sign in
-            </Button>
+    <div className="min-h-screen flex flex-col bg-background">
+      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
+        <Link href="/" className="flex items-center gap-2.5">
+          <Logo size={30} />
+          <span className="font-display text-lg font-semibold tracking-tight">
+            Genova
+          </span>
+        </Link>
+        <div className="flex items-center gap-1.5">
+          <Link
+            href="/login"
+            className={buttonVariants({
+              variant: "ghost",
+              className: "rounded-lg px-3",
+            })}
+          >
+            Sign in
           </Link>
-          <Link href="/register">
-            <Button className="rounded-full px-5 shadow-lg shadow-primary/20">
-              Get started
-            </Button>
+          <Link
+            href="/register"
+            className={buttonVariants({ className: "rounded-lg px-4" })}
+          >
+            Get started
           </Link>
         </div>
       </header>
 
-      <section className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pb-20 pt-8">
-        <FadeIn className="text-center max-w-4xl mx-auto space-y-8">
-          <Chip
-            label="Enterprise agentic RAG"
-            color="primary"
-            variant="outlined"
-            sx={{
-              borderRadius: 999,
-              fontWeight: 700,
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              fontSize: 11,
-              bgcolor: "transparent",
-            }}
-          />
-
-          <h1 className="font-display text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[0.98]">
-            Documents that{" "}
-            <span className="bg-gradient-to-r from-primary via-primary to-[oklch(0.86_0.16_125)] bg-clip-text text-transparent">
-              answer back
-            </span>
-          </h1>
-
-          <p className="text-base sm:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-            Genova_Rag turns financial reports, contracts, and research into a
-            cited conversation — hybrid retrieval, streaming answers, and
-            page-accurate sources in one workspace.
-          </p>
-
-          <div className="flex flex-wrap gap-3 justify-center pt-2">
-            <Link href="/register">
-              <Button
-                size="lg"
-                className="h-12 rounded-full px-8 text-base shadow-xl shadow-primary/25 transition-transform hover:-translate-y-0.5 active:scale-[0.98]"
+      <main className="flex-1">
+        <section className="mx-auto grid w-full max-w-6xl items-center gap-12 px-6 pb-20 pt-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-16 lg:pt-16">
+          <div className="space-y-6">
+            <h1 className="font-display text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-[3.5rem]">
+              Every answer points back to a page.
+            </h1>
+            <p className="max-w-lg text-base leading-relaxed text-muted-foreground sm:text-lg">
+              Upload reports, contracts and research. Ask questions in plain
+              language and get streamed answers with page citations you can
+              open and check, backed by a knowledge graph of your documents.
+            </p>
+            <div className="flex flex-wrap gap-3 pt-1">
+              <Link
+                href="/register"
+                className={buttonVariants({
+                  size: "lg",
+                  className: "h-11 rounded-lg px-6 text-base",
+                })}
               >
                 Open workspace
                 <ArrowRight className="ml-1.5 h-4 w-4" />
-              </Button>
-            </Link>
-            <Link href="/login">
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-12 rounded-full px-8 text-base border-border/70 bg-background/40 backdrop-blur"
+              </Link>
+              <Link
+                href="/login"
+                className={buttonVariants({
+                  size: "lg",
+                  variant: "outline",
+                  className: "h-11 rounded-lg px-6 text-base",
+                })}
               >
                 Sign in
-              </Button>
-            </Link>
-          </div>
-
-          <p className="text-xs text-muted-foreground/70 tracking-wide">
-            Upload · Embed · Retrieve · Chat
-          </p>
-        </FadeIn>
-
-        <div className="relative z-10 mt-16 w-full max-w-5xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {FEATURES.map(({ icon: Icon, title, desc }, i) => (
-            <FadeIn key={title} delay={0.08 + i * 0.05}>
-              <SpotlightCard className="h-full p-5">
-                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                  <Icon className="h-5 w-5" />
-                </div>
-                <h3 className="font-display text-base font-semibold tracking-tight">
-                  {title}
-                </h3>
-                <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
-                  {desc}
-                </p>
-              </SpotlightCard>
-            </FadeIn>
-          ))}
-        </div>
-      </section>
-
-      <footer className="relative z-10 border-t border-border/40 bg-card/30 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-1 md:grid-cols-12 gap-8">
-          <div className="md:col-span-5 space-y-4">
-            <div className="flex items-center gap-2.5">
-              <Logo size={28} />
-              <span className="font-display font-semibold text-base tracking-tight">
-                Genova_Rag
-              </span>
+              </Link>
             </div>
-            <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-              Yoka document intelligence — retrieval-augmented chat with
-              verifiable citations.
-            </p>
           </div>
 
-          <div className="md:col-span-2 space-y-3">
-            <h4 className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground/80">
-              Product
-            </h4>
-            <ul className="space-y-2.5 text-sm text-muted-foreground">
-              <li>
-                <Link href="/register" className="hover:text-foreground transition-colors">
-                  Get started
-                </Link>
-              </li>
-              <li>
-                <Link href="/login" className="hover:text-foreground transition-colors">
-                  Sign in
-                </Link>
-              </li>
-              <li>
-                <Link href="/dashboard" className="hover:text-foreground transition-colors">
-                  Workspace
-                </Link>
-              </li>
+          <DeskPreview />
+        </section>
+
+        <section className="border-t border-border">
+          <div className="mx-auto w-full max-w-6xl px-6 py-16">
+            <div className="max-w-xl space-y-2">
+              <h2 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">
+                What is in the workspace
+              </h2>
+              <p className="text-sm leading-relaxed text-muted-foreground sm:text-base">
+                Six working parts, each one shipped and in use today.
+              </p>
+            </div>
+
+            <ul className="mt-10 grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
+              {FEATURES.map(({ icon: Icon, title, desc }) => (
+                <li key={title} className="flex gap-3.5">
+                  <Icon
+                    className="mt-0.5 h-5 w-5 shrink-0 text-primary"
+                    strokeWidth={1.5}
+                  />
+                  <div>
+                    <h3 className="font-display text-base font-semibold tracking-tight">
+                      {title}
+                    </h3>
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                      {desc}
+                    </p>
+                  </div>
+                </li>
+              ))}
             </ul>
           </div>
+        </section>
+      </main>
 
-          <div className="md:col-span-3 space-y-3">
-            <h4 className="text-xs font-semibold uppercase tracking-[0.16em] text-foreground/80">
-              Resources
-            </h4>
-            <ul className="space-y-2.5 text-sm text-muted-foreground">
-              <li>
-                <a
-                  href={docsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-foreground transition-colors"
-                >
-                  API documentation
-                </a>
-              </li>
-              <li>
-                <a
-                  href="https://github.com/AkashYoka/Genova_Rag"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-foreground transition-colors"
-                >
-                  Repository
-                </a>
-              </li>
-            </ul>
+      <footer className="border-t border-border">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-6 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2.5">
+            <Logo size={22} />
+            <span>
+              © {new Date().getFullYear()} Yoka · Genova
+            </span>
           </div>
-
-        </div>
-
-        <div className="max-w-6xl mx-auto px-6 py-5 border-t border-border/20 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground/70">
-            © {new Date().getFullYear()} Yoka · Genova_Rag
-          </p>
+          <nav className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <Link
+              href="/register"
+              className="transition-colors hover:text-foreground"
+            >
+              Get started
+            </Link>
+            <Link
+              href="/login"
+              className="transition-colors hover:text-foreground"
+            >
+              Sign in
+            </Link>
+            <a
+              href={docsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="transition-colors hover:text-foreground"
+            >
+              API documentation
+            </a>
+            <a
+              href="https://github.com/AkashYoka/Genova_Rag"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="transition-colors hover:text-foreground"
+            >
+              Repository
+            </a>
+          </nav>
         </div>
       </footer>
-
     </div>
   );
 }

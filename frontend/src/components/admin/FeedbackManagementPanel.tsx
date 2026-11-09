@@ -102,7 +102,7 @@ function DetailBlock({
 }) {
   return (
     <section>
-      <h3 className="mb-1.5 text-[12px] font-medium uppercase tracking-wide text-[var(--gd-muted)]">
+      <h3 className="mb-1.5 text-[12px] font-medium text-[var(--gd-muted)]">
         {label}
       </h3>
       <div className="rounded-[8px] border border-[var(--gd-border)] bg-[var(--gd-ground)]/40 p-3 text-[13px] leading-relaxed">
@@ -411,7 +411,7 @@ export function FeedbackManagementPanel() {
           <aside className="flex h-full w-full max-w-2xl flex-col border-l border-[var(--gd-border)] bg-[var(--gd-surface)] shadow-2xl">
             <div className="flex items-start justify-between gap-3 border-b border-[var(--gd-border)] px-5 py-4">
               <div>
-                <p className="text-[12px] uppercase tracking-wide text-[var(--gd-muted)]">
+                <p className="text-[12px] text-[var(--gd-muted)]">
                   Feedback detail
                 </p>
                 <h2 className="text-[18px] font-semibold tracking-tight">

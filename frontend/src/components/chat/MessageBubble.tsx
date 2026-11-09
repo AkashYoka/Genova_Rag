@@ -303,10 +303,12 @@ export default function MessageBubble({ message }: Props) {
                   <MarkdownContent content={message.content} />
                 )
               ) : message.isStreaming ? (
-                <div className="flex items-center gap-1.5 py-1" aria-label="Generating">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-accent)]/70 animate-bounce [animation-delay:0ms]" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-accent)]/70 animate-bounce [animation-delay:150ms]" />
-                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--gd-accent)]/70 animate-bounce [animation-delay:300ms]" />
+                <div
+                  className="flex items-center gap-2 py-1 text-[12px] text-[var(--gd-muted)]"
+                  aria-label="Generating"
+                >
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Generating
                 </div>
               ) : null}
             </div>
@@ -483,7 +485,7 @@ export default function MessageBubble({ message }: Props) {
                         )
                       }
                       className={cn(
-                        "rounded-full border px-2.5 py-1 text-[12px] transition-colors",
+                        "rounded-md border px-2.5 py-1 text-[12px] transition-colors",
                         feedbackReason === reason.id
                           ? "border-[var(--gd-accent)] bg-[var(--gd-accent-soft)] text-[var(--gd-accent)]"
                           : "border-[var(--gd-border)] text-[var(--gd-muted)] hover:border-[var(--gd-accent)]/40 hover:text-[var(--gd-text)]",
@@ -550,37 +552,50 @@ export default function MessageBubble({ message }: Props) {
                     {formatDistanceToNow(messageTime, { addSuffix: true })}
                   </div>
                 )}
-                <span className="rounded-md border border-[var(--gd-border)] px-1.5 py-0.5 text-[10px]">
-                  {message.usage?.model_id ||
-                    (message.llm_provider === "bedrock"
-                      ? "us.amazon.nova-2-lite-v1:0"
-                      : message.llm_provider === "ollama"
-                        ? "Ollama"
-                        : message.llm_provider || "LLM")}
-                </span>
-                {message.usage && (
-                  <span
-                    title={
-                      message.usage.pricing_note ||
-                      "Estimated cost from provider usage metadata — not an AWS bill."
-                    }
-                  >
-                    in {message.usage.input_tokens ?? "—"} · out{" "}
-                    {message.usage.output_tokens ?? "—"} · tot{" "}
-                    {message.usage.total_tokens ?? "—"}
-                    {typeof message.usage.estimated_cost_usd === "number"
-                      ? ` · est $${
-                          message.usage.estimated_cost_usd < 0.0001
-                            ? message.usage.estimated_cost_usd.toFixed(6)
-                            : message.usage.estimated_cost_usd < 0.01
-                              ? message.usage.estimated_cost_usd.toFixed(4)
-                              : message.usage.estimated_cost_usd.toFixed(3)
-                        } (est. ≠ billed)`
-                      : ""}
-                  </span>
-                )}
-                {message.response_time_ms && (
-                  <span>{(message.response_time_ms / 1000).toFixed(1)}s</span>
+                {(message.usage ||
+                  message.response_time_ms ||
+                  message.llm_provider) && (
+                  <details className="group/meta">
+                    <summary className="cursor-pointer list-none text-[11px] text-[var(--gd-faint)] marker:content-none hover:text-[var(--gd-muted)] [&::-webkit-details-marker]:hidden">
+                      Details
+                    </summary>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[10px] text-[var(--gd-faint)]">
+                      <span>
+                        {message.usage?.model_id ||
+                          (message.llm_provider === "bedrock"
+                            ? "nova-2-lite"
+                            : message.llm_provider === "ollama"
+                              ? "Ollama"
+                              : message.llm_provider || "LLM")}
+                      </span>
+                      {message.usage && (
+                        <span
+                          title={
+                            message.usage.pricing_note ||
+                            "Estimated cost from provider usage metadata — not an AWS bill."
+                          }
+                        >
+                          in {message.usage.input_tokens ?? "—"} · out{" "}
+                          {message.usage.output_tokens ?? "—"} · tot{" "}
+                          {message.usage.total_tokens ?? "—"}
+                          {typeof message.usage.estimated_cost_usd === "number"
+                            ? ` · est $${
+                                message.usage.estimated_cost_usd < 0.0001
+                                  ? message.usage.estimated_cost_usd.toFixed(6)
+                                  : message.usage.estimated_cost_usd < 0.01
+                                    ? message.usage.estimated_cost_usd.toFixed(4)
+                                    : message.usage.estimated_cost_usd.toFixed(3)
+                              }`
+                            : ""}
+                        </span>
+                      )}
+                      {message.response_time_ms && (
+                        <span>
+                          {(message.response_time_ms / 1000).toFixed(1)}s
+                        </span>
+                      )}
+                    </div>
+                  </details>
                 )}
               </div>
             )}

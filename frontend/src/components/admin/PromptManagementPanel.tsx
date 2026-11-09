@@ -607,7 +607,7 @@ export function PromptManagementPanel() {
           <div className="flex h-full w-full max-w-2xl flex-col border-l border-[var(--gd-border)] bg-[var(--gd-surface)] shadow-2xl">
             <div className="flex items-start justify-between gap-3 border-b border-[var(--gd-border)] px-5 py-4">
               <div>
-                <p className="text-[12px] uppercase tracking-wide text-[var(--gd-muted)]">
+                <p className="text-[12px] text-[var(--gd-muted)]">
                   {editingCard.name}
                   {editingCard.is_fallback ? " · default fallback" : ""}
                 </p>

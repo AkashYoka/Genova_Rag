@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -90,7 +89,7 @@ export default function Header({
 
 
   const toolBtn =
-    "h-8 w-8 text-[var(--gd-muted,#5c636c)] hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]";
+    "h-8 w-8 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]";
 
   return (
     <>
@@ -146,8 +145,8 @@ export default function Header({
               href="/dashboard"
               className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 pathname === "/dashboard"
-                  ? "bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)] font-semibold"
-                  : "text-[var(--gd-muted,#5c636c)] hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]"
+                  ? "bg-[var(--gd-active)] text-[var(--gd-text)] font-medium"
+                  : "text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
               }`}
             >
               Workspace
@@ -156,11 +155,11 @@ export default function Header({
               href="/documents"
               className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 pathname === "/documents"
-                  ? "bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)] font-semibold"
-                  : "text-[var(--gd-muted,#5c636c)] hover:bg-[var(--gd-raised,#eceef2)] hover:text-[var(--gd-text,#14171c)]"
+                  ? "bg-[var(--gd-active)] text-[var(--gd-text)] font-medium"
+                  : "text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
               }`}
             >
-              Document Library
+              Documents
             </Link>
           </nav>
         </div>
@@ -172,7 +171,7 @@ export default function Header({
               size="icon"
               className={
                 graphOpen
-                  ? "h-8 w-8 bg-[var(--gd-active,#e6e8ec)] text-[var(--gd-text,#14171c)]"
+                  ? "h-8 w-8 bg-[var(--gd-active)] text-[var(--gd-text)]"
                   : toolBtn
               }
               onClick={onToggleGraph}
@@ -213,7 +212,7 @@ export default function Header({
 
           <KeyboardShortcutsModal />
 
-          <span className="mx-1 hidden h-5 w-px bg-[var(--gd-border,#e2e5ea)] sm:block" aria-hidden />
+          <span className="mx-1 hidden h-5 w-px bg-[var(--gd-border)] sm:block" aria-hidden />
 
           <DropdownMenu>
             <DropdownMenuTrigger

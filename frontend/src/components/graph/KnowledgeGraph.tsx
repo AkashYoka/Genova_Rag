@@ -555,7 +555,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
       {/* Header */}
       <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
         <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <h2 className="flex items-center gap-2 text-sm font-medium">
             <Network className="h-4 w-4 text-primary" />
             Knowledge Graph
             {overview && overview.available ? (
@@ -608,7 +608,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
           <div>
             <label
               htmlFor="graph-search"
-              className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+              className="mb-1 block text-xs font-medium text-muted-foreground"
             >
               Search entities
             </label>
@@ -639,7 +639,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
                       className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent"
                     >
                       <span className="truncate font-medium">{entity.canonical_name}</span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                      <span className="shrink-0 text-xs text-muted-foreground">
                         {prettyLabel(entity.entity_type)}
                       </span>
                     </button>
@@ -650,7 +650,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
           </div>
 
           <div>
-            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">
               Traversal depth
             </span>
             <div className="flex gap-1" role="group" aria-label="Traversal depth">
@@ -670,17 +670,17 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
                 </button>
               ))}
             </div>
-            <p className="mt-1 text-[10px] text-muted-foreground">
+            <p className="mt-1 text-xs text-muted-foreground">
               Depth 3 can pull in a wide neighbourhood; results stay bounded.
             </p>
           </div>
 
           <div>
-            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">
               Documents in this graph
             </span>
             {documents.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 No graph-indexed documents yet.
               </p>
             ) : (
@@ -696,7 +696,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
                         <span className="block truncate font-medium" title={document.document_name}>
                           {document.document_name}
                         </span>
-                        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
                           <span
                             className={`h-1.5 w-1.5 rounded-full ${
                               failed
@@ -724,18 +724,18 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
                 })}
               </ul>
             )}
-            <p className="mt-1 text-[10px] text-muted-foreground">
+            <p className="mt-1 text-xs text-muted-foreground">
               Entities shared between PDFs are merged, so cross-document relations appear as
               single edges.
             </p>
           </div>
 
           <div>
-            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">
               Entity types
             </span>
             {presentTypes.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground">No entities loaded.</p>
+              <p className="text-xs text-muted-foreground">No entities loaded.</p>
             ) : (
               <div className="flex flex-wrap gap-1">
                 {presentTypes.map((type) => {
@@ -747,7 +747,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
                       type="button"
                       onClick={() => toggleType(type)}
                       aria-pressed={active}
-                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium transition-opacity ${
+                      className={`rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity ${
                         active || typeFilter.length === 0 ? "opacity-100" : "opacity-40"
                       }`}
                       style={{
@@ -766,7 +766,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
               <button
                 type="button"
                 onClick={() => setTypeFilter([])}
-                className="mt-1 text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                className="mt-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
                 Clear type filter
               </button>
@@ -776,7 +776,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
           <div>
             <label
               htmlFor="graph-relation-filter"
-              className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
+              className="mb-1 block text-xs font-medium text-muted-foreground"
             >
               Relationship type
             </label>
@@ -793,7 +793,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
                 </option>
               ))}
             </select>
-            <label className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
               <input
                 type="checkbox"
                 checked={showLabels}
@@ -807,7 +807,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
         {/* Canvas */}
         <div className="relative min-w-0 flex-1 h-full overflow-hidden">
           {truncated ? (
-            <div className="absolute inset-x-0 top-0 z-20 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-center text-[11px] text-amber-700 dark:text-amber-300">
+            <div className="absolute inset-x-0 top-0 z-20 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-center text-xs text-amber-700 dark:text-amber-300">
               Showing the {nodes.length} best-connected entities. Search for an entity to explore
               its neighbourhood.
             </div>
@@ -815,14 +815,14 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
 
           {loading ? (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-background/85">
-              <RefreshCw className="h-7 w-7 animate-spin text-primary/60" />
-              <p className="text-sm text-muted-foreground">Loading graph neighbourhood…</p>
+              <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Loading graph…</p>
             </div>
           ) : null}
 
           {!loading && error ? (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 px-8 text-center">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-muted">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
                 <Info className="h-5 w-5 text-muted-foreground" />
               </div>
               <div>
@@ -841,15 +841,15 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
 
           {!loading && !error && !hasGraph ? (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 px-10 text-center">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-muted">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
                 <Network className="h-5 w-5 text-muted-foreground" />
               </div>
               <div>
                 <p className="mb-1 text-sm font-medium">No graph yet</p>
                 <p className="text-xs text-muted-foreground">
-                  Entities and relationships are extracted from each document while it is indexed.
-                  Upload or re-index a document, then refresh. Graphs are built only from text that
-                  supports them, so documents without extractable entities stay empty.
+                  Entities and relationships are extracted while a document is indexed.
+                  Upload or re-index a document, then refresh. Graphs use only text that
+                  supports them, so some documents stay empty.
                 </p>
               </div>
               <div className="flex gap-2">
@@ -952,7 +952,7 @@ export default function KnowledgeGraph({ onClose, onMount }: KnowledgeGraphProps
                 </p>
                 {overview?.available ? (
                   <div className="mt-3 space-y-1 rounded-lg border border-border/60 bg-background/60 p-2">
-                    <p className="text-[11px] font-medium uppercase tracking-wide">Graph scope</p>
+                    <p className="text-xs font-medium">Graph scope</p>
                     <p>
                       {overview.document_count} document
                       {overview.document_count === 1 ? "" : "s"} · {overview.entity_count} entities
@@ -1004,7 +1004,7 @@ function buildNode(
           >
             {entity.canonical_name}
           </span>
-          <span className="text-[9px] uppercase tracking-wide opacity-70" style={{ color: colour.text }}>
+          <span className="text-[10px] opacity-70" style={{ color: colour.text }}>
             {prettyLabel(entity.entity_type)}
           </span>
         </div>
@@ -1064,7 +1064,7 @@ function buildEdge(
 
 function EvidenceList({ items }: { items: GraphEvidence[] }) {
   if (!items.length) {
-    return <p className="text-[11px] text-muted-foreground">No stored evidence.</p>;
+    return <p className="text-xs text-muted-foreground">No stored evidence.</p>;
   }
   return (
     <ul className="space-y-1.5">
@@ -1073,7 +1073,7 @@ function EvidenceList({ items }: { items: GraphEvidence[] }) {
           key={`${item.document_id}-${item.chunk_id ?? index}`}
           className="rounded-md border border-border/60 bg-background/70 p-2"
         >
-          <p className="mb-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
             <FileText className="h-3 w-3" />
             <span className="truncate" title={item.document_name}>
               {item.document_name}
@@ -1081,7 +1081,7 @@ function EvidenceList({ items }: { items: GraphEvidence[] }) {
             {item.page ? <span>· p.{item.page}</span> : null}
             {item.section ? <span className="truncate">· {item.section}</span> : null}
           </p>
-          <p className="text-[11px] leading-snug">“{item.evidence}”</p>
+          <p className="text-xs leading-snug">“{item.evidence}”</p>
         </li>
       ))}
     </ul>
@@ -1105,18 +1105,18 @@ function EntityPanel({
     <div className="space-y-3">
       <div>
         <span
-          className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+          className="inline-block rounded-md px-2 py-0.5 text-xs font-medium"
           style={{ backgroundColor: colour.bg, color: colour.text }}
         >
           {prettyLabel(entity.entity_type)}
         </span>
         <h3 className="mt-1 break-words text-sm font-semibold">{entity.canonical_name}</h3>
         {entity.description ? (
-          <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{entity.description}</p>
+          <p className="mt-1 text-xs leading-snug text-muted-foreground">{entity.description}</p>
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-1 text-[11px]">
+      <div className="grid grid-cols-2 gap-1 text-xs">
         <Stat label="Mentions" value={String(entity.mention_count)} />
         <Stat label="Documents" value={String(entity.document_count)} />
         <Stat label="Confidence" value={confidencePct(entity.confidence)} />
@@ -1124,25 +1124,25 @@ function EntityPanel({
       </div>
 
       {entity.possible_duplicate_of ? (
-        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[10px] text-amber-700 dark:text-amber-300">
+        <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
           Possible duplicate of another entity — kept separate until evidence confirms the match.
         </p>
       ) : null}
 
       {entity.aliases.length ? (
         <div>
-          <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">
             Aliases
           </p>
-          <p className="text-[11px]">{entity.aliases.join(", ")}</p>
+          <p className="text-xs">{entity.aliases.join(", ")}</p>
         </div>
       ) : null}
 
       <div>
-        <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="mb-1 text-xs font-medium text-muted-foreground">
           Documents
         </p>
-        <ul className="space-y-0.5 text-[11px]">
+        <ul className="space-y-0.5 text-xs">
           {entity.documents.map((document) => (
             <li key={document.id} className="truncate" title={document.name}>
               {document.name}
@@ -1152,7 +1152,7 @@ function EntityPanel({
       </div>
 
       <div>
-        <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="mb-1 text-xs font-medium text-muted-foreground">
           Connected entities
         </p>
         <ul className="space-y-0.5">
@@ -1161,20 +1161,20 @@ function EntityPanel({
               <button
                 type="button"
                 onClick={() => onSelectEntity(neighbour.id)}
-                className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[11px] hover:bg-accent"
+                className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-xs hover:bg-accent"
               >
                 <span className="text-muted-foreground">
                   {neighbour.direction === "outgoing" ? "→" : "←"}
                 </span>
                 <span className="truncate font-medium">{neighbour.name}</span>
-                <span className="ml-auto shrink-0 text-[9px] text-muted-foreground">
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                   {prettyLabel(neighbour.relation_type)}
                 </span>
               </button>
             </li>
           ))}
           {entity.connected.length === 0 ? (
-            <li className="text-[11px] text-muted-foreground">
+            <li className="text-xs text-muted-foreground">
               No relationships stored for this entity.
             </li>
           ) : null}
@@ -1182,7 +1182,7 @@ function EntityPanel({
       </div>
 
       <div>
-        <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="mb-1 text-xs font-medium text-muted-foreground">
           Source evidence
         </p>
         <EvidenceList items={entity.mentions} />
@@ -1192,7 +1192,7 @@ function EntityPanel({
         type="button"
         onClick={() => onExpand(entity.id)}
         disabled={busy}
-        className="w-full rounded-md border border-border/60 px-2 py-1.5 text-[11px] hover:bg-accent disabled:opacity-50"
+        className="w-full rounded-md border border-border/60 px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50"
       >
         Expand one more hop
       </button>
@@ -1204,10 +1204,10 @@ function RelationshipPanel({ relationship }: { relationship: GraphRelationship }
   return (
     <div className="space-y-3">
       <div>
-        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="text-xs font-medium text-muted-foreground">
           Relationship
         </p>
-        <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px]">
+        <div className="mt-1 flex flex-wrap items-center gap-1 text-xs">
           <span className="rounded bg-muted px-1.5 py-0.5 font-medium">
             {relationship.source.name}
           </span>
@@ -1221,24 +1221,24 @@ function RelationshipPanel({ relationship }: { relationship: GraphRelationship }
           </span>
         </div>
         {relationship.description ? (
-          <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+          <p className="mt-1 text-xs leading-snug text-muted-foreground">
             {relationship.description}
           </p>
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-1 text-[11px]">
+      <div className="grid grid-cols-2 gap-1 text-xs">
         <Stat label="Confidence" value={confidencePct(relationship.confidence)} />
         <Stat label="Evidence" value={`${relationship.evidence_count} source(s)`} />
       </div>
 
-      <p className="rounded-md border border-border/60 bg-background/60 p-2 text-[10px] text-muted-foreground">
+      <p className="rounded-md border border-border/60 bg-background/60 p-2 text-xs text-muted-foreground">
         Direction is stated by the source text; the reverse relationship is not inferred. Confidence
         reflects the extraction certainty, not document authority.
       </p>
 
       <div>
-        <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="mb-1 text-xs font-medium text-muted-foreground">
           Supporting passages
         </p>
         <EvidenceList items={relationship.evidence} />
@@ -1250,8 +1250,8 @@ function RelationshipPanel({ relationship }: { relationship: GraphRelationship }
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border/60 bg-background/60 px-2 py-1">
-      <p className="text-[9px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="text-[11px] font-semibold">{value}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-xs font-semibold">{value}</p>
     </div>
   );
 }

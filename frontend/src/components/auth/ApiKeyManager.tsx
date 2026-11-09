@@ -126,7 +126,7 @@ export default function ApiKeyManager() {
 
         <div className="space-y-4 mt-6">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-foreground/80 uppercase tracking-wider">Active Keys</h3>
+            <h3 className="text-sm font-medium text-foreground/80r">Active Keys</h3>
             <Button onClick={generateKey} disabled={loading} size="sm" className="rounded-full shadow-sm hover:shadow-md transition-shadow">
               <Plus className="w-4 h-4 mr-1.5" />
               Generate New Key

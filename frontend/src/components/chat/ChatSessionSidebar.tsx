@@ -104,7 +104,7 @@ export default function ChatSessionSidebar() {
     <div className="flex flex-col h-full w-full overflow-hidden">
       {/* Sidebar Header */}
       <div className="flex items-center justify-between p-3 border-b border-border/50 shrink-0 bg-card/45">
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Chat Sessions</span>
+        <span className="text-[13px] font-medium text-muted-foreground">Sessions</span>
         <div className="flex items-center gap-1.5">
           <Button
             onClick={handleCreate}
@@ -244,7 +244,7 @@ export default function ChatSessionSidebar() {
       */}
       <Button
         onClick={() => setMobileOpen(true)}
-        className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-4 z-20 h-11 w-11 rounded-full shadow-lg md:hidden"
+        className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] left-4 z-20 h-11 w-11 rounded-lg shadow-sm md:hidden"
         size="icon"
         aria-label="Open chat sessions"
         aria-controls="mobile-chat-sessions"

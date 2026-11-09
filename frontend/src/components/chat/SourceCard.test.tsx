@@ -40,10 +40,10 @@ describe("SourceCard", () => {
     expect(screen.getByText("3 sources cited")).toBeInTheDocument();
     expect(
       screen.getByLabelText("Go to source page 3. Confidence Medium"),
-    ).toHaveTextContent("p.3 - Medium");
+    ).toHaveTextContent("p.3");
     expect(
       screen.getByLabelText("Go to source page 5. Confidence Low"),
-    ).toHaveTextContent("p.5 - Low");
+    ).toHaveTextContent("p.5");
 
     await user.click(
       screen.getByLabelText("Go to source page 3. Confidence Medium"),

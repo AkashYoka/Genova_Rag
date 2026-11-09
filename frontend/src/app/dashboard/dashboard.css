@@ -6,25 +6,7 @@
 */
 
 .genova-desk {
-  /* Achromatic ledger — monochrome chrome; teal only for accent/actions */
-  --gd-ground: #f7f7f8;
-  --gd-surface: #ffffff;
-  --gd-raised: #f0f0f2;
-  --gd-active: #e8e8eb;
-  --gd-border: #e5e5e8;
-  --gd-rule: #efeff1;
-  --gd-text: #0d0d0f;
-  --gd-muted: #6b6b76;
-  --gd-faint: #8b8b96;
-  --gd-primary: #0d0d0f;
-  --gd-primary-ink: #ffffff;
-  --gd-data: #0f7c86;
-  --gd-accent: #0f7c86;
-  --gd-accent-soft: color-mix(in oklab, #0f7c86 12%, transparent);
-  --gd-positive: #1f6b45;
-  --gd-negative: #b42318;
-  --gd-warning: #8a5a10;
-  --gd-user-bubble: #f0f0f2;
+  /* Color tokens inherit from globals.css --gd-* (Signal Mesa). Layout only here. */
   --gd-sidebar: 240px;
   --gd-sessions: 280px;
   --gd-inspector: 360px;
@@ -40,28 +22,6 @@
   color: var(--gd-text);
   font-family: var(--gd-font);
   font-variant-numeric: tabular-nums;
-}
-
-.dark .genova-desk,
-.genova-desk.theme-dark {
-  --gd-ground: #121212;
-  --gd-surface: #1a1a1a;
-  --gd-raised: #242424;
-  --gd-active: #2c2c2c;
-  --gd-border: #2e2e2e;
-  --gd-rule: #222222;
-  --gd-text: #ececec;
-  --gd-muted: #a0a0a8;
-  --gd-faint: #7a7a82;
-  --gd-primary: #ececec;
-  --gd-primary-ink: #121212;
-  --gd-data: #3d9aa3;
-  --gd-accent: #3d9aa3;
-  --gd-accent-soft: color-mix(in oklab, #3d9aa3 16%, transparent);
-  --gd-positive: #5bb87a;
-  --gd-negative: #e07868;
-  --gd-warning: #c9a04a;
-  --gd-user-bubble: #2a2a2a;
 }
 
 .genova-desk .num {
@@ -92,11 +52,11 @@
 }
 
 .genova-desk-top .brand-sub {
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--gd-faint);
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .genova-desk-stage {
