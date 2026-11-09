@@ -33,8 +33,9 @@ settings = get_settings()
 # ── identifiers ───────────────────────────────────────────────────────────────
 
 def _digest(prefix: str, *parts: str) -> str:
+    # Non-cryptographic stable ids — SHA-256 (Semgrep: avoid SHA-1).
     payload = "|".join(str(part) for part in parts)
-    return f"{prefix}{hashlib.sha1(payload.encode('utf-8')).hexdigest()[:20]}"
+    return f"{prefix}{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:20]}"
 
 
 def entity_id(user_id: Any, entity_type: str, normalized_name: str) -> str:

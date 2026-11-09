@@ -179,7 +179,7 @@ export default function MessageBubble({ message }: Props) {
 
   const actionBtn = cn(
     buttonVariants({ variant: "ghost", size: "icon-xs" }),
-    "h-7 w-7 rounded-md text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
+    "gc-msg-action h-8 w-8 shrink-0 rounded-md text-[var(--gd-muted)]",
   );
 
   const showFeedbackControls =
@@ -241,27 +241,27 @@ export default function MessageBubble({ message }: Props) {
       <div className="gc-msg-body select-text">
         {isUser ? (
           <>
-            <div className="gc-user-bubble relative group">
-              {message.content ? (
-                <div className="absolute -left-9 top-1/2 -translate-y-1/2 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
-                  <Tooltip>
-                    <TooltipTrigger
-                      type="button"
-                      className={actionBtn}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleAddToNotes();
-                      }}
-                      aria-label="Add to notes"
-                    >
-                      <StickyNote className="w-3.5 h-3.5" />
-                    </TooltipTrigger>
-                    <TooltipContent>Add to notes</TooltipContent>
-                  </Tooltip>
-                </div>
-              ) : null}
+            <div className="gc-user-bubble relative">
               <p className={cn("m-0", fontSizeClass)}>{message.content}</p>
             </div>
+            {message.content ? (
+              <div className="gc-msg-actions">
+                <Tooltip>
+                  <TooltipTrigger
+                    type="button"
+                    className={actionBtn}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAddToNotes();
+                    }}
+                    aria-label="Add to notes"
+                  >
+                    <StickyNote className="w-4 h-4" />
+                  </TooltipTrigger>
+                  <TooltipContent>Add to notes</TooltipContent>
+                </Tooltip>
+              </div>
+            ) : null}
 
             {(message.attachments?.length || messageTime) && (
               <div className="gc-msg-meta justify-end">
@@ -314,7 +314,7 @@ export default function MessageBubble({ message }: Props) {
             </div>
 
             {message.content && (
-              <div className="gc-msg-actions">
+              <div className="gc-msg-actions" role="toolbar" aria-label="Message actions">
                 <Tooltip>
                   <TooltipTrigger
                     type="button"
@@ -322,7 +322,7 @@ export default function MessageBubble({ message }: Props) {
                     onClick={handleBranch}
                     aria-label="Branch conversation"
                   >
-                    <GitBranch className="w-3.5 h-3.5" />
+                    <GitBranch className="w-4 h-4" />
                   </TooltipTrigger>
                   <TooltipContent>Branch conversation</TooltipContent>
                 </Tooltip>
@@ -333,7 +333,7 @@ export default function MessageBubble({ message }: Props) {
                       type="button"
                       className={cn(
                         actionBtn,
-                        isSpeaking && "text-[var(--gd-accent)]",
+                        isSpeaking && "!text-[var(--gd-accent)]",
                       )}
                       onClick={handleSpeech}
                       aria-label={
@@ -342,9 +342,9 @@ export default function MessageBubble({ message }: Props) {
                       aria-pressed={isSpeaking}
                     >
                       {isSpeaking ? (
-                        <Pause className="w-3.5 h-3.5" />
+                        <Pause className="w-4 h-4" />
                       ) : (
-                        <Play className="w-3.5 h-3.5" />
+                        <Play className="w-4 h-4" />
                       )}
                     </TooltipTrigger>
                     <TooltipContent>
@@ -356,14 +356,14 @@ export default function MessageBubble({ message }: Props) {
                 <Tooltip>
                   <TooltipTrigger
                     type="button"
-                    className={cn(actionBtn, copied && "opacity-100")}
+                    className={actionBtn}
                     onClick={handleCopy}
                     aria-label={copied ? "Copied" : "Copy response"}
                   >
                     {copied ? (
-                      <Check className="w-3.5 h-3.5 text-[var(--gd-positive)]" />
+                      <Check className="w-4 h-4 text-[var(--gd-positive)]" />
                     ) : (
-                      <Copy className="w-3.5 h-3.5" />
+                      <Copy className="w-4 h-4" />
                     )}
                   </TooltipTrigger>
                   <TooltipContent>
@@ -379,7 +379,7 @@ export default function MessageBubble({ message }: Props) {
                       onClick={handleAddToNotes}
                       aria-label="Add to notes"
                     >
-                      <StickyNote className="w-3.5 h-3.5" />
+                      <StickyNote className="w-4 h-4" />
                     </TooltipTrigger>
                     <TooltipContent>Add to notes</TooltipContent>
                   </Tooltip>
@@ -387,13 +387,14 @@ export default function MessageBubble({ message }: Props) {
 
                 {showFeedbackControls && (
                   <>
+                    <span className="gc-msg-action-sep" aria-hidden />
                     <Tooltip>
                       <TooltipTrigger
                         type="button"
                         className={cn(
                           actionBtn,
                           message.feedback === "up" &&
-                            "bg-[var(--gd-accent-soft)] text-[var(--gd-accent)]",
+                            "!bg-[var(--gd-accent-soft)] !text-[var(--gd-accent)]",
                         )}
                         onClick={() => openFeedback("up")}
                         disabled={
@@ -402,7 +403,7 @@ export default function MessageBubble({ message }: Props) {
                         aria-label="Like response"
                         aria-pressed={message.feedback === "up"}
                       >
-                        <ThumbsUp className="w-3.5 h-3.5" />
+                        <ThumbsUp className="w-4 h-4" />
                       </TooltipTrigger>
                       <TooltipContent>
                         {message.feedback === "up" ? "Liked" : "Like response"}
@@ -415,7 +416,7 @@ export default function MessageBubble({ message }: Props) {
                         className={cn(
                           actionBtn,
                           message.feedback === "down" &&
-                            "bg-[var(--gd-negative)]/10 text-[var(--gd-negative)]",
+                            "!bg-[var(--gd-negative)]/10 !text-[var(--gd-negative)]",
                         )}
                         onClick={() => openFeedback("down")}
                         disabled={
@@ -424,7 +425,7 @@ export default function MessageBubble({ message }: Props) {
                         aria-label="Dislike response"
                         aria-pressed={message.feedback === "down"}
                       >
-                        <ThumbsDown className="w-3.5 h-3.5" />
+                        <ThumbsDown className="w-4 h-4" />
                       </TooltipTrigger>
                       <TooltipContent>
                         {message.feedback === "down"
@@ -434,8 +435,8 @@ export default function MessageBubble({ message }: Props) {
                     </Tooltip>
 
                     {message.feedback ? (
-                      <span className="ml-1 inline-flex items-center gap-1 text-[11px] text-[var(--gd-muted)]">
-                        <Check className="h-3 w-3 text-[var(--gd-positive)]" />
+                      <span className="ml-1 inline-flex items-center gap-1 px-1 text-[11px] text-[var(--gd-muted)]">
+                        <Check className="h-3.5 w-3.5 text-[var(--gd-positive)]" />
                         Feedback saved
                       </span>
                     ) : null}

@@ -10,6 +10,10 @@ const CONNECTION_ERROR_MESSAGE = "Could not connect to the server. Please try ag
 const CONNECTION_ERROR_BANNER_MESSAGE = `⚠️ ${CONNECTION_ERROR_MESSAGE}`;
 
 const AUTH_MARKER_COOKIE = "genova_auth";
+const CSRF_COOKIE = "csrf_token";
+const CSRF_HEADER = "X-CSRF-Token";
+/** Sentinel: session is carried by HttpOnly cookies, not JS-readable JWTs. */
+export const COOKIE_SESSION = "cookie";
 const PROTECTED_PATH_PREFIXES = ["/dashboard", "/documents", "/admin", "/settings"];
 
 interface FetchOptions extends RequestInit {
@@ -29,6 +33,23 @@ function setAuthMarkerCookie(present: boolean): void {
   }
 }
 
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const parts = document.cookie.split(";").map((p) => p.trim());
+  for (const part of parts) {
+    if (part.startsWith(`${name}=`)) {
+      return decodeURIComponent(part.slice(name.length + 1));
+    }
+  }
+  return null;
+}
+
+function purgeLegacyJwtStorage(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("token");
+  localStorage.removeItem("refresh_token");
+}
+
 class ApiClient {
   private baseUrl: string;
   /** Guards against multiple concurrent refresh attempts */
@@ -40,7 +61,11 @@ class ApiClient {
 
   private getToken(): string | null {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem("token");
+    // Prefer HttpOnly cookie sessions. Legacy localStorage JWTs are purged on login.
+    const legacy = localStorage.getItem("token");
+    if (legacy && legacy !== COOKIE_SESSION) return legacy;
+    if (readCookie(AUTH_MARKER_COOKIE) || readCookie(CSRF_COOKIE)) return COOKIE_SESSION;
+    return legacy;
   }
 
   private getRefreshToken(): string | null {
@@ -48,9 +73,11 @@ class ApiClient {
     return localStorage.getItem("refresh_token");
   }
 
-  /** Public accessor for components that need a fresh access token (PDF, WS). */
+  /** Public accessor — returns null for cookie sessions (WS uses cookies). */
   getAccessToken(): string | null {
-    return this.getToken();
+    const token = this.getToken();
+    if (!token || token === COOKIE_SESSION) return null;
+    return token;
   }
 
   private getHeaders(token?: string): HeadersInit {
@@ -59,8 +86,13 @@ class ApiClient {
     };
 
     const authToken = token || this.getToken();
-    if (authToken && authToken !== "cookie") {
+    if (authToken && authToken !== COOKIE_SESSION) {
       headers["Authorization"] = `Bearer ${authToken}`;
+    }
+
+    const csrf = readCookie(CSRF_COOKIE);
+    if (csrf) {
+      headers[CSRF_HEADER] = csrf;
     }
 
     return headers;
@@ -68,10 +100,10 @@ class ApiClient {
 
   private async fetchWithConnectionError(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     try {
-      const host = typeof window !== "undefined" && window.location ? window.location.host : "";
-      const isCrossOrigin = typeof window !== "undefined" && Boolean(host) && this.baseUrl.startsWith("http") && !this.baseUrl.includes(host);
+      // Always include cookies so HttpOnly session cookies reach the API
+      // (required for static-export frontends on a different origin/port).
       const mergedInit = {
-        credentials: isCrossOrigin ? "same-origin" as const : "include" as const,
+        credentials: "include" as const,
         ...init,
       };
       return await fetch(input, mergedInit);
@@ -98,14 +130,19 @@ class ApiClient {
     }
 
     const refreshToken = this.getRefreshToken();
-    if (!refreshToken) return null;
+    // Cookie sessions refresh via HttpOnly refresh_token cookie (empty body).
+    const hasCookieSession = Boolean(readCookie(AUTH_MARKER_COOKIE) || readCookie(CSRF_COOKIE));
+    if (!refreshToken && !hasCookieSession) return null;
 
     this.refreshPromise = (async () => {
       try {
+        const headers: HeadersInit = { "Content-Type": "application/json" };
+        const csrf = readCookie(CSRF_COOKIE);
+        if (csrf) headers[CSRF_HEADER] = csrf;
         const res = await this.fetchWithConnectionError(`${this.baseUrl}/api/v1/auth/refresh`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: refreshToken }),
+          headers,
+          body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
         });
 
         if (!res.ok) {
@@ -117,21 +154,22 @@ class ApiClient {
         }
 
         const data = await res.json();
-        localStorage.setItem("token", data.access_token);
-        if (data.refresh_token) {
-          localStorage.setItem("refresh_token", data.refresh_token);
-        }
+        purgeLegacyJwtStorage();
         setAuthMarkerCookie(true);
 
         window.dispatchEvent(
           new CustomEvent("auth:tokens-refreshed", {
-            detail: { accessToken: data.access_token, refreshToken: data.refresh_token, user: data.user },
+            detail: {
+              accessToken: COOKIE_SESSION,
+              refreshToken: undefined,
+              user: data.user,
+            },
           })
         );
 
-        return data.access_token as string;
+        return COOKIE_SESSION;
       } catch {
-        // Network / transient failure — keep existing tokens so the user is not logged out
+        // Network / transient failure — keep existing session so the user is not logged out
         return null;
       } finally {
         this.refreshPromise = null;
@@ -165,10 +203,9 @@ class ApiClient {
     window.dispatchEvent(new CustomEvent("auth:logged-out"));
   }
 
-  /** Persist session tokens after login/register flows outside this client. */
-  persistSession(accessToken: string, refreshToken: string): void {
-    localStorage.setItem("token", accessToken);
-    localStorage.setItem("refresh_token", refreshToken);
+  /** Mark an authenticated session without exposing JWTs to JavaScript. */
+  persistSession(_accessToken?: string, _refreshToken?: string): void {
+    purgeLegacyJwtStorage();
     setAuthMarkerCookie(true);
   }
 

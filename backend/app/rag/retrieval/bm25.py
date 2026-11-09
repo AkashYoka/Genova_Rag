@@ -14,12 +14,16 @@ Common example question:
 """
 import os
 import glob
+import hashlib
+import hmac
 import pickle
 import logging
 import re
 from typing import List, Dict, Any, Optional
 
 from app.config import get_settings
+
+_BM25_BLOB_MAGIC = b"BM25HMAC1\n"
 
 try:
     from rank_bm25 import BM25Okapi
@@ -28,6 +32,63 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _bm25_hmac_key() -> bytes:
+    # Prefer dedicated field-encryption material; fall back to JWT secret.
+    material = (
+        getattr(settings, "FIELD_ENCRYPTION_KEY", None)
+        or settings.SECRET_KEY
+        or "bm25-dev-only"
+    )
+    return hashlib.sha256(str(material).encode("utf-8")).digest()
+
+
+def _dump_signed_bm25(path: str, data: Dict[str, Any]) -> None:
+    """Serialize BM25 state with an HMAC so forged pickles cannot be loaded."""
+    payload = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+    digest = hmac.new(_bm25_hmac_key(), payload, hashlib.sha256).digest()
+    with open(path, "wb") as f:
+        f.write(_BM25_BLOB_MAGIC)
+        f.write(digest)
+        f.write(payload)
+
+
+def _load_signed_bm25(path: str) -> Optional[Dict[str, Any]]:
+    """Load HMAC-signed BM25 blobs only. Unsigned/legacy pickles are rejected."""
+    try:
+        with open(path, "rb") as f:
+            blob = f.read()
+    except OSError as e:
+        logger.error("Failed to read BM25 index from %s: %s", path, e)
+        return None
+
+    if not blob.startswith(_BM25_BLOB_MAGIC):
+        logger.error(
+            "Rejecting unsigned/legacy BM25 pickle at %s (re-ingest required)",
+            path,
+        )
+        return None
+
+    body = blob[len(_BM25_BLOB_MAGIC) :]
+    if len(body) < 32:
+        logger.error("Truncated BM25 blob at %s", path)
+        return None
+    digest, payload = body[:32], body[32:]
+    expected = hmac.new(_bm25_hmac_key(), payload, hashlib.sha256).digest()
+    if not hmac.compare_digest(digest, expected):
+        logger.error("BM25 HMAC mismatch at %s — possible tampering", path)
+        return None
+    try:
+        data = pickle.loads(payload)
+    except Exception as e:
+        logger.error("Failed to unpickle signed BM25 index from %s: %s", path, e)
+        return None
+    if not isinstance(data, dict) or "bm25" not in data or "chunks" not in data:
+        logger.error("Malformed BM25 payload at %s", path)
+        return None
+    return data
+
 
 _EX_Q = (
     "Does the XOLAIR prescribing label recommend every-2-week dosing for "
@@ -133,8 +194,7 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
 
     path = get_bm25_path(user_id, document_id)
     try:
-        with open(path, "wb") as f:
-            pickle.dump(data, f)
+        _dump_signed_bm25(path, data)
         logger.info(f"Stored BM25 index for document {document_id}")
     except Exception as e:
         logger.error(f"Failed to store BM25 index for {document_id}: {e}")
@@ -165,11 +225,8 @@ def _query_single_index(path: str, tokenized_query: List[str], top_k: int) -> Li
     if not os.path.exists(path):
         return []
 
-    try:
-        with open(path, "rb") as f:
-            data = pickle.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load BM25 index from {path}: {e}")
+    data = _load_signed_bm25(path)
+    if not data:
         return []
 
     bm25 = data["bm25"]

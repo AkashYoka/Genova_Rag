@@ -190,11 +190,51 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Request-ID",
+        "X-Requested-With",
+        "X-CSRF-Token",
+    ],
+    expose_headers=["Content-Disposition", "X-Request-ID"],
 )
 logger.info(f"CORS origins: {settings.cors_origins}")
+
+
+@app.middleware("http")
+async def csrf_protect(request: Request, call_next):
+    """Enforce double-submit CSRF for cookie-authenticated mutating requests."""
+    if settings.AUTH_COOKIE_CSRF:
+        from fastapi import HTTPException as FastAPIHTTPException
+        from app.security.csrf import ensure_csrf
+
+        try:
+            ensure_csrf(request)
+        except FastAPIHTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "error": {
+                        "code": "CSRF_FAILED",
+                        "message": exc.detail,
+                        "details": {},
+                        "request_id": getattr(request.state, "request_id", None),
+                    }
+                },
+            )
+    return await call_next(request)
+
+# Host-header hardening (imported TrustedHostMiddleware was previously unused).
+# testserver is required for Starlette/FastAPI TestClient.
+_trusted = list(settings.trusted_hosts)
+if "testserver" not in _trusted:
+    _trusted.append("testserver")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted)
+logger.info("Trusted hosts: %s", _trusted)
 
 # Security Headers Middleware
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

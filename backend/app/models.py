@@ -3,11 +3,8 @@ SQLAlchemy ORM models for users, documents, and chat messages.
 """
 import uuid
 import enum
-import base64
-import hashlib
 from datetime import datetime, timezone
 
-from cryptography.fernet import Fernet
 from sqlalchemy import (
     Column,
     String,
@@ -82,30 +79,23 @@ class EncryptedString(TypeDecorator):
     impl = LongText
     cache_ok = False
 
-    def _get_cipher(self):
-        from app.config import get_settings
-        settings = get_settings()
-        key = base64.urlsafe_b64encode(
-            hashlib.sha256(settings.FIELD_ENCRYPTION_KEY.encode()).digest()
-        )
-        return Fernet(key)
-
     def process_bind_param(self, value, dialect):
-        """Encrypt the value before saving to the database."""
+        """Encrypt the value before saving to the database (primary key)."""
         if value is None:
             return value
-        cipher = self._get_cipher()
-        return cipher.encrypt(value.encode()).decode()
+        from app.security.encryption import encrypt_field
+
+        return encrypt_field(value)
 
     def process_result_value(self, value, dialect):
-        """Decrypt the value after reading from the database."""
+        """Decrypt with primary then previous key (rotation-safe)."""
         if value is None:
             return value
-        cipher = self._get_cipher()
-        try:
-            return cipher.decrypt(value.encode()).decode()
-        except Exception:
-            return value
+        from app.security.encryption import decrypt_field
+
+        plain = decrypt_field(value)
+        # If neither key works, return ciphertext rather than crashing reads.
+        return plain if plain is not None else value
 
 
 class UserRole(str, enum.Enum):
@@ -228,12 +218,21 @@ class WorkspaceInvitation(Base):
         nullable=False,
         index=True,
     )
+    # Canonical workspace identity — never resolve invitations by display name.
+    workspace_id = Column(
+        GUID,
+        ForeignKey("workspaces.id"),
+        nullable=True,
+        index=True,
+    )
+    # Retained for email copy / legacy rows; not used for membership resolution.
     workspace_name = Column(String(255), nullable=False)
     created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
     expires_at = Column(Timestamp, nullable=False)
     accepted_at = Column(Timestamp, nullable=True)
 
     inviter = relationship("User")
+    workspace = relationship("Workspace")
 
 
 class Workspace(Base):

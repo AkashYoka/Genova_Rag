@@ -5,6 +5,8 @@ GET /api/v1/health/status
 - No authentication required (monitoring tools must reach it freely).
 - Never raises a 5xx — always returns 200 with per-component status so
   load balancers and uptime monitors can parse the JSON body.
+- Never returns connection strings, hostnames from exceptions, worker
+  inventory, or internal service URLs to anonymous callers.
 """
 import logging
 import time
@@ -19,6 +21,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/health", tags=["Health"])
 
 
+def _safe_failure(component: str, exc: Exception) -> Dict[str, Any]:
+    """Log the real error; return a non-leaky public payload."""
+    logger.warning("%s health check failed: %s", component, exc)
+    return {"status": "down"}
+
+
 def _check_database() -> Dict[str, Any]:
     """Ping the configured database (MySQL or SQLite)."""
     start = time.perf_counter()
@@ -29,8 +37,7 @@ def _check_database() -> Dict[str, Any]:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         return {"status": "up", "latency_ms": latency_ms}
     except Exception as exc:
-        logger.warning("DB health check failed: %s", exc)
-        return {"status": "down", "error": str(exc)[:120]}
+        return _safe_failure("DB", exc)
 
 
 def _check_redis() -> Dict[str, Any]:
@@ -43,18 +50,22 @@ def _check_redis() -> Dict[str, Any]:
         configured = bool((get_settings().REDIS_URL or "").strip())
         r = _get_redis()
         if r is None:
-            detail = _redis_last_error or (
-                "REDIS_URL not configured"
-                if not configured
-                else "Redis configured but unreachable"
-            )
-            return {"status": "unavailable", "detail": detail}
+            # Do not echo _redis_last_error — it can include host/auth fragments.
+            if _redis_last_error:
+                logger.warning("Redis unavailable: %s", _redis_last_error)
+            return {
+                "status": "unavailable",
+                "detail": (
+                    "REDIS_URL not configured"
+                    if not configured
+                    else "Redis configured but unreachable"
+                ),
+            }
         r.ping()
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         return {"status": "up", "latency_ms": latency_ms}
     except Exception as exc:
-        logger.warning("Redis health check failed: %s", exc)
-        return {"status": "down", "error": str(exc)[:120]}
+        return _safe_failure("Redis", exc)
 
 
 def _check_celery() -> Dict[str, Any]:
@@ -80,20 +91,19 @@ def _check_celery() -> Dict[str, Any]:
                 "latency_ms": latency_ms,
             }
 
-        worker_names = list(ping.keys())
+        worker_count = len(ping.keys())
         active_task_count = sum(
             len(tasks) for tasks in (active or {}).values()
         )
+        # Omit worker hostnames from the public payload.
         return {
             "status": "up",
-            "workers": len(worker_names),
-            "worker_names": worker_names,
+            "workers": worker_count,
             "active_tasks": active_task_count,
             "latency_ms": latency_ms,
         }
     except Exception as exc:
-        logger.warning("Celery health check failed: %s", exc)
-        return {"status": "down", "error": str(exc)[:120]}
+        return _safe_failure("Celery", exc)
 
 
 def _check_chromadb() -> Dict[str, Any]:
@@ -106,8 +116,7 @@ def _check_chromadb() -> Dict[str, Any]:
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
         return {"status": "up", "latency_ms": latency_ms}
     except Exception as exc:
-        logger.warning("ChromaDB health check failed: %s", exc)
-        return {"status": "down", "error": str(exc)[:120]}
+        return _safe_failure("ChromaDB", exc)
 
 
 def _check_ollama() -> Dict[str, Any]:
@@ -144,17 +153,19 @@ def _check_ollama() -> Dict[str, Any]:
 
         missing = [m for m in needed if not _installed(m)]
         status = "up" if not missing else "degraded"
-        return {
+        payload: Dict[str, Any] = {
             "status": status,
             "latency_ms": latency_ms,
-            "base_url": url,
             "required_models": needed,
             "missing_models": missing,
-            "installed_models": names,
         }
+        # Internal base URL + full model inventory only outside production.
+        if settings.ENVIRONMENT != "production":
+            payload["base_url"] = url
+            payload["installed_models"] = names
+        return payload
     except Exception as exc:
-        logger.warning("Ollama health check failed: %s", exc)
-        return {"status": "down", "error": str(exc)[:200]}
+        return _safe_failure("Ollama", exc)
 
 
 @router.get(

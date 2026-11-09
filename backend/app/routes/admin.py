@@ -2,6 +2,7 @@
 Admin-only operational statistics and database maintenance routes.
 """
 import json
+import re
 import shutil
 from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
@@ -61,7 +62,35 @@ _EXPORT_REDACT_COLUMNS = {
     "credentials_json",
     "verification_token_hash",
     "token_hash",
+    "access_token",
+    "refresh_token",
+    "secret_key",
+    "api_key",
+    "private_key",
 }
+
+_EXPORT_REDACT_NAME_NEEDLES = (
+    "password",
+    "secret",
+    "credential",
+    "api_key",
+    "apikey",
+    "private_key",
+    "hashed_key",
+    "refresh_token",
+    "access_token",
+    "token_hash",
+)
+
+
+def _should_redact_export_column(col: str) -> bool:
+    """True when a DB column must never appear in admin backups."""
+    name = (col or "").strip().lower()
+    if not name:
+        return False
+    if name in {c.lower() for c in _EXPORT_REDACT_COLUMNS}:
+        return True
+    return any(needle in name for needle in _EXPORT_REDACT_NAME_NEEDLES)
 
 
 def _directory_size(path: Path) -> int:
@@ -165,16 +194,24 @@ def export_database(
     table_names = inspector.get_table_names()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
+    def _assert_safe_ident(name: str) -> str:
+        # Table names come from the inspector, but still reject anything that
+        # is not a plain SQL identifier before interpolating into text().
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name or ""):
+            raise HTTPException(status_code=500, detail="Unexpected table name")
+        return name
+
     if format_type == "json":
         backup_data = {}
         for table in table_names:
-            result = db.execute(text(f"SELECT * FROM {table}"))
+            safe_table = _assert_safe_ident(table)
+            result = db.execute(text(f"SELECT * FROM {safe_table}"))
             columns = list(result.keys())
             rows = []
             for row in result.fetchall():
                 row_dict = {}
                 for col, val in zip(columns, row):
-                    if col in _EXPORT_REDACT_COLUMNS:
+                    if _should_redact_export_column(col):
                         row_dict[col] = "[REDACTED]"
                     elif isinstance(val, (datetime, date)):
                         row_dict[col] = val.isoformat()
@@ -197,16 +234,17 @@ def export_database(
             "-- Sensitive credential columns are redacted.\n",
         ]
         for table in table_names:
-            result = db.execute(text(f"SELECT * FROM {table}"))
+            safe_table = _assert_safe_ident(table)
+            result = db.execute(text(f"SELECT * FROM {safe_table}"))
             columns = list(result.keys())
             rows = result.fetchall()
             if rows:
-                sql_lines.append(f"-- Data records for table: {table}")
+                sql_lines.append(f"-- Data records for table: {safe_table}")
                 cols_str = ", ".join([f'"{c}"' for c in columns])
                 for row in rows:
                     vals = []
                     for col, val in zip(columns, row):
-                        if col in _EXPORT_REDACT_COLUMNS:
+                        if _should_redact_export_column(col):
                             vals.append("'[REDACTED]'")
                         elif val is None:
                             vals.append("NULL")

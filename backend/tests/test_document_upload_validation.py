@@ -179,9 +179,10 @@ def test_upload_document_handles_duplicate_original_names(
     assert len({doc.filename for doc in stored_docs}) == 2
     assert first.original_name == second.original_name == "same-name.pdf"
     assert first.task_id == second.task_id == "queued-task"
-    assert first.storage_backend == second.storage_backend == "s3"
-    assert first.s3_key and second.s3_key
-    assert first.s3_key != second.s3_key
+    # Client response omits storage paths; confirm persistence on the ORM rows.
+    assert all(doc.storage_backend == "s3" for doc in stored_docs)
+    assert all(doc.s3_key for doc in stored_docs)
+    assert stored_docs[0].s3_key != stored_docs[1].s3_key
     # PDFs must not be kept under UPLOAD_DIR once stored in S3.
     assert not (tmp_path / "uploads" / user.id / f"{first_hex}.pdf").exists()
     assert not (tmp_path / "uploads" / user.id / f"{second_hex}.pdf").exists()

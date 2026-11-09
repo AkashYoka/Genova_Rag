@@ -5,12 +5,18 @@ import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import List
 
-from app.auth import create_invite_token, get_admin_user, get_current_user
+from app.auth import (
+    create_invite_token,
+    decode_invite_token,
+    get_admin_user,
+    get_current_user,
+    _is_admin_user,
+)
 from app.config import get_settings
 from app.database import get_db
 from app.email_service import send_workspace_invite_email
@@ -24,6 +30,8 @@ from app.models import User, Workspace, WorkspaceInvitation, WorkspaceMember, Wo
 from app.schemas import (
     WorkspaceCreate,
     WorkspaceDetailResponse,
+    WorkspaceInviteAcceptRequest,
+    WorkspaceInviteAcceptResponse,
     WorkspaceInviteRequest,
     WorkspaceInviteResponse,
     WorkspaceMemberAdd,
@@ -80,46 +88,138 @@ def _count_admins(workspace_id: str, db: Session) -> int:
 @router.post("/invite", response_model=WorkspaceInviteResponse, status_code=status.HTTP_200_OK)
 def invite_workspace(
     payload: WorkspaceInviteRequest,
-    admin_user: User = Depends(get_admin_user),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Invite a user by email to join a workspace via a secure time-bound token."""
+    """Invite a user by email to join a workspace via a secure time-bound token.
+
+    Invitations are bound to ``workspace_id`` (FK), never display name alone.
+    Response shape is identical whether or not the email already has an account
+    (anti-enumeration). The usable invite token is email-only.
+    """
+    workspace = _get_workspace_or_404(payload.workspace_id, db)
+    # Global platform admins or workspace admins may invite.
+    if not _is_admin_user(current_user):
+        membership = _get_membership_or_403(workspace, current_user, db)
+        _require_workspace_admin(membership)
+    admin_user = current_user
+
     existing_user = db.query(User).filter(User.email == payload.email).first()
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A user with this email already exists.",
+    if not existing_user:
+        token = create_invite_token(
+            admin_user.id,
+            payload.email,
+            workspace_id=str(workspace.id),
+            workspace_name=workspace.name,
+        )
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            hours=settings.INVITE_TOKEN_EXPIRY_HOURS
         )
 
-    token = create_invite_token(admin_user.id, payload.email, payload.workspace_name)
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.INVITE_TOKEN_EXPIRY_HOURS)
+        invitation = WorkspaceInvitation(
+            email=payload.email,
+            inviter_id=admin_user.id,
+            token_hash=token_hash,
+            workspace_id=workspace.id,
+            workspace_name=workspace.name,
+            expires_at=expires_at,
+        )
+        db.add(invitation)
+        db.commit()
+        db.refresh(invitation)
 
-    invitation = WorkspaceInvitation(
-        email=payload.email,
-        inviter_id=admin_user.id,
-        token_hash=token_hash,
-        workspace_name=payload.workspace_name,
-        expires_at=expires_at,
-    )
-    db.add(invitation)
-    db.commit()
-    db.refresh(invitation)
-
-    join_link = f"{settings.APP_URL.rstrip('/')}/invite?token={quote(token, safe='')}"
-    send_workspace_invite_email(
-        to=payload.email,
-        workspace_name=payload.workspace_name,
-        invite_link=join_link,
-        expires_in_hours=settings.INVITE_TOKEN_EXPIRY_HOURS,
-        personal_message=payload.message or None,
-    )
+        join_link = (
+            f"{settings.APP_URL.rstrip('/')}/invite?token={quote(token, safe='')}"
+        )
+        send_workspace_invite_email(
+            to=payload.email,
+            workspace_name=workspace.name,
+            invite_link=join_link,
+            expires_in_hours=settings.INVITE_TOKEN_EXPIRY_HOURS,
+            personal_message=payload.message or None,
+        )
 
     return WorkspaceInviteResponse(
         email=payload.email,
-        workspace_name=payload.workspace_name,
-        invite_link=join_link,
+        workspace_id=str(workspace.id),
+        workspace_name=workspace.name,
+        invite_link="",
         expires_in_hours=settings.INVITE_TOKEN_EXPIRY_HOURS,
+    )
+
+
+@router.post(
+    "/invitations/accept",
+    response_model=WorkspaceInviteAcceptResponse,
+    status_code=status.HTTP_200_OK,
+)
+def accept_workspace_invite(
+    payload: WorkspaceInviteAcceptRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Accept a single-use workspace invitation bound to workspace_id."""
+    decoded = decode_invite_token(payload.token)
+    if not decoded:
+        raise ValidationException("Invalid or expired invitation token")
+
+    email = str(decoded.get("email") or "").lower()
+    workspace_id = decoded.get("workspace_id")
+    if not email or not workspace_id:
+        raise ValidationException("Invalid invitation token")
+    if email != (current_user.email or "").lower():
+        raise ForbiddenException("Invitation email does not match the signed-in user")
+
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    invitation = (
+        db.query(WorkspaceInvitation)
+        .filter(WorkspaceInvitation.token_hash == token_hash)
+        .with_for_update()
+        .first()
+    )
+    if not invitation:
+        raise ValidationException("Invalid or expired invitation token")
+    if invitation.accepted_at is not None:
+        raise ValidationException("Invitation has already been used")
+    expires = invitation.expires_at
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires and expires < datetime.now(timezone.utc):
+        raise ValidationException("Invitation has expired")
+    if str(invitation.workspace_id) != str(workspace_id):
+        raise ValidationException("Invitation workspace mismatch")
+
+    workspace = _get_workspace_or_404(str(invitation.workspace_id), db)
+    existing = db.execute(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == workspace.id,
+            WorkspaceMember.user_id == current_user.id,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        invitation.accepted_at = datetime.now(timezone.utc)
+        db.commit()
+        return WorkspaceInviteAcceptResponse(
+            workspace_id=str(workspace.id),
+            workspace_name=workspace.name,
+            role=str(existing.role.value if hasattr(existing.role, "value") else existing.role),
+            already_member=True,
+        )
+
+    member = WorkspaceMember(
+        workspace_id=workspace.id,
+        user_id=current_user.id,
+        role=WorkspaceRole.viewer,
+    )
+    invitation.accepted_at = datetime.now(timezone.utc)
+    db.add(member)
+    db.commit()
+    return WorkspaceInviteAcceptResponse(
+        workspace_id=str(workspace.id),
+        workspace_name=workspace.name,
+        role="viewer",
+        already_member=False,
     )
 
 

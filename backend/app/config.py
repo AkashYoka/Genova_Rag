@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:7860"
+    # Comma-separated Host header allowlist for TrustedHostMiddleware.
+    # Empty → localhost defaults in development; must be set in production.
+    ALLOWED_HOSTS: str = ""
 
     # ── Logging ──────────────────────────────────────────
     LOG_LEVEL: str | None = None
@@ -61,8 +64,19 @@ class Settings(BaseSettings):
     CELERY_TASK_TRACK_STARTED: bool = True
     # Response/embedding cache (optional). Read via Settings so .env is honored.
     REDIS_URL: str | None = None
+    # When set, injected into redis:// URLs that lack a password (compose/local).
+    REDIS_PASSWORD: str = ""
     CACHE_TTL: int = 3600
     CACHE_LRU_MAX_SIZE: int = 128
+
+    # ── Auth cookies (HttpOnly session; static-export compatible) ──
+    # Cookies are always set on login/refresh. Frontends should prefer cookies
+    # over localStorage. Body tokens remain for API clients / tests when enabled.
+    AUTH_RETURN_BODY_TOKENS: bool = True
+    COOKIE_SECURE: bool = False
+    COOKIE_SAMESITE: str = "lax"  # lax | strict | none
+    COOKIE_DOMAIN: str = ""
+    AUTH_COOKIE_CSRF: bool = True
 
     # ── Document Processing ──────────────────────────────
     DOC_PROCESSING_TIMEOUT_MINUTES: int = 30
@@ -173,6 +187,8 @@ class Settings(BaseSettings):
     # Must be overridden in production — validate_production() enforces this.
     # Generate a strong key: python -c "import secrets; print(secrets.token_urlsafe(32))"
     FIELD_ENCRYPTION_KEY: str = "change-me-in-production-field-encryption-key"
+    # Previous key kept during rotation so existing ciphertext remains readable.
+    FIELD_ENCRYPTION_KEY_PREVIOUS: str = ""
     FIELD_ENCRYPTION_KEY_VERSION: int = 1
 
     # ── Document Cleanup ─────────────────────────────
@@ -212,10 +228,11 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
+        # Local dev defaults only. Production origins MUST come from ALLOWED_ORIGINS
+        # — never hardcode abandoned deploy hosts (subdomain takeover risk).
         origins = [
             "http://localhost:3000",
             "http://127.0.0.1:3000",
-            "https://pdf-assistant-rag.vercel.app",
         ]
         if self.ALLOWED_ORIGINS:
             for o in self.ALLOWED_ORIGINS.split(","):
@@ -223,6 +240,28 @@ class Settings(BaseSettings):
                 if o_strip and o_strip not in origins:
                     origins.append(o_strip)
         return origins
+
+    @property
+    def trusted_hosts(self) -> list[str]:
+        """Hostnames accepted by TrustedHostMiddleware (FASTAPI-DEPLOY baseline)."""
+        configured = [
+            h.strip() for h in (self.ALLOWED_HOSTS or "").split(",") if h.strip()
+        ]
+        if configured:
+            return configured
+        if self.ENVIRONMENT == "production":
+            # Fail closed-ish: only the configured frontend host + localhost probes.
+            hosts = {"localhost", "127.0.0.1"}
+            try:
+                from urllib.parse import urlparse
+
+                front = urlparse(self.FRONTEND_URL or "").hostname
+                if front:
+                    hosts.add(front)
+            except Exception:
+                pass
+            return sorted(hosts)
+        return ["localhost", "127.0.0.1", "testserver"]
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
@@ -362,18 +401,58 @@ class Settings(BaseSettings):
                 "SECRET_KEY is too short — use at least 32 characters. "
                 "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
             )
-
-        if self.ENVIRONMENT == "production" and self.DEV_AUTH_BYPASS:
+        if len(self.FIELD_ENCRYPTION_KEY or "") < 32:
             issues.append(
-                "DEV_AUTH_BYPASS must be false in production."
+                "FIELD_ENCRYPTION_KEY is too short — use at least 32 characters."
             )
+
+        if self.DEV_AUTH_BYPASS:
+            issues.append("DEV_AUTH_BYPASS must be false in production.")
+
+        origins = [o.strip() for o in (self.ALLOWED_ORIGINS or "").split(",") if o.strip()]
+        if not origins:
+            issues.append(
+                "ALLOWED_ORIGINS must list at least one explicit frontend origin in production."
+            )
+        if any(o == "*" for o in origins):
+            issues.append(
+                "ALLOWED_ORIGINS must not use '*' when credentials are enabled."
+            )
+
+        hosts = [h.strip() for h in (self.ALLOWED_HOSTS or "").split(",") if h.strip()]
+        if not hosts:
+            issues.append(
+                "ALLOWED_HOSTS must be set explicitly in production "
+                "(comma-separated API hostnames)."
+            )
+        if any(h == "*" for h in hosts):
+            issues.append("ALLOWED_HOSTS must not contain '*'.")
+
+        if (self.COOKIE_SAMESITE or "").lower() == "none" and not self.COOKIE_SECURE:
+            # cookies.py forces Secure when SameSite=None; still flag misconfig.
+            if self.ENVIRONMENT == "production":
+                issues.append(
+                    "COOKIE_SAMESITE=none requires COOKIE_SECURE=true in production."
+                )
 
         if self.ENVIRONMENT == "production" and issues:
             raise ValueError(
                 "Production configuration errors:\n  • " + "\n  • ".join(issues)
             )
+        elif issues and self.ENVIRONMENT == "production":
+            # unreachable; kept for clarity
+            pass
         elif issues:
-            for issue in issues:
+            # In non-production, only warn about insecure defaults / short keys —
+            # do not require ALLOWED_HOSTS / ORIGINS for local DX.
+            soft = [
+                i
+                for i in issues
+                if "ALLOWED_ORIGINS" not in i
+                and "ALLOWED_HOSTS" not in i
+                and "DEV_AUTH_BYPASS" not in i
+            ]
+            for issue in soft:
                 _logger.warning("Non-production config warning: %s", issue)
 
     # .env is optional — missing file is ignored; OS env vars still work.

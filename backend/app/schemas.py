@@ -108,15 +108,27 @@ class ChangePasswordRequest(BaseModel):
 
 class WorkspaceInviteRequest(BaseModel):
     email: EmailStr
-    workspace_name: str = Field(..., min_length=1, max_length=100)
+    workspace_id: str = Field(..., min_length=1, max_length=64)
     message: Optional[str] = None
 
 
 class WorkspaceInviteResponse(BaseModel):
     email: EmailStr
+    workspace_id: str
     workspace_name: str
     invite_link: str
     expires_in_hours: int
+
+
+class WorkspaceInviteAcceptRequest(BaseModel):
+    token: str = Field(..., min_length=10)
+
+
+class WorkspaceInviteAcceptResponse(BaseModel):
+    workspace_id: str
+    workspace_name: str
+    role: str
+    already_member: bool = False
 
 
 class TokenResponse(BaseModel):
@@ -127,7 +139,8 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    # Optional when the HttpOnly refresh_token cookie is present.
+    refresh_token: Optional[str] = None
 
 
 class GoogleDriveAuthUrlResponse(BaseModel):
@@ -260,8 +273,7 @@ class DocumentResponse(BaseModel):
     extracted_urls: Optional[List[str]] = []
     processing_progress: Optional[int] = None
     processing_stage: Optional[str] = None
-    s3_key: Optional[str] = None
-    storage_backend: Optional[str] = None
+    # Intentionally omit s3_key / storage_backend — storage paths are not client data.
 
     @field_validator("id", mode="before")
     @classmethod
@@ -341,7 +353,7 @@ class DocumentStatusResponse(BaseModel):
     processing_progress: Optional[int] = None
     processing_stage: Optional[str] = None
     retry_count: Optional[int] = None
-    last_error_traceback: Optional[str] = None
+    # last_error_traceback is server-only — never serialize stack traces to clients.
     processing_started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 

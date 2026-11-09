@@ -85,6 +85,11 @@ import {
 
 import type { DocInfo } from "@/types/document";
 import { normalizeDocInfo, type DocumentListApiResponse } from "@/types/document";
+import { useChatStore } from "@/store/chat-store";
+import {
+  chatTitleFromFilename,
+  takePendingDocChat,
+} from "@/lib/chat-attachments";
 export type { DocInfo };
 
 function formatBytes(n: number): string {
@@ -150,6 +155,7 @@ function DashboardPageContent() {
   const router = useRouter();
 
   const [documents, setDocuments] = useState<DocInfo[]>([]);
+  const documentsRef = useRef<DocInfo[]>([]);
   const prevDocsRef = useRef<Record<string, string>>({});
   const [activeDoc, setActiveDoc] = useState<DocInfo | null>(null);
   const [pdfPage, setPdfPage] = useState(1);
@@ -201,6 +207,7 @@ function DashboardPageContent() {
       );
       const rawList = data?.items ?? data?.documents ?? [];
       const next = rawList.map(normalizeDocInfo);
+      documentsRef.current = next;
       setDocuments(next);
       setActiveDoc((current) => {
         if (!current) {
@@ -253,6 +260,63 @@ function DashboardPageContent() {
       await loadDocuments();
     })();
   }, [user, loadDocuments]);
+
+  // Documents → Chat: open a fresh session with the queued PDF already attached.
+  // Pending nonce is consumed once (module Set), so Strict Mode remounts are safe.
+  useEffect(() => {
+    if (!user) return;
+    const pending = takePendingDocChat();
+    if (!pending) return;
+
+    void (async () => {
+      try {
+        let matched =
+          documentsRef.current.find((d) => d.id === pending.docId) ?? null;
+
+        if (!matched) {
+          try {
+            const data = await api.get<DocumentListApiResponse>(
+              "/api/v1/documents/",
+            );
+            const rawList = data?.items ?? data?.documents ?? [];
+            matched =
+              rawList
+                .map(normalizeDocInfo)
+                .find((d) => d.id === pending.docId) ?? null;
+          } catch {
+            matched = null;
+          }
+        }
+
+        // Only attach IDs the authenticated user's document list confirms
+        // (ready + owned). Backend still enforces ownership; this avoids
+        // poisoning the session with unowned chips.
+        if (!matched || matched.status !== "ready") {
+          toast.error("Document is not available to chat with yet.");
+          return;
+        }
+
+        setActiveDoc(matched);
+        const filename = matched.original_name;
+        await useChatStore.getState().createSession(
+          chatTitleFromFilename(filename),
+          { attachments: [{ id: matched.id, filename }] },
+        );
+
+        if (typeof window !== "undefined") {
+          const url = new URL(window.location.href);
+          if (url.searchParams.get("docId") !== matched.id) {
+            url.searchParams.set("docId", matched.id);
+            router.replace(`${url.pathname}?${url.searchParams.toString()}`);
+          }
+        }
+
+        toast.success(`Chat started with ${filename}`);
+      } catch {
+        toast.error("Could not start chat session");
+      }
+    })();
+  }, [user, router]);
 
   const handlePageDrop = useCallback(
     async (files: File[]) => {

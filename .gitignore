@@ -34,8 +34,14 @@ Thumbs.db
 
 # Misc
 *.log
+dump.rdb
+*.rdb
 static/
 .planning/
+
+# Local scanner artifacts may contain sensitive path context
+security-audit/gitleaks-report.json
+
 
 .pytest_tmp/
 backend/test_uploads/

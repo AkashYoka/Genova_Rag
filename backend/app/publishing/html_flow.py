@@ -6,11 +6,12 @@ blockquotes, code, and inline formatting without screenshotting the editor.
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from html.parser import HTMLParser
 from io import BytesIO
 from typing import List, Optional, Tuple
-from urllib.request import urlopen
+from urllib.parse import urlparse
 
 from reportlab.lib.units import mm
 from reportlab.platypus import (
@@ -27,6 +28,35 @@ from reportlab.platypus import (
 
 from app.publishing.design import BORDER
 from app.publishing.markdown import make_table, safe
+
+logger = logging.getLogger(__name__)
+
+_SAFE_LINK_SCHEMES = {"http", "https", "mailto"}
+
+
+def _safe_pdf_href(href: str) -> str:
+    """Allow only http(s)/mailto (and relative) links in PDF annotations.
+
+    Blocks javascript:, file:, data:, and other schemes that PDF viewers may
+    execute or misuse when the user clicks a link in the exported notes PDF.
+    """
+    raw = (href or "").strip()
+    if not raw or raw.startswith("#"):
+        return raw
+    # Protocol-relative URLs can become unexpected schemes depending on viewer.
+    if raw.startswith("//"):
+        return ""
+    parsed = urlparse(raw)
+    scheme = (parsed.scheme or "").lower()
+    if not scheme:
+        # Relative path / fragment-only — keep as-is for in-doc navigation.
+        if ":" in raw.split("?", 1)[0].split("#", 1)[0]:
+            return ""
+        return raw
+    if scheme in _SAFE_LINK_SCHEMES:
+        return raw
+    logger.warning("Stripped unsafe PDF link scheme: %s", scheme)
+    return ""
 
 
 _BLOCK_TAGS = {
@@ -115,7 +145,7 @@ class _HtmlToFlowables(HTMLParser):
             self._buf.append("<super>")
             self._inline_open.append("</super>")
         elif tag == "a":
-            href = attrs.get("href") or ""
+            href = _safe_pdf_href(attrs.get("href") or "")
             self._link_href = href
             if href:
                 self._buf.append(f'<link href="{safe(href)}"><font color="#0F7C86"><u>')
@@ -160,18 +190,25 @@ class _HtmlToFlowables(HTMLParser):
         self._table_rows = []
 
     def _load_image(self, src: str) -> Optional[Image]:
+        """Embed only inline data: images.
+
+        Remote http(s) fetches are intentionally refused: authenticated notes
+        PDF export must not be an SSRF primitive against internal hosts.
+        """
         if not src:
             return None
         try:
-            data: bytes
-            if src.startswith("data:"):
-                # data:image/png;base64,...
-                _, b64 = src.split(",", 1)
-                data = base64.b64decode(b64)
-            elif src.startswith(("http://", "https://")):
-                with urlopen(src, timeout=8) as resp:  # nosec - user content
-                    data = resp.read()
-            else:
+            if not src.startswith("data:"):
+                if src.startswith(("http://", "https://", "//")):
+                    logger.warning("Refusing remote image fetch in notes PDF export")
+                return None
+            # data:image/png;base64,...
+            header, _, b64 = src.partition(",")
+            if not b64 or "base64" not in header.lower():
+                return None
+            data = base64.b64decode(b64, validate=False)
+            # Cap decoded image payload to avoid memory bombs from huge data URIs.
+            if len(data) > 5 * 1024 * 1024:
                 return None
             max_w = self.content_width
             max_h = 120 * mm

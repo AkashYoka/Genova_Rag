@@ -63,9 +63,10 @@ const clearStoredTokens = () => {
   setAuthMarkerCookie(false);
 };
 
-const persistTokens = (accessToken: string, refreshToken: string, user: AuthUser) => {
-  localStorage.setItem("token", accessToken);
-  localStorage.setItem("refresh_token", refreshToken);
+const persistTokens = (_accessToken: string, _refreshToken: string, user: AuthUser) => {
+  // JWTs live in HttpOnly cookies set by the API — never in localStorage.
+  localStorage.removeItem("token");
+  localStorage.removeItem("refresh_token");
   cacheUser(user);
   setAuthMarkerCookie(true);
 };
@@ -85,7 +86,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
     persistTokens(data.access_token, data.refresh_token, data.user);
     set({
-      token: data.access_token,
+      token: "cookie",
       user: data.user,
       loading: false,
       initialized: true,
@@ -100,7 +101,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
     persistTokens(data.access_token, data.refresh_token, data.user);
     set({
-      token: data.access_token,
+      token: "cookie",
       user: data.user,
       loading: false,
       initialized: true,
@@ -124,11 +125,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   },
 
   async logout() {
-    const refreshToken =
-      typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
     try {
-      // Send refresh_token so the server can bump token_version even if access JWT expired
-      await api.post("/api/v1/auth/logout", refreshToken ? { refresh_token: refreshToken } : undefined);
+      // Cookie session: server reads HttpOnly refresh_token; body optional.
+      await api.post("/api/v1/auth/logout", {});
     } catch {
       // Ignore network errors on logout — local session must still clear
     }
@@ -168,40 +167,58 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         : null;
 
     try {
-      let storedToken = token ?? getStoredToken();
-
-      // OAuth redirect tokens in URL — accept once then strip from history
+      // Never accept access/refresh JWTs from the query string — they leak via
+      // history, Referer, and proxy logs. Strip them if present without storing.
       if (typeof window !== "undefined") {
         const params = new URLSearchParams(window.location.search);
-        const urlToken = params.get("token");
-        const urlRefreshToken = params.get("refresh_token");
-        if (urlToken && urlRefreshToken) {
-          localStorage.setItem("token", urlToken);
-          localStorage.setItem("refresh_token", urlRefreshToken);
-          setAuthMarkerCookie(true);
-          storedToken = urlToken;
-          const cleanUrl = window.location.origin + window.location.pathname;
-          window.history.replaceState({}, document.title, cleanUrl);
+        if (params.has("token") || params.has("refresh_token") || params.has("access_token")) {
+          params.delete("token");
+          params.delete("refresh_token");
+          params.delete("access_token");
+          const clean = params.toString();
+          const nextUrl =
+            window.location.pathname + (clean ? `?${clean}` : "") + window.location.hash;
+          window.history.replaceState({}, document.title, nextUrl);
         }
       }
 
-      if (!storedToken) {
-        clearStoredTokens();
-        set({ user: null, token: null, loading: false, initialized: true });
-        return;
+      // Prefer HttpOnly cookie session; fall back to legacy localStorage only
+      // long enough to call /me once, then purge JWTs from JS storage.
+      const legacyToken = getStoredToken();
+      const hasMarker =
+        typeof document !== "undefined" && document.cookie.includes(`${"genova_auth"}=`);
+
+      if (!legacyToken && !hasMarker && !token) {
+        // Still attempt /me — cookies may exist without the soft marker.
+        set({ loading: true });
+        try {
+          const user = await api.get<AuthUser>("/api/v1/auth/me");
+          cacheUser(user);
+          setAuthMarkerCookie(true);
+          set({ user, token: "cookie", loading: false, initialized: true });
+          return;
+        } catch {
+          clearStoredTokens();
+          set({ user: null, token: null, loading: false, initialized: true });
+          return;
+        }
       }
 
       set({ loading: true });
       setAuthMarkerCookie(true);
 
       try {
-        const user = await api.get<AuthUser>("/api/v1/auth/me", { token: storedToken });
-        // Prefer freshly stored token after a possible silent refresh
-        const latestToken = getStoredToken() ?? storedToken;
+        const user = await api.get<AuthUser>(
+          "/api/v1/auth/me",
+          legacyToken ? { token: legacyToken } : undefined
+        );
+        // Migrate off localStorage JWTs once cookie session is established.
+        localStorage.removeItem("token");
+        localStorage.removeItem("refresh_token");
         cacheUser(user);
         set({
           user,
-          token: latestToken,
+          token: "cookie",
           loading: false,
           initialized: true,
         });

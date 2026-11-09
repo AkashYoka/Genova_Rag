@@ -1,0 +1,80 @@
+name: Security gates
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  backend-sast:
+    name: Semgrep (backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/python
+        env:
+          SEMGREP_RULES: p/owasp-top-ten p/python
+
+  dependency-audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: pip-audit
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          if [ -f requirements.txt ]; then
+            pip-audit -r requirements.txt --strict || true
+            pip-audit -r requirements.txt --severity high --fail-on-vuln
+          fi
+      - name: npm audit (frontend production)
+        working-directory: frontend
+        run: npm ci --ignore-scripts && npm audit --omit=dev --audit-level=high
+
+  authz-regressions:
+    name: Authz / SSRF regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend test deps
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Run security regression suite
+        working-directory: backend
+        env:
+          ENVIRONMENT: development
+          SECRET_KEY: ci-security-regression-secret-key-32chars
+          FIELD_ENCRYPTION_KEY: ci-security-field-encryption-key-32
+          DEV_AUTH_BYPASS: "false"
+        run: pytest -q tests/test_security_regressions.py tests/test_documents.py -k "idor or security or other_users or ssrf or refresh or traceback or storage"

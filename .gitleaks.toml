@@ -1,0 +1,17 @@
+# Gitleaks config — ignore build artifacts and dependency trees.
+title = "Genova"
+
+[allowlist]
+description = "Build outputs, dependencies, and local caches"
+paths = [
+  '''(?i)frontend[/\\]\.next''',
+  '''(?i)frontend[/\\]out''',
+  '''(?i)frontend[/\\]node_modules''',
+  '''(?i)backend[/\\]\.venv''',
+  '''(?i)backend[/\\].*[/\\]__pycache__''',
+  '''(?i)security-audit''',
+  '''(?i)\.taste-skill''',
+  '''(?i)\.aws-feasibility-efs''',
+  '''(?i)package-lock\.json$''',
+  '''(?i)poetry\.lock$''',
+]

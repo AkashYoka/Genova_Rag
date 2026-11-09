@@ -136,16 +136,40 @@ GOOGLE_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 GOOGLE_DRIVE_STATE_TOKEN_TYPE = "google_drive_oauth_state"
 
 
-def _create_token_response(user: User) -> TokenResponse:
+def _issue_session(user: User, response: Response) -> TokenResponse:
+    """Create JWTs, set HttpOnly cookies (+ CSRF), optionally return body tokens."""
+    from app.security.cookies import set_auth_cookies
+
     tv = int(getattr(user, "token_version", 0) or 0)
     access_token = create_access_token(user.id, token_version=tv)
     refresh_token = create_refresh_token(user.id, token_version=tv)
-
-    return TokenResponse(
+    set_auth_cookies(
+        response,
         access_token=access_token,
         refresh_token=refresh_token,
+    )
+    if settings.AUTH_RETURN_BODY_TOKENS:
+        body_access, body_refresh = access_token, refresh_token
+    else:
+        # Cookie-only mode for browser deployments hardening.
+        body_access, body_refresh = "", ""
+    return TokenResponse(
+        access_token=body_access,
+        refresh_token=body_refresh,
         user=UserResponse.model_validate(user),
     )
+
+
+def _create_token_response(user: User, response: Optional[Response] = None) -> TokenResponse:
+    """Backward-compatible helper — prefer ``_issue_session`` with a Response."""
+    if response is None:
+        tv = int(getattr(user, "token_version", 0) or 0)
+        return TokenResponse(
+            access_token=create_access_token(user.id, token_version=tv),
+            refresh_token=create_refresh_token(user.id, token_version=tv),
+            user=UserResponse.model_validate(user),
+        )
+    return _issue_session(user, response)
 
 
 def _verify_google_token(id_token_value: str) -> dict:
@@ -250,7 +274,12 @@ async def register(request: Request, payload: UserRegister, db: Session = Depend
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit(AUTH_LOGIN_RATE_LIMIT)
-def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
+def login(
+    request: Request,
+    payload: UserLogin,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """
     Authenticate a user with email and password.
 
@@ -302,12 +331,12 @@ def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
         details={"method": "password"},
     )
 
-    return _create_token_response(user)
+    return _issue_session(user, response)
 
 
 @router.post("/dev-login", response_model=TokenResponse)
 @limiter.limit(AUTH_LOGIN_RATE_LIMIT)
-def dev_login(request: Request, db: Session = Depends(get_db)):
+def dev_login(request: Request, response: Response, db: Session = Depends(get_db)):
     """Auto sign-in for local development only.
 
     Creates a verified ``localdev`` user if needed and returns JWTs so the
@@ -357,12 +386,17 @@ def dev_login(request: Request, db: Session = Depends(get_db)):
         result="success",
         details={"method": "dev_bypass"},
     )
-    return _create_token_response(user)
+    return _issue_session(user, response)
 
 
 @router.post("/google", response_model=TokenResponse)
 @limiter.limit(AUTH_LOGIN_RATE_LIMIT)
-def login_with_google(request: Request, payload: GoogleLoginRequest, db: Session = Depends(get_db)):
+def login_with_google(
+    request: Request,
+    payload: GoogleLoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     """
     Authenticate with a Google Identity Services ID token.
 
@@ -393,7 +427,7 @@ def login_with_google(request: Request, payload: GoogleLoginRequest, db: Session
     db.commit()
     db.refresh(user)
 
-    return _create_token_response(user)
+    return _issue_session(user, response)
 
 
 @router.get("/verify", response_model=MessageResponse)
@@ -440,15 +474,29 @@ async def resend_verification(request: Request, payload: EmailVerificationReques
 
 @router.post("/refresh", response_model=TokenResponse)
 @limiter.limit(AUTH_RATE_LIMIT)
-def refresh_token(request: Request, payload: RefreshRequest, db: Session = Depends(get_db)):
+def refresh_token(
+    request: Request,
+    response: Response,
+    payload: Optional[RefreshRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+):
     """
     Refresh both access and refresh tokens using a valid refresh token.
 
-    Decodes the provided refresh token to extract the user ID. If the token
-    is valid, the token_version matches, and the user still exists, a new
-    pair of access and refresh tokens is generated and returned.
+    Accepts the refresh JWT from the JSON body **or** the HttpOnly
+    ``refresh_token`` cookie. Redeemed refresh tokens are marked used; reuse
+    bumps ``token_version`` and invalidates the session family.
     """
-    decoded = decode_token_with_version(payload.refresh_token, token_type="refresh")
+    from app.cache import is_refresh_token_reused, mark_refresh_token_used
+    from app.security.cookies import REFRESH_COOKIE
+
+    raw_refresh = (payload.refresh_token if payload else None) or request.cookies.get(
+        REFRESH_COOKIE
+    )
+    if not raw_refresh:
+        raise UnauthorizedException("Invalid or expired refresh token")
+
+    decoded = decode_token_with_version(raw_refresh, token_type="refresh")
     if not decoded:
         raise UnauthorizedException("Invalid or expired refresh token")
 
@@ -461,7 +509,14 @@ def refresh_token(request: Request, payload: RefreshRequest, db: Session = Depen
     if token_tv != current_tv:
         raise UnauthorizedException("Invalid or expired refresh token")
 
-    return _create_token_response(user)
+    if is_refresh_token_reused(raw_refresh):
+        # Suspected token theft: kill all outstanding JWTs for this user.
+        bump_token_version(user, db)
+        raise UnauthorizedException("Invalid or expired refresh token")
+
+    ttl = int(settings.JWT_REFRESH_EXPIRY_DAYS) * 24 * 60 * 60
+    mark_refresh_token_used(raw_refresh, ttl)
+    return _issue_session(user, response)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -948,6 +1003,21 @@ def logout(
             if candidate and int(getattr(candidate, "token_version", 0) or 0) == token_tv:
                 user = candidate
 
+    if user is None:
+        from app.security.cookies import REFRESH_COOKIE
+
+        raw = request.cookies.get(REFRESH_COOKIE)
+        if raw:
+            decoded = decode_token_with_version(raw, token_type="refresh")
+            if decoded:
+                user_id, token_tv = decoded
+                candidate = db.query(User).filter(User.id == user_id).first()
+                if (
+                    candidate
+                    and int(getattr(candidate, "token_version", 0) or 0) == token_tv
+                ):
+                    user = candidate
+
     if user is not None:
         bump_token_version(user, db)
         audit_log(
@@ -956,6 +1026,7 @@ def logout(
             result="success",
         )
 
-    response.delete_cookie(key="access_token")
-    response.delete_cookie(key="refresh_token")
+    from app.security.cookies import clear_auth_cookies
+
+    clear_auth_cookies(response)
     return {"message": "Successfully logged out"}

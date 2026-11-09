@@ -29,9 +29,10 @@ x-backend-environment: &backend-environment
   CHROMA_PERSIST_DIR: ${CHROMA_PERSIST_DIR:-/app/data/chroma_db}
   GRAPH_PERSIST_DIR: ${GRAPH_PERSIST_DIR:-/app/data/graphs}
   LOG_FILE: /app/data/logs/app.log
-  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
-  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
-  REDIS_URL: ${REDIS_URL:-redis://redis:6379/2}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-genova-redis}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://:${REDIS_PASSWORD:-changeme-genova-redis}@redis:6379/0}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://:${REDIS_PASSWORD:-changeme-genova-redis}@redis:6379/1}
+  REDIS_URL: ${REDIS_URL:-redis://:${REDIS_PASSWORD:-changeme-genova-redis}@redis:6379/2}
   LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
   LLM_MODEL: ${LLM_MODEL:-qwen2.5:3b}
   EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
@@ -62,13 +63,35 @@ services:
     container_name: pdf_rag_redis
     restart: unless-stopped
     logging: *default-logging
-    command: ["redis-server", "--appendonly", "yes"]
+    # Bind only to loopback on the host — never expose Redis to the LAN/WAN.
+    # App/worker reach Redis on the compose network via hostname `redis`.
+    # requirepass disables anonymous access. Host port remains loopback-only.
+    # ACL users can be layered via a mounted redis.conf in hardened deploys.
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--bind",
+        "0.0.0.0",
+        "--protected-mode",
+        "yes",
+        "--requirepass",
+        "${REDIS_PASSWORD:-changeme-genova-redis}",
+      ]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "-a",
+          "${REDIS_PASSWORD:-changeme-genova-redis}",
+          "ping",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5

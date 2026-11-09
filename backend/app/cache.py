@@ -263,3 +263,59 @@ def invalidate_cache(user_id: str, document_id: str, question: str) -> None:
         except Exception:  # noqa: BLE001
             pass
     _lru_delete(key)
+
+
+# ---------------------------------------------------------------------------
+# Refresh-token reuse detection (rotation / theft detection)
+# ---------------------------------------------------------------------------
+
+_refresh_used_mem: dict[str, float] = {}
+
+
+def _refresh_used_key(token: str) -> str:
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return f"refresh_used:{digest}"
+
+
+def is_refresh_token_reused(token: str) -> bool:
+    """Return True if this refresh JWT was already redeemed (possible theft)."""
+    import time
+
+    key = _refresh_used_key(token)
+    r = _get_redis()
+    if r is not None:
+        try:
+            return bool(r.exists(key))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Redis refresh-reuse check failed (%s)", exc)
+
+    expires_at = _refresh_used_mem.get(key)
+    if expires_at is None:
+        return False
+    if expires_at < time.time():
+        _refresh_used_mem.pop(key, None)
+        return False
+    return True
+
+
+def mark_refresh_token_used(token: str, ttl_seconds: int) -> None:
+    """Mark a refresh JWT as spent so a second redeem is rejected."""
+    import time
+
+    ttl = max(60, int(ttl_seconds))
+    key = _refresh_used_key(token)
+    r = _get_redis()
+    if r is not None:
+        try:
+            r.setex(key, ttl, "1")
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Redis refresh-reuse mark failed (%s)", exc)
+
+    _refresh_used_mem[key] = time.time() + ttl
+    # Bound memory in long-running workers without Redis.
+    if len(_refresh_used_mem) > 4096:
+        now = time.time()
+        stale = [k for k, exp in _refresh_used_mem.items() if exp < now]
+        for k in stale[:2048]:
+            _refresh_used_mem.pop(k, None)

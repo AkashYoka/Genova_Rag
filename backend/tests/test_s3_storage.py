@@ -236,8 +236,9 @@ def test_upload_mirrors_document_into_user_folder(client, auth_headers, user, mo
 
     assert response.status_code == 202, response.text
     body = response.json()
-    assert body.get("storage_backend") == "s3"
-    assert body.get("s3_key") == "key"
+    # Storage location is server-side only — never returned to the browser.
+    assert "storage_backend" not in body
+    assert "s3_key" not in body
     assert len(calls) == 1
     assert calls[0][0] == expected_user_id
     assert calls[0][1].endswith(".txt")
@@ -313,6 +314,9 @@ def test_retry_remirrors_local_file_to_s3(
     assert response.status_code == 200, response.text
     assert calls == [(user_id, "retry-me.pdf", str(user_dir / "retry-me.pdf"))]
     body = response.json()
-    assert body.get("s3_key") == "key"
-    assert body.get("storage_backend") == "s3"
+    assert "s3_key" not in body
+    assert "storage_backend" not in body
+    db_session.refresh(doc)
+    assert doc.s3_key == "key"
+    assert doc.storage_backend == "s3"
     assert not (user_dir / "retry-me.pdf").exists()

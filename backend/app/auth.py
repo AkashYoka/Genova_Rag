@@ -110,11 +110,17 @@ def bump_token_version(user: User, db: Session) -> User:
     return user
 
 
-def create_invite_token(inviter_id: str, email: str, workspace_name: str) -> str:
-    """Create a time-bound workspace invitation JWT."""
+def create_invite_token(
+    inviter_id: str,
+    email: str,
+    workspace_id: str,
+    workspace_name: str = "",
+) -> str:
+    """Create a time-bound workspace invitation JWT bound to workspace_id."""
     payload: dict[str, Any] = {
-        "sub": inviter_id,
+        "sub": str(inviter_id),
         "email": email,
+        "workspace_id": str(workspace_id),
         "workspace_name": workspace_name,
         "type": "invite",
         "exp": datetime.now(timezone.utc) + timedelta(hours=settings.INVITE_TOKEN_EXPIRY_HOURS),

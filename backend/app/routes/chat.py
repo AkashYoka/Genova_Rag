@@ -264,8 +264,9 @@ def _enriched_sources_payload(
 async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
     """WebSocket endpoint for streaming agentic thoughts and tokens.
 
-    Authenticate via `token` query param or expect first JSON message
-    containing `{token, question, document_id?, session_id?}`.
+    Authenticate via the first JSON message containing
+    `{token, question, document_id?, session_id?}`.
+    Query-string `?token=` is rejected in production (URL/proxy log leakage).
     """
     await websocket.accept()
 
@@ -273,13 +274,24 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
     from app.database import SessionLocal
     from app.auth import decode_token_with_version
     from app.models import ApiKey, User
+    from app.config import get_settings
 
     db = SessionLocal()
     user = None
 
     try:
         # Prefer first-message token (keeps JWT out of URL/proxy logs).
-        # Query ?token= remains as a deprecated fallback.
+        settings = get_settings()
+        if token and settings.ENVIRONMENT == "production":
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "data": "Pass the access token in the first WebSocket message, not the URL.",
+                }
+            )
+            await websocket.close()
+            return
+
         if token:
             tok = token
             initial_payload = None
@@ -287,6 +299,10 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             msg = await websocket.receive_json()
             tok = msg.get("token")
             initial_payload = msg
+
+        # Prefer first-message / query token; fall back to HttpOnly access_token cookie.
+        if not tok:
+            tok = websocket.cookies.get("access_token")
 
         if not tok:
             await websocket.send_json({"type": "error", "data": "Missing token"})

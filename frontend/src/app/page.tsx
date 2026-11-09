@@ -141,9 +141,6 @@ export default function HomePage() {
     getServerSnapshot,
   );
 
-  const docsUrl =
-    (process.env.NEXT_PUBLIC_API_URL || "http://localhost:7860") + "/docs";
-
   useEffect(() => {
     if (mounted && !loading && user) {
       router.replace("/dashboard");
@@ -278,14 +275,6 @@ export default function HomePage() {
             >
               Sign in
             </Link>
-            <a
-              href={docsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="transition-colors hover:text-foreground"
-            >
-              API documentation
-            </a>
             <a
               href="https://github.com/AkashYoka/Genova_Rag"
               target="_blank"

@@ -49,47 +49,10 @@ import {
   Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-const ATTACH_STORAGE_PREFIX = "genova-chat-attachments:";
-
-function loadSessionAttachments(sessionId: string | null): AttachedDocument[] {
-  if (!sessionId || typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(`${ATTACH_STORAGE_PREFIX}${sessionId}`);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const valid = parsed.filter(
-      (item): item is AttachedDocument =>
-        !!item &&
-        typeof item.id === "string" &&
-        typeof item.filename === "string",
-    );
-    // Keep one chip per filename (last wins) so restored sessions aren't duplicated.
-    const byName = new Map<string, AttachedDocument>();
-    for (const item of valid) {
-      byName.set(item.filename.toLowerCase(), item);
-    }
-    return Array.from(byName.values()).slice(0, 20);
-  } catch {
-    return [];
-  }
-}
-
-function saveSessionAttachments(
-  sessionId: string | null,
-  docs: AttachedDocument[],
-) {
-  if (!sessionId || typeof window === "undefined") return;
-  try {
-    localStorage.setItem(
-      `${ATTACH_STORAGE_PREFIX}${sessionId}`,
-      JSON.stringify(docs),
-    );
-  } catch {
-    // ignore quota / private mode
-  }
-}
+import {
+  loadSessionAttachments,
+  saveSessionAttachments,
+} from "@/lib/chat-attachments";
 
 interface ISpeechRecognitionEvent {
   resultIndex: number;
@@ -281,16 +244,24 @@ export default function ChatPanel({
   }, [setStreaming, setIsTyping]);
 
   const seededAttachSessionRef = useRef<string | null>(null);
+  const skipAttachSaveRef = useRef(false);
 
   // Restore session-scoped attachments when switching chats
   useEffect(() => {
     seededAttachSessionRef.current = null;
+    // Avoid writing the previous session's chips into the new session's key
+    // before this restore state has committed.
+    skipAttachSaveRef.current = true;
     setAttachedDocs(loadSessionAttachments(activeSessionId));
     setAttachPickerOpen(false);
     setAttachFilter("");
   }, [activeSessionId]);
 
   useEffect(() => {
+    if (skipAttachSaveRef.current) {
+      skipAttachSaveRef.current = false;
+      return;
+    }
     saveSessionAttachments(activeSessionId, attachedDocs);
   }, [activeSessionId, attachedDocs]);
 
@@ -559,9 +530,10 @@ export default function ChatPanel({
         ws.onopen = () => {
           // No attachments → search all indexed docs (omit document_id).
           // Attachments → restrict retrieval to those document_ids only.
+          // Cookie sessions omit token — server reads HttpOnly access_token.
           ws.send(
             JSON.stringify({
-              token,
+              ...(token ? { token } : {}),
               question,
               document_id: null,
               document_ids: documentIds,
@@ -836,10 +808,13 @@ export default function ChatPanel({
   const handleExport = async (format: "md" | "txt" | "pdf") => {
     setExportMenuOpen(false);
     if (exporting) return;
-    const token = api.getAccessToken();
-    if (!token || token === "cookie") {
-      toast.error("Sign in required to export chat");
-      return;
+    // Cookie sessions authenticate via HttpOnly cookies on downloadAuthenticated.
+    if (typeof document !== "undefined" && !document.cookie.includes("genova_auth=")) {
+      const token = api.getAccessToken();
+      if (!token) {
+        toast.error("Sign in required to export chat");
+        return;
+      }
     }
 
     // Chat is session-scoped; document export is only a fallback.

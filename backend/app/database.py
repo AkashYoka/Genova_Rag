@@ -388,6 +388,31 @@ def _migrate_schema():
         except Exception:
             logger.warning("Migration skipped (may already exist): workspace_invitations")
 
+    # Bind invitations to workspace_id (FK) — never resolve by display name alone.
+    try:
+        inv_cols = {c["name"] for c in inspector.get_columns("workspace_invitations")}
+    except Exception:
+        inv_cols = set()
+    if inv_cols and "workspace_id" not in inv_cols:
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        "ALTER TABLE workspace_invitations "
+                        "ADD COLUMN workspace_id CHAR(36)"
+                    )
+                )
+            _ensure_index(
+                "workspace_invitations",
+                "ix_workspace_invitations_workspace_id",
+                "workspace_id",
+            )
+            logger.info("Migration: added column workspace_invitations.workspace_id")
+        except Exception as exc:
+            logger.warning(
+                "Migration failed for workspace_invitations.workspace_id: %s", exc
+            )
+
 
     # ── Drive connections table + columns ──────────────────────────────────
     existing_tables = set(inspector.get_table_names())

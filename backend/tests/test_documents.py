@@ -242,9 +242,11 @@ def test_ingest_document_builds_and_saves_graph(db_session, monkeypatch, tmp_pat
 
     monkeypatch.setattr("app.graph.service.index_document", fake_index_document)
 
+    source = tmp_path / "graph.txt"
+    source.write_text("OpenAI works with Microsoft.", encoding="utf-8")
     ingest_document(
         document_id=document_id,
-        filepath=str(tmp_path / "graph.txt"),
+        filepath=str(source),
         original_name=document.original_name,
         user_id=user_id,
     )

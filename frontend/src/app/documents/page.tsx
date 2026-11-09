@@ -42,6 +42,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { DocInfo, DocumentListApiResponse } from "@/types/document";
 import { normalizeDocInfo } from "@/types/document";
+import { queueDocChat } from "@/lib/chat-attachments";
 // Shares the desk shell + top bar styles that Header expects (genova-desk-top).
 import "../dashboard/dashboard.css";
 
@@ -573,9 +574,14 @@ function DocumentLibraryPageContent() {
     }
   };
 
-  // ── Open in workspace ─────────────────────────────────────────────────────
+  // ── Open in workspace: new chat session with this PDF attached ────────────
   const handleOpenInWorkspace = (doc: DocInfo) => {
+    if (doc.status !== "ready") {
+      toast.error("Wait until this document finishes indexing.");
+      return;
+    }
     setActiveDoc(doc);
+    queueDocChat({ id: doc.id, filename: doc.original_name });
     startTransition(() => {
       router.push(`/dashboard?docId=${encodeURIComponent(doc.id)}`);
     });

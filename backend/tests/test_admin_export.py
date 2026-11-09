@@ -59,3 +59,35 @@ def test_export_db_invalid_format_parameter_rejection(client: TestClient, admin_
     response = client.get("/api/v1/admin/export-db?format=yaml", headers=admin_auth_headers)
     assert response.status_code == 400
     assert "Invalid export format" in response.json()["detail"]
+
+
+def test_export_db_redacts_credential_columns(client: TestClient, admin_auth_headers, db_session):
+    """Credential-bearing columns must never appear in cleartext admin backups."""
+    from app.models import User
+
+    admin = db_session.query(User).filter(User.email == "admin@enterprise.rag").one()
+    admin.google_refresh_token = "ya29.secret-refresh-token"
+    admin.hashed_password = "$2b$12$should-never-leak"
+    db_session.commit()
+
+    response = client.get("/api/v1/admin/export-db?format=json", headers=admin_auth_headers)
+    assert response.status_code == 200
+    payload = response.json()
+    users = payload.get("users") or []
+    assert users, "expected users table in export"
+    row = next(u for u in users if u.get("email") == "admin@enterprise.rag")
+    assert row.get("hashed_password") == "[REDACTED]"
+    assert row.get("google_refresh_token") == "[REDACTED]"
+    assert "ya29.secret-refresh-token" not in response.text
+    assert "$2b$12$should-never-leak" not in response.text
+
+
+def test_should_redact_export_column_heuristics():
+    from app.routes.admin import _should_redact_export_column
+
+    assert _should_redact_export_column("hashed_password")
+    assert _should_redact_export_column("google_refresh_token")
+    assert _should_redact_export_column("credentials_json")
+    assert _should_redact_export_column("oauth_access_token")
+    assert not _should_redact_export_column("token_version")
+    assert not _should_redact_export_column("username")

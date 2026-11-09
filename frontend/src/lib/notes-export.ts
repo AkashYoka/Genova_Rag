@@ -2,12 +2,13 @@ import TurndownService from "turndown";
 import { api } from "@/lib/api";
 
 function stripHtml(html: string): string {
-  if (typeof document === "undefined") {
-    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  // Prefer DOMParser over innerHTML assignment — avoids executing markup
+  // (e.g. <img onerror=...>) while extracting plain text for export.
+  if (typeof DOMParser !== "undefined") {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    return (doc.body?.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
   }
-  const el = document.createElement("div");
-  el.innerHTML = html;
-  return (el.innerText || el.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function downloadBlob(filename: string, blob: Blob) {

@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { api } from "@/lib/api";
+import { saveSessionAttachments } from "@/lib/chat-attachments";
 
 export interface SourceBoundingBox {
   left: number;
@@ -125,7 +126,10 @@ interface ChatStore {
   setSessions: (value: Setter<ChatSession[]>) => void;
   setActiveSessionId: (value: Setter<string | null>) => void;
   fetchSessions: () => Promise<void>;
-  createSession: (title: string) => Promise<string>;
+  createSession: (
+    title: string,
+    options?: { attachments?: AttachedDocument[] },
+  ) => Promise<string>;
   renameSession: (id: string, title: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
   fetchSessionHistory: (id: string) => Promise<void>;
@@ -202,11 +206,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
-  async createSession(title) {
+  async createSession(title, options) {
     try {
       const session = await api.post<ChatSession>("/api/v1/chat/sessions", {
         title,
       });
+      // Persist chips before activating so ChatPanel's restore effect sees them.
+      if (options?.attachments?.length) {
+        saveSessionAttachments(session.id, options.attachments);
+      }
       set((state) => ({
         sessions: [session, ...state.sessions],
         activeSessionId: session.id,

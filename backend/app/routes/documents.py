@@ -8,6 +8,7 @@ import uuid
 import logging
 import asyncio
 import concurrent.futures
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 from pathlib import Path
@@ -535,6 +536,17 @@ async def batch_upload_documents(
         failed=failed,
     )
 
+def _html_to_text(raw: bytes, content_type: str) -> str:
+    """Best-effort HTML/plain extraction without a browser crawler."""
+    text = raw.decode("utf-8", errors="replace")
+    if "html" in (content_type or "").lower() or "<html" in text[:500].lower():
+        # Strip scripts/styles then tags — untrusted content for RAG only.
+        text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", text)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+    return text.strip()
+
+
 @router.post("/urlupload", status_code=status.HTTP_202_ACCEPTED)
 async def upload_document_url(
         payload: UploadUrl,
@@ -543,47 +555,28 @@ async def upload_document_url(
         user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
 ):
-    """
-    Uses crawl4ai's AsyncWebCrawler in a dedicated thread with its own
-    event loop. This is required on Windows because uvicorn's default
-    SelectorEventLoop does not support subprocess creation (used by
-    Playwright/crawl4ai), which causes a NotImplementedError.
-    On Linux (production) a plain new_event_loop() is used instead.
-    """
-    if CRAWL4AI_IMPORT_ERROR is not None:
-        raise ExternalServiceException("crawl4ai", "URL upload is unavailable because crawl4ai is not installed")
+    """Fetch a public URL with IP-pinned SSRF controls and ingest as text.
 
+    Crawl4AI/Playwright is intentionally not used here: browser automation
+    cannot guarantee connection-time IP pinning against DNS rebinding.
+    """
     temp_path: Optional[str] = None
     try:
-        parsed = urlparse(payload.url)
-        if not all([parsed.scheme, parsed.netloc]):
-            raise ValidationException("Invalid URL")
+        from app.security.ssrf import SafeFetchError, fetch_url_safe, validate_public_url
 
-        # SSRF protection
-        BLOCKED_SCHEMES = {"file", "ftp", "gopher", "dict", "smb", "ldap"}
-        if parsed.scheme.lower() in BLOCKED_SCHEMES:
-            raise ValidationException(f"URL scheme '{parsed.scheme}' is not allowed")
-        if parsed.scheme.lower() not in ("http", "https"):
-            raise ValidationException("Only http and https URLs are allowed")
         try:
-            hostname = parsed.hostname
-            if hostname:
-                addr = socket.getaddrinfo(hostname, 80)[0][4][0]
-                ip = ipaddress.ip_address(addr)
-                if ip.is_private or ip.is_loopback or ip.is_link_local:
-                    raise ValidationException("Internal or private URLs are not allowed")
-        except (socket.gaierror, ValueError, IndexError):
-            raise ValidationException("Could not resolve URL host")
-
-        # Run in a worker thread with its own event loop to avoid
-        # NotImplementedError on Windows (SelectorEventLoop can't spawn subprocesses)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            markdown = await asyncio.get_event_loop().run_in_executor(
-                pool, _crawl_in_new_loop, payload.url
+            validate_public_url(payload.url)
+            final_url, body, content_type = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: fetch_url_safe(payload.url)
             )
+        except SafeFetchError as exc:
+            raise ValidationException(str(exc)) from exc
 
+        markdown = _html_to_text(body, content_type)
         if not markdown:
             raise ValidationException("No content could be extracted from the URL")
+
+        parsed = urlparse(final_url or payload.url)
 
 
         with tempfile.NamedTemporaryFile(
