@@ -673,12 +673,45 @@ def _apply_file(
 
     _clear_vectors_and_graph(document)
     _mirror_to_s3(str(document.user_id), document.filename, filepath)
-    ingest_document(
-        document_id=document.id,
+    # Queue per-document ingest so multiple Dropbox files can process in parallel
+    # (solo workers still serialize; use --pool=threads --concurrency=N for overlap).
+    _enqueue_document_ingest(
+        document_id=str(document.id),
         filepath=filepath,
         original_name=document.original_name,
-        user_id=document.user_id,
+        user_id=str(document.user_id),
     )
+
+
+def _enqueue_document_ingest(
+    *,
+    document_id: str,
+    filepath: str,
+    original_name: str,
+    user_id: str,
+) -> None:
+    """Dispatch ``process_document`` so Dropbox imports don't block each other."""
+    from app.tasks import process_document
+
+    try:
+        process_document.delay(
+            document_id=document_id,
+            filepath=filepath,
+            original_name=original_name,
+            user_id=user_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Celery queue failed for Dropbox document %s (%s); ingesting inline",
+            document_id,
+            exc,
+        )
+        ingest_document(
+            document_id=document_id,
+            filepath=filepath,
+            original_name=original_name,
+            user_id=user_id,
+        )
 
 
 def _create_file(
@@ -707,11 +740,11 @@ def _create_file(
     db.refresh(document)
 
     _mirror_to_s3(str(user.id), document.filename, filepath)
-    ingest_document(
-        document_id=document.id,
+    _enqueue_document_ingest(
+        document_id=str(document.id),
         filepath=filepath,
         original_name=document.original_name,
-        user_id=user.id,
+        user_id=str(user.id),
     )
     return document
 

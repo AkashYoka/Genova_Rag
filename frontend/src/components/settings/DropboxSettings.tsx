@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ChevronDown,
   ChevronLeft,
   FileText,
   FolderOpen,
-  Link2,
   Loader2,
   RefreshCw,
   Trash2,
@@ -14,9 +14,12 @@ import {
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-
-const FALLBACK_TEST_LINK =
-  "https://www.dropbox.com/scl/fo/bc9imczz3bxl5ya8l7cil/AN5l1yDnWejG9jYIR_fD6A0?rlkey=rp14xvckn7zin1bw4axe50bjt&st=tzxfo2y1&e=1&dl=0";
+import {
+  DropboxMark,
+  IntegrationMethod,
+  IntegrationProviderCard,
+  IntegrationStatusPill,
+} from "@/components/settings/IntegrationProviderCard";
 
 type DropboxStatus = {
   connected: boolean;
@@ -69,7 +72,7 @@ function statusLabel(status: string) {
       return "Completed";
     case "processing":
     case "syncing":
-      return "Processing…";
+      return "Syncing…";
     case "queued":
       return "Queued";
     case "failed":
@@ -79,23 +82,6 @@ function statusLabel(status: string) {
       return "Idle";
     default:
       return status || "—";
-  }
-}
-
-function statusClass(status: string) {
-  switch (status) {
-    case "completed":
-    case "ok":
-      return "text-emerald-600 dark:text-emerald-400";
-    case "processing":
-    case "syncing":
-    case "queued":
-      return "text-sky-600 dark:text-sky-400";
-    case "failed":
-    case "error":
-      return "text-destructive";
-    default:
-      return "text-muted-foreground";
   }
 }
 
@@ -133,14 +119,15 @@ export default function DropboxSettings() {
     null,
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   const [linkInput, setLinkInput] = useState("");
   const [importingLink, setImportingLink] = useState(false);
   const [importing, setImporting] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [syncingAll, setSyncingAll] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
 
-  const testLink = status.test_shared_link || FALLBACK_TEST_LINK;
   const browseConnection = useMemo(
     () => connections.find((c) => c.id === browseConnectionId) || null,
     [connections, browseConnectionId],
@@ -151,8 +138,10 @@ export default function DropboxSettings() {
       const data = await api.get<{ connections: DropboxConnection[] }>(
         "/api/v1/dropbox/connections",
       );
-      setConnections(data.connections || []);
-      return data.connections || [];
+      const next = data.connections || [];
+      setConnections(next);
+      if (next.length > 0) setManageOpen(true);
+      return next;
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Could not load Dropbox sources",
@@ -221,7 +210,6 @@ export default function DropboxSettings() {
     };
   }, [loadBrowse, refreshConnections]);
 
-  // Poll lightweight status while any connection sync is in flight.
   const busyKey = connections
     .filter((c) => isBusy(c.sync_status))
     .map((c) => c.id)
@@ -304,6 +292,7 @@ export default function DropboxSettings() {
       }));
       setEntries([]);
       setPath("");
+      setBrowserOpen(false);
       toast.success("Dropbox disconnected");
       await refreshConnections();
     } catch (err) {
@@ -334,18 +323,29 @@ export default function DropboxSettings() {
       toast.error("Connect Dropbox to import folders");
       return;
     }
+    const freshIds = entries
+      .filter(
+        (entry) =>
+          selected.has(entry.id || entry.path) &&
+          entry.is_pdf &&
+          entry.lifecycle_status !== "USER_DELETED" &&
+          Boolean(entry.id),
+      )
+      .map((entry) => entry.id as string);
+
     setImporting(true);
     try {
       await api.post("/api/v1/dropbox/connections", {
         folder_path: path,
-        file_ids: Array.from(selected),
+        file_ids: freshIds,
       });
       toast.success(
-        selected.size
-          ? `Import queued for ${selected.size} PDF${selected.size === 1 ? "" : "s"}`
-          : "Folder import queued — new PDFs will sync automatically",
+        freshIds.length
+          ? `Import queued for ${freshIds.length} PDF${freshIds.length === 1 ? "" : "s"}`
+          : "Folder import queued",
       );
       setSelected(new Set());
+      setManageOpen(true);
       await refreshConnections();
     } catch (err) {
       toast.error(
@@ -356,14 +356,50 @@ export default function DropboxSettings() {
     }
   };
 
+  const resolveReimportConnectionId = (
+    deletedEntries: DropboxEntry[],
+  ): string | null => {
+    if (browseConnectionId) return browseConnectionId;
+    if (!deletedEntries.length || !connections.length) return null;
+
+    for (const connection of connections) {
+      const base = (connection.folder_path || "").replace(/\/+$/, "");
+      const covers = deletedEntries.every((entry) => {
+        if (!base) return true;
+        return entry.path === base || entry.path.startsWith(`${base}/`);
+      });
+      if (covers) return connection.id;
+    }
+    return connections[0]?.id ?? null;
+  };
+
   const handleReimport = async () => {
-    if (!browseConnectionId || selected.size === 0) return;
+    const deletedEntries = entries.filter(
+      (entry) =>
+        selected.has(entry.id || entry.path) &&
+        entry.is_pdf &&
+        entry.lifecycle_status === "USER_DELETED" &&
+        Boolean(entry.id),
+    );
+    if (deletedEntries.length === 0) {
+      toast.message("Select at least one PDF marked Deleted in Genova");
+      return;
+    }
+
+    const connectionId = resolveReimportConnectionId(deletedEntries);
+    if (!connectionId) {
+      toast.error(
+        "No Dropbox source found. Open Manage sources → Restore deleted files first.",
+      );
+      return;
+    }
+
     setImporting(true);
     try {
-      await api.post(`/api/v1/dropbox/connections/${browseConnectionId}/import`, {
-        file_ids: Array.from(selected),
+      await api.post(`/api/v1/dropbox/connections/${connectionId}/import`, {
+        file_ids: deletedEntries.map((entry) => entry.id as string),
       });
-      toast.success("Re-import queued — the selected PDFs will be searchable again");
+      toast.success("Re-import queued");
       setSelected(new Set());
       await loadBrowse(path, browseConnectionId);
       await refreshConnections();
@@ -387,6 +423,7 @@ export default function DropboxSettings() {
       await api.post("/api/v1/dropbox/connections", { shared_link: link });
       toast.success("Dropbox link import queued");
       setLinkInput("");
+      setManageOpen(true);
       await refreshConnections();
     } catch (err) {
       toast.error(
@@ -404,9 +441,7 @@ export default function DropboxSettings() {
         `/api/v1/dropbox/connections/${connection.id}/sync`,
       );
       toast.success(
-        result.already_running
-          ? "Sync already running — progress updates here"
-          : "Sync queued",
+        result.already_running ? "Sync already running" : "Sync queued",
       );
       await refreshConnections();
     } catch (err) {
@@ -421,9 +456,10 @@ export default function DropboxSettings() {
     if (!connections.length) return;
     setSyncingAll(true);
     try {
-      const result = await api.post<{ already_running?: boolean; message?: string }>(
-        "/api/v1/dropbox/sync",
-      );
+      const result = await api.post<{
+        already_running?: boolean;
+        message?: string;
+      }>("/api/v1/dropbox/sync");
       toast.success(
         result.already_running
           ? "Sync already running"
@@ -445,7 +481,7 @@ export default function DropboxSettings() {
         setEntries([]);
         setPath("");
       }
-      toast.success("Dropbox source detached");
+      toast.success("Dropbox source removed");
       await refreshConnections();
     } catch (err) {
       toast.error(
@@ -457,6 +493,8 @@ export default function DropboxSettings() {
   const openConnectionBrowse = async (connection: DropboxConnection) => {
     setBrowseConnectionId(connection.id);
     setPath(connection.folder_path || "");
+    setBrowserOpen(true);
+    setManageOpen(true);
     await loadBrowse(connection.folder_path || "", connection.id);
   };
 
@@ -467,77 +505,139 @@ export default function DropboxSettings() {
     await loadBrowse("", null);
   };
 
+  const selectedEntries = entries.filter((entry) =>
+    selected.has(entry.id || entry.path),
+  );
+  const deletedSelected = selectedEntries.filter(
+    (entry) => entry.is_pdf && entry.lifecycle_status === "USER_DELETED",
+  );
+  const importableSelected = selectedEntries.filter(
+    (entry) => entry.is_pdf && entry.lifecycle_status !== "USER_DELETED",
+  );
+  const reimportMode = Boolean(browseConnectionId);
+  const anyBusy = connections.some((c) => isBusy(c.sync_status));
+
   if (loading) {
     return (
-      <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2 py-8 text-sm text-[var(--gd-muted)]">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Loading Dropbox settings…
+        Loading Dropbox…
       </div>
     );
   }
 
-  const canBrowse = status.connected;
-  const selectedEntries = entries.filter((entry) =>
-    selected.has(entry.id || entry.path),
-  );
-  const reimportMode = Boolean(browseConnectionId);
-
   return (
-    <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium">Dropbox</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Connect Dropbox to browse folders and import PDFs, or paste a public
-            shared link. Ingestion uses the same RAG pipeline and runs in the
-            background.
-            {status.connected
-              ? ` · Connected${status.display_name ? ` as ${status.display_name}` : ""}.`
-              : ""}
+    <IntegrationProviderCard
+      name="Dropbox"
+      description="Bring PDFs from Dropbox into Genova for search and chat."
+      icon={<DropboxMark />}
+      status={
+        status.connected ? (
+          <IntegrationStatusPill tone="ok">Connected</IntegrationStatusPill>
+        ) : anyBusy ? (
+          <IntegrationStatusPill tone="busy">Syncing</IntegrationStatusPill>
+        ) : connections.length > 0 ? (
+          <IntegrationStatusPill tone="idle">
+            {connections.length} source{connections.length === 1 ? "" : "s"}
+          </IntegrationStatusPill>
+        ) : (
+          <IntegrationStatusPill tone="idle">Not connected</IntegrationStatusPill>
+        )
+      }
+    >
+      <IntegrationMethod
+        label="Connect your account"
+        hint="Sign in with Dropbox to browse folders and keep them in sync."
+      >
+        {!status.configured ? (
+          <p className="text-[12px] text-[var(--gd-warning)]">
+            Dropbox OAuth is not configured on the server. Public links still
+            work.
           </p>
-          {!status.configured ? (
-            <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
-              Dropbox OAuth is not configured on the server. Shared-link imports
-              still work.
-            </p>
-          ) : null}
-        </div>
+        ) : null}
         {status.connected ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="shrink-0"
-            disabled={connecting}
-            onClick={() => void handleDisconnect()}
-          >
-            {connecting ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Unplug className="mr-1.5 h-3.5 w-3.5" />
-            )}
-            Disconnect
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[13px] text-[var(--gd-muted)]">
+              {status.display_name
+                ? `Signed in as ${status.display_name}`
+                : "Dropbox account linked"}
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8"
+              onClick={() => {
+                setBrowserOpen(true);
+                void loadBrowse(path || "", browseConnectionId);
+              }}
+            >
+              <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
+              Browse folders
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 text-[var(--gd-muted)]"
+              disabled={connecting}
+              onClick={() => void handleDisconnect()}
+            >
+              {connecting ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Unplug className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Disconnect
+            </Button>
+          </div>
         ) : (
           <Button
             type="button"
             size="sm"
-            className="shrink-0"
+            className="h-9"
             disabled={connecting || !status.configured}
             onClick={() => void handleConnect()}
           >
             {connecting ? (
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
             ) : (
-              <Link2 className="mr-1.5 h-3.5 w-3.5" />
+              <DropboxMark className="mr-1.5 h-4 w-4" />
             )}
             Connect Dropbox
           </Button>
         )}
-      </div>
+      </IntegrationMethod>
 
-      {canBrowse ? (
-        <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+      <IntegrationMethod
+        label="Import with a link"
+        hint="Paste a public Dropbox shared folder or file link."
+      >
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+          <input
+            value={linkInput}
+            onChange={(event) => setLinkInput(event.target.value)}
+            placeholder="https://www.dropbox.com/scl/fo/…"
+            className="h-9 w-full flex-1 rounded-md border border-[var(--gd-border)] bg-[var(--gd-ground)] px-3 text-[13px] text-[var(--gd-text)] outline-none placeholder:text-[var(--gd-faint)] focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]"
+            disabled={importingLink}
+          />
+          <Button
+            type="button"
+            size="sm"
+            className="h-9 shrink-0"
+            disabled={importingLink || !linkInput.trim()}
+            onClick={() => void handleImportLink()}
+          >
+            {importingLink ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : null}
+            Import
+          </Button>
+        </div>
+      </IntegrationMethod>
+
+      {status.connected && browserOpen ? (
+        <div className="space-y-2 rounded-[10px] border border-[var(--gd-border)] bg-[var(--gd-ground)] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1.5">
               <Button
@@ -549,10 +649,7 @@ export default function DropboxSettings() {
                 disabled={browsing || (!path && !reimportMode)}
                 onClick={() => {
                   if (reimportMode) {
-                    void loadBrowse(
-                      parentPath(path),
-                      browseConnectionId,
-                    );
+                    void loadBrowse(parentPath(path), browseConnectionId);
                   } else {
                     void loadBrowse(parentPath(path), null);
                   }
@@ -560,10 +657,10 @@ export default function DropboxSettings() {
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <p className="truncate text-xs text-muted-foreground">
+              <p className="truncate text-[12px] text-[var(--gd-muted)]">
                 {reimportMode
                   ? `Restore deleted — ${browseConnection?.folder_name || "Dropbox"}`
-                  : path || "Dropbox (root)"}
+                  : path || "Dropbox"}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -575,15 +672,15 @@ export default function DropboxSettings() {
                   className="h-7 text-xs"
                   onClick={() => void exitConnectionBrowse()}
                 >
-                  Exit restore view
+                  Exit restore
                 </Button>
               ) : null}
-              {reimportMode ? (
+              {deletedSelected.length > 0 || reimportMode ? (
                 <Button
                   type="button"
                   size="sm"
                   className="h-7 text-xs"
-                  disabled={importing || selected.size === 0}
+                  disabled={importing || deletedSelected.length === 0}
                   onClick={() => void handleReimport()}
                 >
                   {importing ? (
@@ -591,14 +688,17 @@ export default function DropboxSettings() {
                   ) : (
                     <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                   )}
-                  Re-import selected ({selected.size})
+                  Re-import ({deletedSelected.length})
                 </Button>
-              ) : (
+              ) : null}
+              {!reimportMode ? (
                 <Button
                   type="button"
                   size="sm"
                   className="h-7 text-xs"
-                  disabled={importing || !path}
+                  disabled={
+                    importing || (!path && importableSelected.length === 0)
+                  }
                   onClick={() => void handleImportFolder()}
                 >
                   {importing ? (
@@ -606,37 +706,45 @@ export default function DropboxSettings() {
                   ) : (
                     <FolderOpen className="mr-1.5 h-3.5 w-3.5" />
                   )}
-                  {selected.size
-                    ? `Import selected (${selected.size})`
-                    : "Import this folder"}
+                  {importableSelected.length
+                    ? `Import (${importableSelected.length})`
+                    : "Import folder"}
                 </Button>
-              )}
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-[var(--gd-muted)]"
+                onClick={() => setBrowserOpen(false)}
+              >
+                Close
+              </Button>
             </div>
           </div>
 
           {browsing ? (
-            <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 py-3 text-[12px] text-[var(--gd-muted)]">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Loading Dropbox…
+              Loading…
             </div>
           ) : entries.length === 0 ? (
-            <p className="rounded-md border border-dashed border-border px-3 py-3 text-center text-xs text-muted-foreground">
+            <p className="rounded-md border border-dashed border-[var(--gd-border)] px-3 py-3 text-center text-[12px] text-[var(--gd-muted)]">
               {reimportMode
-                ? "No files here. Deleted PDFs appear in this view for manual restore."
-                : "No folders or PDFs in this location."}
+                ? "No deleted PDFs here"
+                : "No folders or PDFs here"}
             </p>
           ) : (
-            <ul className="max-h-64 space-y-1 overflow-y-auto">
+            <ul className="max-h-56 space-y-1 overflow-y-auto">
               {entries.map((entry) => {
                 const key = entry.id || entry.path;
                 const deleted = entry.lifecycle_status === "USER_DELETED";
-                const selectable = reimportMode
-                  ? entry.is_pdf && deleted
-                  : entry.is_pdf && !deleted;
+                const selectable =
+                  entry.is_pdf && (reimportMode ? deleted : true);
                 return (
                   <li
                     key={key}
-                    className="flex items-center justify-between gap-2 rounded px-2 py-1.5 hover:bg-muted/60"
+                    className="flex items-center justify-between gap-2 rounded px-2 py-1.5 hover:bg-[var(--gd-raised)]"
                   >
                     <div className="flex min-w-0 items-center gap-2">
                       {selectable ? (
@@ -645,20 +753,24 @@ export default function DropboxSettings() {
                           className="h-3.5 w-3.5 accent-current"
                           checked={selected.has(key)}
                           onChange={() => toggleSelected(entry)}
-                          aria-label={`Select ${entry.name}`}
+                          aria-label={
+                            deleted
+                              ? `Select ${entry.name} to re-import`
+                              : `Select ${entry.name}`
+                          }
                         />
                       ) : (
                         <span className="h-3.5 w-3.5" />
                       )}
                       {entry.is_folder ? (
-                        <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <FolderOpen className="h-3.5 w-3.5 shrink-0 text-[var(--gd-muted)]" />
                       ) : (
-                        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-[var(--gd-muted)]" />
                       )}
                       {entry.is_folder ? (
                         <button
                           type="button"
-                          className="truncate text-left text-xs hover:underline"
+                          className="truncate text-left text-[12px] hover:underline"
                           onClick={() =>
                             void loadBrowse(entry.path, browseConnectionId)
                           }
@@ -666,9 +778,9 @@ export default function DropboxSettings() {
                           {entry.name}
                         </button>
                       ) : (
-                        <span className="truncate text-xs">
+                        <span className="truncate text-[12px]">
                           {entry.name}
-                          <span className="ml-1 text-[10px] text-muted-foreground">
+                          <span className="ml-1 text-[10px] text-[var(--gd-muted)]">
                             {formatBytes(entry.size)}
                           </span>
                         </span>
@@ -676,15 +788,20 @@ export default function DropboxSettings() {
                     </div>
                     <div className="shrink-0 text-[10px]">
                       {deleted ? (
-                        <span className="text-amber-600 dark:text-amber-400">
+                        <button
+                          type="button"
+                          className="text-[var(--gd-warning)] underline-offset-2 hover:underline"
+                          title="Select to re-import"
+                          onClick={() => toggleSelected(entry)}
+                        >
                           Deleted in Genova
-                        </span>
+                        </button>
                       ) : entry.document_id ? (
-                        <span className="text-emerald-600 dark:text-emerald-400">
+                        <span className="text-[var(--gd-positive)]">
                           Imported
                         </span>
                       ) : entry.is_pdf ? (
-                        <span className="text-muted-foreground">PDF</span>
+                        <span className="text-[var(--gd-muted)]">PDF</span>
                       ) : null}
                     </div>
                   </li>
@@ -692,165 +809,146 @@ export default function DropboxSettings() {
               })}
             </ul>
           )}
-
-          {!reimportMode && selectedEntries.length > 0 ? (
-            <p className="text-[10px] text-muted-foreground">
-              Selected PDFs import now; new PDFs added to this folder sync
-              automatically.
-            </p>
-          ) : null}
         </div>
       ) : null}
 
-      <div className="space-y-2">
-        <label className="text-xs font-medium text-muted-foreground">
-          Import using Dropbox link
-        </label>
-        <textarea
-          value={linkInput}
-          onChange={(event) => setLinkInput(event.target.value)}
-          placeholder="https://www.dropbox.com/scl/fo/…"
-          rows={2}
-          className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-          disabled={importingLink}
-        />
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            disabled={importingLink || !linkInput.trim()}
-            onClick={() => void handleImportLink()}
-          >
-            {importingLink ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Link2 className="mr-1.5 h-3.5 w-3.5" />
-            )}
-            Import link
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={importingLink}
-            onClick={() => setLinkInput(testLink)}
-          >
-            Use test folder link
-          </Button>
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          Works without connecting an account when the link is publicly
-          accessible. Shared folders are imported as ZIP archives.
-        </p>
-      </div>
+      <div className="mt-auto border-t border-[var(--gd-rule)] pt-4">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between text-left text-[13px] font-medium text-[var(--gd-text)]"
+          onClick={() => setManageOpen((open) => !open)}
+          aria-expanded={manageOpen}
+        >
+          <span>
+            Manage sources
+            {connections.length > 0 ? (
+              <span className="ml-1.5 font-normal text-[var(--gd-muted)]">
+                ({connections.length})
+              </span>
+            ) : null}
+          </span>
+          <ChevronDown
+            className={`h-4 w-4 text-[var(--gd-muted)] transition-transform ${manageOpen ? "rotate-180" : ""}`}
+          />
+        </button>
 
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">
-            Dropbox sources ({connections.length})
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            disabled={syncingAll || connections.length === 0}
-            onClick={() => void handleSyncAll()}
-          >
-            {syncingAll ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-            )}
-            Sync Now
-          </Button>
-        </div>
+        {manageOpen ? (
+          <div className="mt-3 space-y-3">
+            {connections.length > 0 ? (
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={syncingAll}
+                  onClick={() => void handleSyncAll()}
+                >
+                  {syncingAll ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Sync all
+                </Button>
+              </div>
+            ) : null}
 
-        {connections.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
-            No Dropbox sources yet. Connect Dropbox to browse folders, or paste
-            a shared link above.
-          </p>
-        ) : (
-          <ul className="max-h-64 space-y-2 overflow-y-auto">
-            {connections.map((connection) => (
-              <li
-                key={connection.id}
-                className="rounded-md border border-border bg-muted/30 px-3 py-2"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
-                      {connection.folder_name || connection.remote_folder_id}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {connection.connection_kind === "link"
-                        ? "Shared link"
-                        : "OAuth folder"}
-                      <span className={statusClass(connection.sync_status)}>
-                        {" · "}
-                        {statusLabel(connection.sync_status)}
-                      </span>
-                      {connection.document_count > 0
-                        ? ` · ${connection.document_count} PDF${connection.document_count === 1 ? "" : "s"}`
-                        : ""}
-                      {connection.last_synced_at
-                        ? ` · ${new Date(connection.last_synced_at).toLocaleString()}`
-                        : ""}
-                    </p>
-                    {connection.last_error ? (
-                      <p className="mt-0.5 line-clamp-2 text-[11px] text-destructive">
-                        {connection.last_error}
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    {connection.connection_kind === "oauth" && status.connected ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        title="Restore deleted files"
-                        onClick={() => void openConnectionBrowse(connection)}
-                      >
-                        <FolderOpen className="h-3.5 w-3.5" />
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      title="Sync source"
-                      disabled={
-                        syncingId === connection.id || isBusy(connection.sync_status)
-                      }
-                      onClick={() => void handleSyncOne(connection)}
-                    >
-                      {syncingId === connection.id || isBusy(connection.sync_status) ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-destructive hover:text-destructive"
-                      title="Detach source"
-                      onClick={() => void handleRemove(connection)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+            {connections.length === 0 ? (
+              <p className="rounded-md border border-dashed border-[var(--gd-border)] px-3 py-4 text-center text-[12px] text-[var(--gd-muted)]">
+                No Dropbox sources yet
+              </p>
+            ) : (
+              <ul className="max-h-52 space-y-2 overflow-y-auto">
+                {connections.map((connection) => (
+                  <li
+                    key={connection.id}
+                    className="rounded-md border border-[var(--gd-border)] bg-[var(--gd-ground)] px-3 py-2.5"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-[13px] font-medium text-[var(--gd-text)]">
+                          {connection.folder_name || connection.remote_folder_id}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-[var(--gd-muted)]">
+                          {connection.connection_kind === "link"
+                            ? "Public link"
+                            : "Connected account"}
+                          {" · "}
+                          <span
+                            className={
+                              connection.sync_status === "failed" ||
+                              connection.sync_status === "error"
+                                ? "text-[var(--gd-negative)]"
+                                : isBusy(connection.sync_status)
+                                  ? "text-[var(--gd-accent)]"
+                                  : undefined
+                            }
+                          >
+                            {statusLabel(connection.sync_status)}
+                          </span>
+                          {connection.document_count > 0
+                            ? ` · ${connection.document_count} PDF${connection.document_count === 1 ? "" : "s"}`
+                            : ""}
+                        </p>
+                        {connection.last_error ? (
+                          <p className="mt-1 line-clamp-2 text-[11px] text-[var(--gd-negative)]">
+                            {connection.last_error}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        {connection.connection_kind === "oauth" &&
+                        status.connected ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Restore deleted files"
+                            onClick={() => void openConnectionBrowse(connection)}
+                          >
+                            <FolderOpen className="h-3.5 w-3.5" />
+                          </Button>
+                        ) : null}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          title="Sync source"
+                          disabled={
+                            syncingId === connection.id ||
+                            isBusy(connection.sync_status)
+                          }
+                          onClick={() => void handleSyncOne(connection)}
+                        >
+                          {syncingId === connection.id ||
+                          isBusy(connection.sync_status) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-[var(--gd-negative)] hover:text-[var(--gd-negative)]"
+                          title="Remove source"
+                          onClick={() => void handleRemove(connection)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : null}
       </div>
-    </div>
+    </IntegrationProviderCard>
   );
 }

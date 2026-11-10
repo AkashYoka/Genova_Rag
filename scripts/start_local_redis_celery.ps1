@@ -55,7 +55,7 @@ if ($existing.Count -gt 0) {
 } else {
     Write-Host "Starting Celery worker ..."
     Start-Process -FilePath $Python `
-        -ArgumentList "-m", "celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=solo", "--hostname=celery@local" `
+        -ArgumentList "-m", "celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "--pool=threads", "--concurrency=4", "--hostname=celery@local" `
         -WorkingDirectory $Backend `
         -RedirectStandardOutput $CeleryLog `
         -RedirectStandardError $CeleryErr `
