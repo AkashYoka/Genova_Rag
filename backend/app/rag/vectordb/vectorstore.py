@@ -175,6 +175,45 @@ def get_collection_name(user_id: str) -> str:
     return name[:63]
 
 
+def _chunk_metadata(
+    chunk: Dict[str, Any], filename: str, document_id: str
+) -> Dict[str, Any]:
+    """Flatten chunk metadata to Chroma-safe scalars (no nested dicts)."""
+    metadata: Dict[str, Any] = {
+        "text": chunk["text"],
+        "filename": filename,
+        "document_id": document_id,
+        "page": chunk["page"],
+        "chunk_index": chunk["chunk_index"],
+        "chunk_type": chunk.get("chunk_type", "text"),
+    }
+    for key in (
+        "page_start",
+        "page_end",
+        "section",
+        "subsection",
+        "content_type",
+        "extraction_method",
+        "ocr_confidence",
+        "table_part",
+        "table_index",
+    ):
+        value = chunk.get(key)
+        if value not in (None, ""):
+            metadata[key] = value
+    for key in ("bbox", "table_json", "layout_metadata"):
+        value = chunk.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False)
+        metadata[key] = value
+    if chunk.get("is_image"):
+        metadata["is_image"] = True
+        metadata["image_caption"] = chunk.get("image_caption", "")
+    return metadata
+
+
 def store_chunks(
     chunks: List[Dict[str, Any]],
     document_id: str,
@@ -243,22 +282,7 @@ def store_chunks(
     # ── Prepare batch data ───────────────────────────
     texts = [chunk["text"] for chunk in chunks]
     ids = [f"{document_id}_{chunk['chunk_index']}" for chunk in chunks]
-    metadatas = [
-        {
-            "text": chunk["text"],
-            "filename": filename,
-            "document_id": document_id,
-            "page": chunk["page"],
-            "chunk_index": chunk["chunk_index"],
-            "chunk_type": chunk.get("chunk_type", "text"),
-            **({"bbox": chunk.get("bbox", "")} if chunk.get("bbox") else {}),
-            **({"table_index": chunk.get("table_index", 0)} if chunk.get("chunk_type") == "table" else {}),
-            # Indicate whether this chunk was originally an image and include a short caption
-            **({"is_image": True, "image_caption": chunk.get("image_caption", "")}
-               if chunk.get("is_image") else {}),
-        }
-        for chunk in chunks
-    ]
+    metadatas = [_chunk_metadata(chunk, filename, document_id) for chunk in chunks]
 
     # ── Embed and upsert in batches ──────────────────
     batch_size = 50
@@ -397,7 +421,7 @@ def query_chunks(
             # Convert cosine distance to similarity score (0-1)
             similarity = 1 - distance
 
-            chunks.append({
+            chunk = {
                 "id": chunk_id,
                 "text": doc,
                 "filename": metadata.get("filename", ""),
@@ -406,7 +430,25 @@ def query_chunks(
                 "chunk_type": metadata.get("chunk_type", "text"),
                 "bbox": metadata.get("bbox", ""),
                 "score": round(similarity, 4),
-            })
+            }
+            for key in (
+                "page_start",
+                "page_end",
+                "section",
+                "subsection",
+                "content_type",
+                "extraction_method",
+                "ocr_confidence",
+                "table_part",
+                "table_index",
+                "table_json",
+                "layout_metadata",
+                "is_image",
+                "image_caption",
+            ):
+                if key in metadata and metadata[key] not in (None, ""):
+                    chunk[key] = metadata[key]
+            chunks.append(chunk)
 
     return chunks
 

@@ -137,6 +137,8 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             doc.processing_stage = "chunking"
             doc.processing_progress = 30
             db.commit()
+            chunk_kwargs["document_id"] = document_id
+            chunk_kwargs["document_name"] = original_name
             chunks = chunk_document(filepath, **chunk_kwargs)
         except TypeError:
             chunks = chunk_document(filepath)

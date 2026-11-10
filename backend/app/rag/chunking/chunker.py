@@ -3,6 +3,7 @@ Smart document chunking using LangChain's RecursiveCharacterTextSplitter.
 Supports PDF, DOCX, TXT, and Markdown files with page-level metadata.
 """
 import json
+import os
 import re
 import pymupdf as fitz
 import docx
@@ -979,11 +980,57 @@ def extract_txt(filepath: str) -> List[Dict[str, Any]]:
     return chunks
 
 
-def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = None) -> List[Dict[str, Any]]:
-    """Load a document, extract text per page, and split into semantic chunks."""
+def chunk_document(
+    filepath: str,
+    chunk_size: int = None,
+    chunk_overlap: int = None,
+    document_id: str = None,
+    document_name: str = None,
+) -> List[Dict[str, Any]]:
+    """Load a document, extract text per page, and split into semantic chunks.
+
+    PDFs on disk go through the layout-aware pipeline first (classification,
+    OCR fallback, reading order, tables, heading hierarchy). The legacy path
+    remains the fallback for older callers, fake paths in tests, and any
+    unexpected layout failure.
+    """
     ext = filepath.rsplit(".", 1)[-1].lower()
 
     if ext == "pdf":
+        if getattr(settings, "PDF_LAYOUT_AWARE_ENABLED", True) and os.path.exists(filepath):
+            try:
+                from app.rag.ingestion.tessdata import apply_tessdata_env
+                from app.services.layout_parser import AdvancedPDFParser
+
+                # Ensure Celery workers find Scoop/system tessdata before OCR.
+                apply_tessdata_env(getattr(settings, "PDF_OCR_TESSDATA_DIR", "") or None)
+
+                layout_chunks = AdvancedPDFParser(filepath).chunk_document(
+                    document_id=document_id,
+                    document_name=document_name,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                )
+                if layout_chunks:
+                    logger.info(
+                        "Layout-aware PDF pipeline produced %d chunks for %s",
+                        len(layout_chunks),
+                        filepath,
+                    )
+                    return layout_chunks
+                logger.warning(
+                    "Layout-aware PDF pipeline produced no chunks for %s; "
+                    "falling back to legacy extraction",
+                    filepath,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Layout-aware PDF pipeline failed for %s (%s); "
+                    "falling back to legacy extraction",
+                    filepath,
+                    exc,
+                    exc_info=True,
+                )
         pages = extract_pdf(filepath)
     elif ext == "docx":
         pages = extract_docx(filepath)

@@ -138,6 +138,28 @@ class Settings(BaseSettings):
     TOP_K_RETRIEVAL: int = 20 # Fetch more candidates for reranking
     TOP_K_RERANK: int = 8 # Final number of chunks to return after reranking
 
+    # ── Layout-aware PDF / OCR ───────────────────────────
+    # Native text is kept when its extraction quality is good; scanned or
+    # corrupt pages are OCR'd page-by-page. Diagnostics contain no secrets
+    # and are safe to retain for reprocessing/audit.
+    PDF_LAYOUT_AWARE_ENABLED: bool = True
+    PDF_LAYOUT_WRITE_DIAGNOSTICS: bool = True
+    PDF_LAYOUT_REPORT_DIR: str = "./data/layout_reports"
+    PDF_OCR_ENABLED: bool = True
+    PDF_OCR_BACKEND: str = "auto"  # auto | tesseract | rapidocr | easyocr
+    PDF_OCR_DPI: int = 300
+    PDF_OCR_PSM: int = 3
+    PDF_OCR_LANG: str = "eng"
+    PDF_OCR_TIMEOUT_SECONDS: int = 120
+    PDF_OCR_MIN_CONFIDENCE: float = 20.0
+    PDF_OCR_MIN_CHARS: int = 80
+    PDF_OCR_MIN_ALNUM_RATIO: float = 0.55
+    PDF_OCR_MAX_GARBAGE_RATIO: float = 0.15
+    PDF_OCR_IMAGE_COVERAGE_THRESHOLD: float = 0.30
+    PDF_OCR_TESSDATA_DIR: str = ""  # blank → TESSDATA_PREFIX / system tessdata
+    PDF_TABLE_MAX_CHARS: int = 4000
+    PDF_TABLE_SPLIT_ROWS: int = 40
+
     # ── Hybrid Search / RRF ───────────────────────────────
     USE_HYBRID_SEARCH: bool = True   # set to False to fall back to vector-only
     RRF_K: int = 60                  # RRF rank constant; 60 is the standard default

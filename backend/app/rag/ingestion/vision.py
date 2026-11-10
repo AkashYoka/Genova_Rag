@@ -151,6 +151,9 @@ def _ocr_caption(image_bytes: bytes) -> str:
         return ""
 
     try:
+        from app.rag.ingestion.tessdata import apply_tessdata_env
+
+        apply_tessdata_env(getattr(settings, "PDF_OCR_TESSDATA_DIR", "") or None)
         img = Image.open(BytesIO(image_bytes)).convert("RGB")
         text = pytesseract.image_to_string(img).strip()
         return (text[:500] + "...") if len(text) > 500 else text

@@ -43,12 +43,15 @@ def _ocr_with_tesseract(image_bytes: bytes) -> str:
         import io
         import pytesseract
         from PIL import Image
+        from app.config import get_settings
+        from app.rag.ingestion.tessdata import apply_tessdata_env
     except ImportError as exc:
         raise ImportError(
             "pytesseract and Pillow are required for OCR. "
             "Install them with: pip install pytesseract Pillow"
         ) from exc
 
+    apply_tessdata_env(get_settings().PDF_OCR_TESSDATA_DIR)
     image = Image.open(io.BytesIO(image_bytes))
     text = pytesseract.image_to_string(image, lang="eng")
     return text.strip()

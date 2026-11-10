@@ -179,13 +179,31 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
     for chunk in chunks:
         chunk_idx = chunk.get("chunk_index")
         chunk_id = f"{document_id}_{chunk_idx}" if chunk_idx is not None else None
-        formatted_chunks.append({
+        formatted = {
             "id": chunk_id,
             "text": chunk["text"],
             "filename": filename,
             "document_id": document_id,
             "page": chunk.get("page", 1),
-        })
+        }
+        for key in (
+            "page_start",
+            "page_end",
+            "section",
+            "subsection",
+            "content_type",
+            "extraction_method",
+            "ocr_confidence",
+            "table_part",
+            "table_index",
+            "layout_metadata",
+            "table_json",
+            "bbox",
+        ):
+            value = chunk.get(key)
+            if value not in (None, ""):
+                formatted[key] = value
+        formatted_chunks.append(formatted)
 
     data = {
         "bm25": bm25,
