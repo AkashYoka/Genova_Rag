@@ -687,7 +687,17 @@ def restore_document(document_id: str, user: User = Depends(get_current_user), d
     
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found in trash")
-    
+
+    # Dropbox deletions are final until the user explicitly re-imports the file
+    # from Settings → Integrations → Dropbox (which also re-runs ingestion).
+    from app.models import LIFECYCLE_USER_DELETED
+
+    if doc.lifecycle_status == LIFECYCLE_USER_DELETED:
+        raise ValidationException(
+            "This Dropbox file was removed from Genova. Re-import it from "
+            "Settings → Integrations → Dropbox to make it searchable again."
+        )
+
     doc.is_deleted = False
     doc.deleted_at = None
     db.commit()
@@ -1052,6 +1062,33 @@ def delete_document(
 
     doc.is_deleted = True
     doc.deleted_at = datetime.now(timezone.utc)
+
+    # Source-linked documents (Dropbox) remember the user's deletion intent so
+    # autosync never re-imports them. Google Drive documents keep their existing
+    # soft-delete behaviour untouched.
+    from app.models import (
+        DROPBOX_SOURCE_TYPES,
+        LIFECYCLE_USER_DELETED,
+        DropboxDocumentTombstone,
+    )
+
+    if (doc.source_type or "") in DROPBOX_SOURCE_TYPES and doc.external_file_id:
+        doc.lifecycle_status = LIFECYCLE_USER_DELETED
+        existing_tombstone = (
+            db.query(DropboxDocumentTombstone)
+            .filter(
+                DropboxDocumentTombstone.user_id == user.id,
+                DropboxDocumentTombstone.external_file_id == doc.external_file_id,
+            )
+            .first()
+        )
+        if not existing_tombstone:
+            db.add(
+                DropboxDocumentTombstone(
+                    user_id=user.id,
+                    external_file_id=doc.external_file_id,
+                )
+            )
     db.commit()
 
     # Drop this document's graph contribution. Entities and relationships that

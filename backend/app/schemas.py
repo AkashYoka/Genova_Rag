@@ -220,6 +220,102 @@ class DriveSyncResponse(BaseModel):
     results: list[dict] = Field(default_factory=list)
 
 
+class DropboxStatusResponse(BaseModel):
+    """Connection/config state for Settings → Integrations."""
+
+    connected: bool = False
+    configured: bool = False
+    account_id: Optional[str] = None
+    display_name: Optional[str] = None
+    test_shared_link: Optional[str] = None
+
+
+class DropboxAuthUrlResponse(BaseModel):
+    auth_url: str
+
+
+class DropboxEntryResponse(BaseModel):
+    """A folder or PDF shown in the Dropbox browser."""
+
+    id: Optional[str] = None
+    name: str
+    path: str = ""
+    is_folder: bool = False
+    is_pdf: bool = False
+    size: Optional[int] = None
+    revision: Optional[str] = None
+    modified_at: Optional[str] = None
+    document_id: Optional[str] = None
+    lifecycle_status: Optional[str] = None
+
+
+class DropboxBrowseResponse(BaseModel):
+    connected: bool = False
+    connection_id: Optional[str] = None
+    path: str = ""
+    entries: list[DropboxEntryResponse] = Field(default_factory=list)
+
+
+class DropboxConnectionCreateRequest(BaseModel):
+    """Attach a Dropbox folder (OAuth) or a public shared link."""
+
+    shared_link: Optional[str] = Field(None, max_length=2048)
+    folder_path: str = Field("", max_length=1024)
+    recursive: bool = True
+    file_ids: list[str] = Field(default_factory=list)
+
+
+class DropboxImportSelectedRequest(BaseModel):
+    """Re-import Dropbox files the user previously deleted in Genova."""
+
+    file_ids: list[str] = Field(..., min_length=1)
+
+
+class DropboxConnectionResponse(BaseModel):
+    id: str
+    connection_kind: str = "oauth"
+    remote_folder_id: str
+    folder_path: Optional[str] = None
+    folder_name: Optional[str] = None
+    folder_url: Optional[str] = None
+    access_mode: str = "oauth"
+    enabled: bool = True
+    sync_status: str = "idle"
+    task_id: Optional[str] = None
+    last_error: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    document_count: int = 0
+
+
+class DropboxConnectionListResponse(BaseModel):
+    connected: bool = False
+    configured: bool = False
+    connections: list[DropboxConnectionResponse] = Field(default_factory=list)
+
+
+class DropboxSyncStatusResponse(BaseModel):
+    connection_id: str
+    sync_status: str
+    task_id: Optional[str] = None
+    last_error: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    document_count: int = 0
+    folder_name: Optional[str] = None
+    connection_kind: str = "oauth"
+
+
+class DropboxSyncAcceptedResponse(BaseModel):
+    message: str = "Dropbox sync queued"
+    sync_status: str = "queued"
+    connection_id: Optional[str] = None
+    task_id: Optional[str] = None
+    task_ids: list[str] = Field(default_factory=list)
+    connection_count: int = 0
+    already_running: bool = False
+    items: list[DropboxConnectionResponse] = Field(default_factory=list)
+
+
 class ApiKeyResponse(BaseModel):
     id: str
     name: str
@@ -273,6 +369,9 @@ class DocumentResponse(BaseModel):
     extracted_urls: Optional[List[str]] = []
     processing_progress: Optional[int] = None
     processing_stage: Optional[str] = None
+    source_type: str = "upload"
+    external_file_id: Optional[str] = None
+    lifecycle_status: str = "ACTIVE"
     # Intentionally omit s3_key / storage_backend — storage paths are not client data.
 
     @field_validator("id", mode="before")

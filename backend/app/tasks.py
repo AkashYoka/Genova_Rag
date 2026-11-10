@@ -68,6 +68,80 @@ def sync_drive_folder_task(self, connection_id: str, user_id: str) -> dict:
 
 @celery_app.task(
     bind=True,
+    name="app.tasks.sync_dropbox_connection_task",
+    max_retries=2,
+    default_retry_delay=120,
+    autoretry_for=(IOError, TimeoutError, ConnectionError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=900,
+    retry_jitter=True,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=60 * 30,
+    time_limit=60 * 35,
+)
+def sync_dropbox_connection_task(self, connection_id: str, user_id: str) -> dict:
+    """Synchronize one Dropbox connection in a Celery worker."""
+    from app.models import DropboxConnection
+    from app.services.dropbox_sync import run_dropbox_sync_job
+
+    logger.info(
+        "Dropbox sync task started connection=%s user=%s attempt=%s",
+        connection_id,
+        user_id,
+        self.request.retries + 1,
+    )
+    try:
+        result = run_dropbox_sync_job(connection_id, user_id)
+    except Exception as exc:
+        logger.exception(
+            "Dropbox sync task failed connection=%s: %s", connection_id, exc
+        )
+        with get_db_session() as db:
+            conn = (
+                db.query(DropboxConnection)
+                .filter(DropboxConnection.id == connection_id)
+                .first()
+            )
+            if conn and self.request.retries >= (self.max_retries or 2) - 1:
+                conn.sync_status = "failed"
+                conn.last_error = str(exc)[:500]
+                db.commit()
+        raise
+
+    logger.info(
+        "Dropbox sync task finished connection=%s stats=%s",
+        connection_id,
+        {
+            key: result.get(key)
+            for key in ("discovered", "ingested", "updated", "failed")
+        },
+    )
+    return result
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.import_dropbox_files_task",
+    max_retries=2,
+    default_retry_delay=60,
+    autoretry_for=(IOError, TimeoutError, ConnectionError, OSError),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    acks_late=True,
+)
+def import_dropbox_files_task(
+    self, connection_id: str, user_id: str, file_ids: list[str]
+) -> dict:
+    """Re-import Dropbox files the user explicitly selected after deletion."""
+    from app.services.dropbox_sync import run_dropbox_import_job
+
+    return run_dropbox_import_job(connection_id, user_id, list(file_ids or []))
+
+
+@celery_app.task(
+    bind=True,
     name="app.tasks.process_document",
     max_retries=3,
     default_retry_delay=60,

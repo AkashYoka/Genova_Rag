@@ -32,6 +32,11 @@ from app.routes.profile import router as profile_router
 from app.routes.health import router as health_router
 from app.routes.notes import router as notes_router
 from app.routes.drive import router as drive_router
+from app.routes.dropbox import (
+    auth_callback_router as dropbox_auth_router,
+    dropbox_callback,
+    router as dropbox_router,
+)
 
 # Configure logging using loguru structured JSON logging
 setup_logging()
@@ -316,6 +321,15 @@ app.include_router(graph_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(notes_router, prefix="/api/v1")
 app.include_router(drive_router, prefix="/api/v1")
+app.include_router(dropbox_router, prefix="/api/v1")
+app.include_router(dropbox_auth_router, prefix="/api/v1")
+# DROPBOX_REDIRECT_URI in existing deployments points at /api/dropbox/callback.
+app.add_api_route(
+    "/api/dropbox/callback",
+    dropbox_callback,
+    methods=["GET"],
+    include_in_schema=False,
+)
 app.include_router(usage_router, prefix="/api/v1")
 
 setup_prometheus_metrics(app)

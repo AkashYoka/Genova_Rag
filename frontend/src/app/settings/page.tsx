@@ -25,6 +25,7 @@ import {
 } from "@/components/ledger/LedgerPrimitives";
 import AiUsagePanel from "@/components/settings/AiUsagePanel";
 import ApiKeysPanel from "@/components/settings/ApiKeysPanel";
+import DropboxSettings from "@/components/settings/DropboxSettings";
 import GoogleDriveSettings from "@/components/settings/GoogleDriveSettings";
 import ProfileSettings from "@/components/settings/ProfileSettings";
 import { useAuth } from "@/lib/auth";
@@ -80,7 +81,7 @@ function SettingsPageContent() {
     if (section === "keys") {
       return "Programmatic access to your workspace — secrets shown once";
     }
-    return "Google Drive folder sync for document ingestion";
+    return "Google Drive and Dropbox sync for document ingestion";
   }, [section, user, costHint]);
 
   const selectSection = (id: string) => {
@@ -167,14 +168,25 @@ function SettingsPageContent() {
             ) : null}
 
             {section === "integrations" ? (
-              <SettingsSection
-                title="Google Drive"
-                description="Connect folders for automatic document sync. OAuth tokens stay on the server."
-              >
-                <div className="rounded-[10px] border border-[var(--gd-border)] bg-[var(--gd-surface)] p-4">
-                  <GoogleDriveSettings />
-                </div>
-              </SettingsSection>
+              <>
+                <SettingsSection
+                  title="Google Drive"
+                  description="Connect folders for automatic document sync. OAuth tokens stay on the server."
+                >
+                  <div className="rounded-[10px] border border-[var(--gd-border)] bg-[var(--gd-surface)] p-4">
+                    <GoogleDriveSettings />
+                  </div>
+                </SettingsSection>
+
+                <SettingsSection
+                  title="Dropbox"
+                  description="Connect Dropbox folders or import a public shared link. PDFs flow through the same ingestion and search pipeline."
+                >
+                  <div className="rounded-[10px] border border-[var(--gd-border)] bg-[var(--gd-surface)] p-4">
+                    <DropboxSettings />
+                  </div>
+                </SettingsSection>
+              </>
             ) : null}
           </LedgerScroll>
         </LedgerCanvas>

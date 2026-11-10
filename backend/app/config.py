@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_DRIVE_REDIRECT_URI: str = "http://127.0.0.1:7860/api/v1/auth/google-drive/callback"
+    # Dropbox document source (OAuth + public shared links). Credentials live in
+    # the backend .env and are never exposed to the browser.
+    DROPBOX_APP_KEY: str = ""
+    DROPBOX_APP_SECRET: str = ""
+    DROPBOX_REDIRECT_URI: str = "http://127.0.0.1:7860/api/v1/auth/dropbox/callback"
+    # Preconfigured shared folder shown in Settings → Integrations for testing.
+    DROPBOX_TEST_SHARED_LINK: str = (
+        "https://www.dropbox.com/scl/fo/bc9imczz3bxl5ya8l7cil/"
+        "AN5l1yDnWejG9jYIR_fD6A0?rlkey=rp14xvckn7zin1bw4axe50bjt"
+        "&st=tzxfo2y1&e=1&dl=0"
+    )
     FRONTEND_URL: str = "http://localhost:3000"
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
     # POC / early deploy: allow login immediately after register (no email link).
@@ -59,6 +70,9 @@ class Settings(BaseSettings):
     # Google Drive background sync
     DRIVE_SYNC_ENABLED: bool = False
     DRIVE_SYNC_INTERVAL_MINUTES: int = 60
+    # Dropbox autosync (new/updated files, remote deletions)
+    DROPBOX_SYNC_ENABLED: bool = True
+    DROPBOX_SYNC_INTERVAL_MINUTES: int = 60
     GOOGLE_SERVICE_ACCOUNT_FILE: str = ""
 
     # Celery / Redis background processing

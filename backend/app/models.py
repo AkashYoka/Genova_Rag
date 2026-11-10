@@ -42,6 +42,21 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 
+# ── Document source / lifecycle constants ────────────────────────────────────
+# Documents keep a single lifecycle column so every connector (uploads,
+# Dropbox OAuth folders, Dropbox shared links) shares one ingestion pipeline.
+DOCUMENT_SOURCE_UPLOAD = "upload"
+DOCUMENT_SOURCE_DROPBOX = "dropbox"
+DOCUMENT_SOURCE_DROPBOX_LINK = "dropbox_link"
+DROPBOX_SOURCE_TYPES = (DOCUMENT_SOURCE_DROPBOX, DOCUMENT_SOURCE_DROPBOX_LINK)
+
+LIFECYCLE_ACTIVE = "ACTIVE"
+# User removed the document in Genova — autosync must never restore it.
+LIFECYCLE_USER_DELETED = "USER_DELETED"
+# The file disappeared from the external source — autosync may restore it.
+LIFECYCLE_SOURCE_DELETED = "SOURCE_DELETED"
+
+
 class GUID(TypeDecorator):
     """Platform-independent GUID type.
 
@@ -127,6 +142,12 @@ class User(Base):
     email = Column(String(120), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     google_refresh_token = Column(EncryptedString, nullable=True)
+    # Dropbox OAuth (encrypted at rest, never sent to the frontend).
+    dropbox_refresh_token = Column(EncryptedString, nullable=True)
+    dropbox_access_token = Column(EncryptedString, nullable=True)
+    dropbox_token_expires_at = Column(Timestamp, nullable=True)
+    dropbox_account_id = Column(String(255), nullable=True, index=True)
+    dropbox_display_name = Column(String(255), nullable=True)
 
     role = Column(
         SQLAlchemyEnum(UserRole),
@@ -171,6 +192,11 @@ class User(Base):
     )
     drive_connections = relationship(
         "DriveConnection",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    dropbox_connections = relationship(
+        "DropboxConnection",
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -370,6 +396,25 @@ class Document(Base):
     drive_synced_at = Column(Timestamp, nullable=True)
     # ISO-8601 modifiedTime from Drive API — used to detect remote updates.
     drive_modified_time = Column(String(64), nullable=True)
+    # Generic external-source tracking (Dropbox and future connectors).
+    # ``external_file_id`` is the provider's stable file ID (never the filename).
+    source_type = Column(
+        String(32),
+        default=DOCUMENT_SOURCE_UPLOAD,
+        nullable=False,
+        index=True,
+    )
+    external_file_id = Column(String(255), nullable=True, index=True)
+    external_folder_id = Column(String(255), nullable=True, index=True)
+    external_revision = Column(String(128), nullable=True)
+    external_synced_at = Column(Timestamp, nullable=True)
+    lifecycle_status = Column(
+        String(20),
+        default=LIFECYCLE_ACTIVE,
+        nullable=False,
+        index=True,
+    )
+    source_deleted_at = Column(Timestamp, nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
     deleted_at = Column(Timestamp, nullable=True)
     processing_progress = Column(Integer, default=0)
@@ -582,6 +627,66 @@ class DriveConnection(Base):
     updated_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="drive_connections")
+
+
+class DropboxConnection(Base):
+    """A Dropbox folder (OAuth) or shared link attached for PDF sync into RAG."""
+
+    __tablename__ = "dropbox_connections"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "connection_kind",
+            "remote_folder_id",
+            name="uq_dropbox_connection_user_folder",
+        ),
+    )
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    # oauth = private folder in the user's account; link = public shared link
+    connection_kind = Column(String(20), default="oauth", nullable=False)
+    # Dropbox folder ID/path for OAuth, or a stable key derived from the link.
+    remote_folder_id = Column(String(255), nullable=False, index=True)
+    # Path inside the Dropbox account (OAuth) or inside the shared link.
+    folder_path = Column(String(1024), nullable=True)
+    shared_link = Column(String(2048), nullable=True)
+    folder_name = Column(String(255), nullable=True)
+    folder_url = Column(String(2048), nullable=True)
+    # Initial import selection (JSON list of Dropbox file IDs); cleared on sync.
+    pending_file_ids = Column(LongText, nullable=True)
+    enabled = Column(Boolean, default=True, nullable=False)
+    # idle | queued | processing | completed | failed
+    sync_status = Column(String(20), default="idle", nullable=False)
+    celery_task_id = Column(String(255), nullable=True)
+    last_error = Column(LongText, nullable=True)
+    last_synced_at = Column(Timestamp, nullable=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="dropbox_connections")
+
+
+class DropboxDocumentTombstone(Base):
+    """Remembers user-deleted Dropbox files so autosync cannot re-import them.
+
+    The tombstone outlives the Document row (trash purge / hard delete), which
+    keeps deletion intent intact until the user manually re-imports the file.
+    """
+
+    __tablename__ = "dropbox_document_tombstones"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "external_file_id",
+            name="uq_dropbox_tombstone_user_file",
+        ),
+    )
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
+    external_file_id = Column(String(255), nullable=False, index=True)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
 
 # ── Knowledge graph (GraphRAG) ────────────────────────────────────────────────

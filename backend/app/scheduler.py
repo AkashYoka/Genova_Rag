@@ -3,6 +3,7 @@ import logging
 
 from app.config import get_settings
 from app.services.drive_sync import sync_drive_pdfs_with_session
+from app.services.dropbox_sync import sync_dropbox_connections_with_session
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -22,6 +23,8 @@ def start_scheduler():
     except ImportError:
         if settings.DRIVE_SYNC_ENABLED:
             logger.warning("Drive PDF sync enabled but APScheduler is not installed")
+        if settings.DROPBOX_SYNC_ENABLED:
+            logger.warning("Dropbox PDF sync enabled but APScheduler is not installed")
         return None
 
     _scheduler = BackgroundScheduler(timezone="UTC")
@@ -43,6 +46,24 @@ def start_scheduler():
         )
     else:
         logger.info("Drive PDF sync disabled")
+
+    if settings.DROPBOX_SYNC_ENABLED:
+        _scheduler.add_job(
+            sync_dropbox_connections_with_session,
+            trigger=IntervalTrigger(minutes=settings.DROPBOX_SYNC_INTERVAL_MINUTES),
+            id="dropbox_pdf_sync",
+            name="Enqueue Dropbox PDF sync jobs",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=300,
+        )
+        logger.info(
+            "Dropbox PDF sync scheduled every %s minutes",
+            settings.DROPBOX_SYNC_INTERVAL_MINUTES,
+        )
+    else:
+        logger.info("Dropbox PDF sync disabled")
 
     # Document processing recovery — every 5 minutes
     try:

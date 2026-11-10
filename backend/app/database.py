@@ -184,6 +184,11 @@ def _migrate_schema():
         ("users", "display_name", "ALTER TABLE users ADD COLUMN display_name VARCHAR(120)"),
         ("users", "avatar_url", "ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500)"),
         ("users", "token_version", "ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0 NOT NULL"),
+        ("users", "dropbox_refresh_token", f"ALTER TABLE users ADD COLUMN dropbox_refresh_token {text_type}"),
+        ("users", "dropbox_access_token", f"ALTER TABLE users ADD COLUMN dropbox_access_token {text_type}"),
+        ("users", "dropbox_token_expires_at", f"ALTER TABLE users ADD COLUMN dropbox_token_expires_at {timestamp_type}"),
+        ("users", "dropbox_account_id", "ALTER TABLE users ADD COLUMN dropbox_account_id VARCHAR(255)"),
+        ("users", "dropbox_display_name", "ALTER TABLE users ADD COLUMN dropbox_display_name VARCHAR(255)"),
     ]
     for table, column, ddl in users_migrations:
         if column not in existing_users_columns:
@@ -230,6 +235,13 @@ def _migrate_schema():
         ("documents", "drive_folder_id", "ALTER TABLE documents ADD COLUMN drive_folder_id VARCHAR(255)"),
         ("documents", "drive_synced_at", f"ALTER TABLE documents ADD COLUMN drive_synced_at {timestamp_type}"),
         ("documents", "drive_modified_time", "ALTER TABLE documents ADD COLUMN drive_modified_time VARCHAR(64)"),
+        ("documents", "source_type", "ALTER TABLE documents ADD COLUMN source_type VARCHAR(32) DEFAULT 'upload' NOT NULL"),
+        ("documents", "external_file_id", "ALTER TABLE documents ADD COLUMN external_file_id VARCHAR(255)"),
+        ("documents", "external_folder_id", "ALTER TABLE documents ADD COLUMN external_folder_id VARCHAR(255)"),
+        ("documents", "external_revision", "ALTER TABLE documents ADD COLUMN external_revision VARCHAR(128)"),
+        ("documents", "external_synced_at", f"ALTER TABLE documents ADD COLUMN external_synced_at {timestamp_type}"),
+        ("documents", "lifecycle_status", "ALTER TABLE documents ADD COLUMN lifecycle_status VARCHAR(20) DEFAULT 'ACTIVE' NOT NULL"),
+        ("documents", "source_deleted_at", f"ALTER TABLE documents ADD COLUMN source_deleted_at {timestamp_type}"),
         ("documents", "processing_progress", "ALTER TABLE documents ADD COLUMN processing_progress INTEGER DEFAULT 0"),
         ("documents", "processing_stage", "ALTER TABLE documents ADD COLUMN processing_stage VARCHAR(20) DEFAULT 'queued'"),
         ("documents", "retry_count", "ALTER TABLE documents ADD COLUMN retry_count INTEGER DEFAULT 0"),
@@ -253,6 +265,12 @@ def _migrate_schema():
                 logger.warning(
                     "Migration failed for %s.%s: %s", table, column, exc
                 )
+
+    _ensure_index("documents", "ix_documents_source_type", "source_type")
+    _ensure_index("documents", "ix_documents_external_file_id", "external_file_id")
+    _ensure_index("documents", "ix_documents_external_folder_id", "external_folder_id")
+    _ensure_index("documents", "ix_documents_lifecycle_status", "lifecycle_status")
+    _ensure_index("users", "ix_users_dropbox_account_id", "dropbox_account_id")
 
     # Migrate chat_messages
     try:
@@ -496,6 +514,76 @@ def _migrate_schema():
                     logger.warning(
                         "Migration failed for %s.%s: %s", table, column, exc
                     )
+
+    # ── Dropbox connections + deletion tombstones ───────────────────────────
+    existing_tables = set(inspector.get_table_names())
+    if "dropbox_connections" not in existing_tables:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"""
+                    CREATE TABLE dropbox_connections (
+                        id                CHAR(36)      PRIMARY KEY,
+                        user_id           CHAR(36)      NOT NULL,
+                        connection_kind   VARCHAR(20)   NOT NULL DEFAULT 'oauth',
+                        remote_folder_id  VARCHAR(255)  NOT NULL,
+                        folder_path       VARCHAR(1024),
+                        shared_link       VARCHAR(2048),
+                        folder_name       VARCHAR(255),
+                        folder_url        VARCHAR(2048),
+                        pending_file_ids  {text_type},
+                        enabled           BOOLEAN       NOT NULL DEFAULT 1,
+                        sync_status       VARCHAR(20)   NOT NULL DEFAULT 'idle',
+                        celery_task_id    VARCHAR(255),
+                        last_error        {text_type},
+                        last_synced_at    {timestamp_type},
+                        created_at        {timestamp_type},
+                        updated_at        {timestamp_type},
+                        CONSTRAINT uq_dropbox_connection_user_folder
+                            UNIQUE (user_id, connection_kind, remote_folder_id),
+                        CONSTRAINT fk_dropbox_connections_user
+                            FOREIGN KEY (user_id) REFERENCES users (id)
+                    )
+                """))
+            _ensure_index(
+                "dropbox_connections", "ix_dropbox_connections_user_id", "user_id"
+            )
+            _ensure_index(
+                "dropbox_connections",
+                "ix_dropbox_connections_remote_folder_id",
+                "remote_folder_id",
+            )
+            logger.info("Migration: created table dropbox_connections")
+        except Exception as exc:
+            logger.warning("Migration skipped dropbox_connections: %s", exc)
+
+    if "dropbox_document_tombstones" not in existing_tables:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"""
+                    CREATE TABLE dropbox_document_tombstones (
+                        id                CHAR(36)      PRIMARY KEY,
+                        user_id           CHAR(36)      NOT NULL,
+                        external_file_id  VARCHAR(255)  NOT NULL,
+                        created_at        {timestamp_type},
+                        CONSTRAINT uq_dropbox_tombstone_user_file
+                            UNIQUE (user_id, external_file_id),
+                        CONSTRAINT fk_dropbox_tombstones_user
+                            FOREIGN KEY (user_id) REFERENCES users (id)
+                    )
+                """))
+            _ensure_index(
+                "dropbox_document_tombstones",
+                "ix_dropbox_tombstones_user_id",
+                "user_id",
+            )
+            _ensure_index(
+                "dropbox_document_tombstones",
+                "ix_dropbox_tombstones_external_file_id",
+                "external_file_id",
+            )
+            logger.info("Migration: created table dropbox_document_tombstones")
+        except Exception as exc:
+            logger.warning("Migration skipped dropbox_document_tombstones: %s", exc)
 
     # ── Response feedback table ────────────────────────────────────────────
     existing_tables = set(inspector.get_table_names())
