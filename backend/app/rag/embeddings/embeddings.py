@@ -1,8 +1,9 @@
 """
 Document/query embeddings with optional Redis/LRU caching.
 
-Provider (from ``app.config.Settings``):
-- bedrock (default): ``amazon.titan-embed-text-v2:0``, ``EMBEDDING_DIMENSION=1024``
+Providers (from ``app.config.Settings``):
+- ollama (localhost default): ``nomic-embed-text``, ``EMBEDDING_DIMENSION=768``
+- bedrock (production default): ``amazon.titan-embed-text-v2:0``, ``EMBEDDING_DIMENSION=1024``
 
 Ask-time caller: ``retriever.retrieve`` → ``embed_query(search_query)``.
 Index-time caller: ``vectorstore.store_chunks`` → ``get_embedding_model().embed_documents``.
@@ -17,10 +18,10 @@ from app.config import get_settings
 from app.rag.utils.tracing import trace_call
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
-# Singleton: one embedder per process (Bedrock Titan V2).
+# Singleton: one embedder per process (Ollama nomic or Bedrock Titan V2).
 _embedding_model = None
+_embedding_model_key: Optional[str] = None
 
 # Cache knobs (env-overridable). TTL only applies when Redis is used.
 _EMBEDDING_CACHE_TTL: int = int(os.getenv("EMBEDDING_CACHE_TTL", "86400"))  # 24 h
@@ -39,7 +40,7 @@ _EX_Q = (
 
 @runtime_checkable
 class _Embedder(Protocol):
-    """Duck-typed embedder API (Bedrock Titan V2)."""
+    """Duck-typed embedder API (Ollama nomic or Bedrock Titan V2)."""
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]: ...
     def embed_query(self, text: str) -> List[float]: ...
@@ -133,6 +134,7 @@ def _make_embedding_key(text: str) -> str:
 
     Next: ``_cache_get(key)`` / ``_cache_set(key, vector)``.
     """
+    settings = get_settings()
     raw = f"{settings.EMBEDDING_PROVIDER}:{settings.EMBEDDING_MODEL}:{text.strip()}"
     return "emb:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -192,29 +194,50 @@ def _cache_set(key: str, vector: List[float]) -> None:
 
 
 def get_embedding_model() -> _Embedder:
-    """Lazy singleton factory for Bedrock Titan embeddings.
+    """Lazy singleton factory for the configured embedding provider.
 
-    Defaults:
+    Localhost defaults:
+        EMBEDDING_PROVIDER = "ollama"
+        EMBEDDING_MODEL    = "nomic-embed-text"
+        EMBEDDING_DIMENSION = 768
+
+    Production defaults:
         EMBEDDING_PROVIDER = "bedrock"
         EMBEDDING_MODEL    = "amazon.titan-embed-text-v2:0"
         EMBEDDING_DIMENSION = 1024
     """
-    global _embedding_model
+    global _embedding_model, _embedding_model_key
 
-    if _embedding_model is None:
-        provider = (settings.EMBEDDING_PROVIDER or "bedrock").strip().lower()
-        logger.info(
-            "Loading embedding model: provider=%s model=%s dim=%s",
-            provider,
-            settings.EMBEDDING_MODEL,
-            settings.EMBEDDING_DIMENSION,
+    settings = get_settings()
+    provider = (settings.EMBEDDING_PROVIDER or "ollama").strip().lower()
+    model_key = (
+        f"{provider}:{settings.EMBEDDING_MODEL}:{settings.EMBEDDING_DIMENSION}:"
+        f"{settings.OLLAMA_BASE_URL}:{settings.BEDROCK_REGION}"
+    )
+
+    if _embedding_model is not None and _embedding_model_key == model_key:
+        return _embedding_model
+
+    logger.info(
+        "Loading embedding model: provider=%s model=%s dim=%s",
+        provider,
+        settings.EMBEDDING_MODEL,
+        settings.EMBEDDING_DIMENSION,
+    )
+    if provider == "ollama":
+        from app.rag.llm.ollama_client import (
+            OllamaEmbeddings,
+            check_ollama_model,
+            check_ollama_reachable,
         )
-        if provider != "bedrock":
-            raise ValueError(
-                f"Unsupported EMBEDDING_PROVIDER={provider!r}. "
-                "Only 'bedrock' (amazon.titan-embed-text-v2:0) is supported."
-            )
 
+        check_ollama_reachable(settings.OLLAMA_BASE_URL)
+        check_ollama_model(settings.OLLAMA_BASE_URL, settings.EMBEDDING_MODEL)
+        _embedding_model = OllamaEmbeddings(
+            model=settings.EMBEDDING_MODEL,
+            base_url=settings.OLLAMA_BASE_URL,
+        )
+    elif provider == "bedrock":
         from app.rag.embeddings.bedrock_embeddings import BedrockEmbeddings
 
         _embedding_model = BedrockEmbeddings(
@@ -222,8 +245,15 @@ def get_embedding_model() -> _Embedder:
             region=settings.BEDROCK_REGION,
             dimensions=settings.EMBEDDING_DIMENSION,
         )
-        logger.info("Embedding model ready (%s)", provider)
+    else:
+        raise ValueError(
+            f"Unsupported EMBEDDING_PROVIDER={provider!r}. "
+            "Supported: 'ollama' (nomic-embed-text) or 'bedrock' "
+            "(amazon.titan-embed-text-v2:0)."
+        )
 
+    _embedding_model_key = model_key
+    logger.info("Embedding model ready (%s)", provider)
     return _embedding_model
 
 
@@ -277,6 +307,7 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
     )
 
     if miss_texts:
+        settings = get_settings()
         model = get_embedding_model()
         new_vectors: List[List[float]] = trace_call(
             "embed_texts",
@@ -343,6 +374,7 @@ def embed_query(query: str) -> List[float]:
     if cached is not None:
         return cached
 
+    settings = get_settings()
     model = get_embedding_model()
     vector: List[float] = trace_call(
         "embed_query",

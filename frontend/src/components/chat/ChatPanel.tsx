@@ -6,6 +6,14 @@ import { useTranslation } from "react-i18next";
 import type { DocInfo } from "@/app/dashboard/page";
 import { api, API_BASE } from "@/lib/api";
 import {
+  fallbackDefaultLlmProvider,
+  fallbackAvailableLlmProviders,
+  llmProviderSelectOptions,
+  resolveLlmProviderOptions,
+  type LlmProviderId,
+  type PublicLlmConfig,
+} from "@/lib/llm-providers";
+import {
   useChatStore,
   type AttachedDocument,
   type ChatMsg,
@@ -129,9 +137,37 @@ export default function ChatPanel({
   const MAX_CHARACTERS = 2000;
   const [isRecording, setIsRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
-  const [llmProvider, setLlmProvider] = useState<"ollama" | "bedrock">(
-    "ollama",
+  const [availableLlmProviders, setAvailableLlmProviders] = useState<
+    LlmProviderId[]
+  >(() => fallbackAvailableLlmProviders());
+  const [llmProvider, setLlmProvider] = useState<LlmProviderId>(() =>
+    fallbackDefaultLlmProvider(),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<PublicLlmConfig>("/api/v1/auth/config")
+      .then((config) => {
+        if (cancelled) return;
+        const { available, defaultProvider } = resolveLlmProviderOptions(config);
+        setAvailableLlmProviders(available);
+        setLlmProvider((current) =>
+          available.includes(current) ? current : defaultProvider,
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const { available, defaultProvider } = resolveLlmProviderOptions(null);
+        setAvailableLlmProviders(available);
+        setLlmProvider((current) =>
+          available.includes(current) ? current : defaultProvider,
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const applyUsageToMessage = (
     assistantId: string,
@@ -1356,15 +1392,20 @@ export default function ChatPanel({
                 />
                 <select
                   value={llmProvider}
-                  disabled={streaming}
+                  disabled={streaming || availableLlmProviders.length <= 1}
                   onChange={(e) =>
-                    setLlmProvider(e.target.value as "ollama" | "bedrock")
+                    setLlmProvider(e.target.value as LlmProviderId)
                   }
                   className="h-8 max-w-[9.5rem] cursor-pointer appearance-none rounded-md bg-transparent py-0 pr-6 pl-7 text-xs font-medium text-[var(--gd-muted)] outline-none transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label="LLM provider"
                 >
-                  <option value="ollama">Ollama</option>
-                  <option value="bedrock">Nova 2 Lite</option>
+                  {llmProviderSelectOptions(availableLlmProviders).map(
+                    (opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ),
+                  )}
                 </select>
                 <ChevronDown
                   className="pointer-events-none absolute right-1.5 h-3 w-3 text-[var(--gd-muted)]"

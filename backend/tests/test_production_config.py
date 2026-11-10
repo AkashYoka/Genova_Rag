@@ -45,3 +45,21 @@ def test_development_allows_missing_hosts():
         ALLOWED_HOSTS="",
     )
     s.validate_production()  # warns only
+
+
+def test_production_hides_ollama_llm_provider(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("EMBEDDING_PROVIDER", raising=False)
+    s = Settings(
+        ENVIRONMENT="production",
+        LLM_PROVIDER="ollama",
+        EMBEDDING_PROVIDER="ollama",
+        SECRET_KEY="x" * 48,
+        FIELD_ENCRYPTION_KEY="y" * 48,
+        ALLOWED_ORIGINS="https://rag.genova-ai.yokaiq.in",
+        ALLOWED_HOSTS="rag.genova-ai.yokaiq.in",
+    )
+    assert s.LLM_PROVIDER == "bedrock"
+    assert s.EMBEDDING_PROVIDER == "bedrock"
+    assert s.available_llm_providers() == ["bedrock"]
+    assert "ollama" not in s.available_llm_providers()

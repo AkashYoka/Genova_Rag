@@ -13,7 +13,7 @@ from app.rag.llm.ollama_client import (
 
 
 def test_provider_settings_defaults_without_env(monkeypatch):
-    """Defaults: Ollama LLM locally + Bedrock Titan embeddings (1024-d)."""
+    """Localhost defaults: Ollama LLM + nomic-embed-text embeddings."""
     for var in (
         "LLM_PROVIDER",
         "EMBEDDING_PROVIDER",
@@ -22,6 +22,7 @@ def test_provider_settings_defaults_without_env(monkeypatch):
         "EMBEDDING_DIMENSION",
         "CHROMA_PERSIST_DIR",
         "OLLAMA_BASE_URL",
+        "ENVIRONMENT",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -29,15 +30,46 @@ def test_provider_settings_defaults_without_env(monkeypatch):
     try:
         s = Settings()
         assert s.LLM_PROVIDER == "ollama"
-        assert s.EMBEDDING_PROVIDER == "bedrock"
+        assert s.EMBEDDING_PROVIDER == "ollama"
         assert s.LLM_MODEL == "qwen2.5:3b"
+        assert s.EMBEDDING_MODEL == "nomic-embed-text"
+        assert s.EMBEDDING_DIMENSION == 768
+        assert "chroma_db_ollama_nomic" in s.CHROMA_PERSIST_DIR
+        assert s.OLLAMA_BASE_URL == "http://localhost:11434"
+        assert s.uses_ollama_llm is True
+        assert s.uses_bedrock_embeddings is False
+        assert s.uses_ollama_embeddings is True
+        assert s.available_llm_providers() == ["ollama", "bedrock"]
+        assert s.default_llm_provider == "ollama"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_production_forces_bedrock_providers(monkeypatch):
+    """Production never keeps Ollama for LLM or embeddings."""
+    for var in (
+        "LLM_PROVIDER",
+        "EMBEDDING_PROVIDER",
+        "LLM_MODEL",
+        "EMBEDDING_MODEL",
+        "EMBEDDING_DIMENSION",
+        "CHROMA_PERSIST_DIR",
+        "ENVIRONMENT",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    get_settings.cache_clear()
+    try:
+        s = Settings(ENVIRONMENT="production")
+        assert s.LLM_PROVIDER == "bedrock"
+        assert s.EMBEDDING_PROVIDER == "bedrock"
         assert s.EMBEDDING_MODEL == "amazon.titan-embed-text-v2:0"
         assert s.EMBEDDING_DIMENSION == 1024
         assert "chroma_db_bedrock_titan_v2" in s.CHROMA_PERSIST_DIR
-        assert s.OLLAMA_BASE_URL == "http://localhost:11434"
-        assert s.uses_ollama_llm is True
+        assert s.available_llm_providers() == ["bedrock"]
+        assert s.default_llm_provider == "bedrock"
+        assert s.uses_ollama_llm is False
         assert s.uses_bedrock_embeddings is True
-        assert s.uses_ollama_embeddings is False
     finally:
         get_settings.cache_clear()
 
@@ -130,6 +162,16 @@ def test_ollama_chat_client_non_stream():
         args, kwargs = mock_client.post.call_args
         assert args[0] == "/api/chat"
         assert kwargs["json"]["model"] == "qwen2.5:3b"
+
+
+def test_normalize_llm_provider_blocks_ollama_in_production(monkeypatch):
+    from app.rag.llm import agent as agent_mod
+
+    monkeypatch.setattr(agent_mod.settings, "ENVIRONMENT", "production")
+    monkeypatch.setattr(agent_mod.settings, "LLM_PROVIDER", "bedrock")
+    assert agent_mod.normalize_llm_provider("ollama") == "bedrock"
+    assert agent_mod.normalize_llm_provider("bedrock") == "bedrock"
+    assert agent_mod.normalize_llm_provider(None) == "bedrock"
 
 
 def test_ollama_direct_rag_uses_retrieve_and_sources(monkeypatch):

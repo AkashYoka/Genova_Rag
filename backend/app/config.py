@@ -162,18 +162,19 @@ class Settings(BaseSettings):
     GRAPH_MAX_EVIDENCE_SOURCES: int = 3
 
     # ── Embeddings ───────────────────────────────────────
-    # Production default: Amazon Titan Text Embeddings V2 (1024-d) via Bedrock.
-    EMBEDDING_PROVIDER: str = "bedrock"
-    EMBEDDING_MODEL: str = "amazon.titan-embed-text-v2:0"
-    EMBEDDING_DIMENSION: int = 1024
+    # Localhost default: Ollama nomic-embed-text (768-d).
+    # Production (ENVIRONMENT=production): forced to Bedrock Titan V2 (1024-d).
+    EMBEDDING_PROVIDER: str = "ollama"
+    EMBEDDING_MODEL: str = "nomic-embed-text"
+    EMBEDDING_DIMENSION: int = 768
 
     # ── ChromaDB ─────────────────────────────────────────
-    # Separate persist dir for Titan V2 (1024-d) so older nomic/MiniLM indexes
-    # are never mixed.
-    CHROMA_PERSIST_DIR: str = "./data/chroma_db_bedrock_titan_v2"
+    # Separate persist dirs per embedding family so indexes are never mixed.
+    CHROMA_PERSIST_DIR: str = "./data/chroma_db_ollama_nomic"
 
     # ── LLM ──────────────────────────────────────────────
-    # Default: local Ollama.    # Per-request ChatRequest.llm_provider can override to bedrock without changing defaults.
+    # Localhost default: Ollama qwen2.5. Per-request ChatRequest.llm_provider
+    # can override to bedrock in non-production. Production forces Bedrock Nova.
     LLM_PROVIDER: str = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_MODEL: str = "qwen2.5:3b"
@@ -319,11 +320,56 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def apply_provider_defaults(self) -> "Settings":
-        """Keep embedding dims / chroma path aligned with the selected providers.
+        """Align providers with deployment environment and embedding family.
 
-        Does not rewrite values the user explicitly set via environment variables.
+        - Localhost / development: Ollama LLM + nomic-embed-text
+        - Production: Bedrock Nova LLM + Bedrock Titan embeddings
+        Does not rewrite values the user explicitly set via environment variables,
+        except that production never keeps Ollama as the active provider.
         """
         import os
+
+        is_prod = (self.ENVIRONMENT or "").strip().lower() == "production"
+
+        # Production is Bedrock-only for generation and embeddings.
+        if is_prod:
+            if self.LLM_PROVIDER == "ollama":
+                object.__setattr__(self, "LLM_PROVIDER", "bedrock")
+            if self.EMBEDDING_PROVIDER == "ollama":
+                object.__setattr__(self, "EMBEDDING_PROVIDER", "bedrock")
+            if "LLM_PROVIDER" not in os.environ and self.LLM_PROVIDER not in {
+                "bedrock",
+                "huggingface",
+            }:
+                object.__setattr__(self, "LLM_PROVIDER", "bedrock")
+            if "EMBEDDING_PROVIDER" not in os.environ:
+                object.__setattr__(self, "EMBEDDING_PROVIDER", "bedrock")
+
+        if self.EMBEDDING_PROVIDER == "ollama":
+            if "EMBEDDING_MODEL" not in os.environ and (
+                not self.EMBEDDING_MODEL
+                or self.EMBEDDING_MODEL.startswith("sentence-transformers/")
+                or self.EMBEDDING_MODEL.startswith("amazon.")
+            ):
+                object.__setattr__(self, "EMBEDDING_MODEL", "nomic-embed-text")
+            if "EMBEDDING_DIMENSION" not in os.environ and self.EMBEDDING_DIMENSION in {
+                384,
+                1024,
+            }:
+                object.__setattr__(self, "EMBEDDING_DIMENSION", 768)
+            if (
+                "CHROMA_PERSIST_DIR" not in os.environ
+                and self.CHROMA_PERSIST_DIR
+                in {
+                    "./data/chroma_db",
+                    "data/chroma_db",
+                    "./data/chroma_db_bedrock_titan_v2",
+                    "data/chroma_db_bedrock_titan_v2",
+                }
+            ):
+                object.__setattr__(
+                    self, "CHROMA_PERSIST_DIR", "./data/chroma_db_ollama_nomic"
+                )
 
         if self.EMBEDDING_PROVIDER == "bedrock":
             if "EMBEDDING_MODEL" not in os.environ and (
@@ -352,7 +398,7 @@ class Settings(BaseSettings):
                 object.__setattr__(
                     self, "CHROMA_PERSIST_DIR", "./data/chroma_db_bedrock_titan_v2"
                 )
-        
+
         # LLM_MODEL is always the Ollama chat model (default qwen2.5:3b).
         # Bedrock uses BEDROCK_MODEL_ID via llm_model_for_provider() so the
         # frontend can switch Ollama <-> Nova without poisoning Ollama's model id.
@@ -371,6 +417,23 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def is_production(self) -> bool:
+        return (self.ENVIRONMENT or "").strip().lower() == "production"
+
+    def available_llm_providers(self) -> list[str]:
+        """Providers selectable in the UI / per-request overrides."""
+        if self.is_production:
+            return ["bedrock"]
+        return ["ollama", "bedrock"]
+
+    @property
+    def default_llm_provider(self) -> str:
+        available = self.available_llm_providers()
+        if self.LLM_PROVIDER in available:
+            return self.LLM_PROVIDER
+        return available[0]
+
+    @property
     def uses_ollama_llm(self) -> bool:
         return self.LLM_PROVIDER == "ollama"
 
@@ -385,7 +448,7 @@ class Settings(BaseSettings):
 
     @property
     def uses_ollama_embeddings(self) -> bool:
-        return False
+        return self.EMBEDDING_PROVIDER == "ollama"
 
     @property
     def uses_bedrock_embeddings(self) -> bool:

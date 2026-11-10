@@ -148,7 +148,10 @@ def persist_document_keywords(document, chunks, db) -> None:
 
 
 def normalize_llm_provider(provider: Optional[str] = None) -> str:
-    """Resolve per-request or configured LLM provider to a canonical id."""
+    """Resolve per-request or configured LLM provider to a canonical id.
+
+    Production never selects Ollama — requests are coerced to Bedrock.
+    """
     chosen = (provider or settings.LLM_PROVIDER or "ollama").strip().lower()
     aliases = {
         "bedrock_nova": "bedrock",
@@ -157,7 +160,13 @@ def normalize_llm_provider(provider: Optional[str] = None) -> str:
         "nova_2_lite": "bedrock",
         "qwen": "ollama",
     }
-    return aliases.get(chosen, chosen)
+    chosen = aliases.get(chosen, chosen)
+    if settings.is_production and chosen == "ollama":
+        logger.warning(
+            "Ollama LLM requested in production; using Bedrock Nova instead"
+        )
+        return "bedrock"
+    return chosen
 
 
 def llm_model_for_provider(provider: Optional[str] = None) -> str:

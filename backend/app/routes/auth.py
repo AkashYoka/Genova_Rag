@@ -771,9 +771,12 @@ def delete_api_key(key_id: str, user: User = Depends(get_current_user), db: Sess
 
 @router.get("/config")
 def get_auth_config():
-    """Return public configuration for auth providers"""
+    """Return public configuration for auth and LLM providers."""
     return {
-        "google_client_id": settings.GOOGLE_CLIENT_ID
+        "google_client_id": settings.GOOGLE_CLIENT_ID,
+        "environment": settings.ENVIRONMENT,
+        "default_llm_provider": settings.default_llm_provider,
+        "available_llm_providers": settings.available_llm_providers(),
     }
 
 

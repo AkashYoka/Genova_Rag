@@ -26,7 +26,7 @@ x-backend-environment: &backend-environment
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
   FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
   UPLOAD_DIR: /app/data/uploads
-  CHROMA_PERSIST_DIR: ${CHROMA_PERSIST_DIR:-/app/data/chroma_db}
+  CHROMA_PERSIST_DIR: ${CHROMA_PERSIST_DIR:-/app/data/chroma_db_bedrock_titan_v2}
   GRAPH_PERSIST_DIR: ${GRAPH_PERSIST_DIR:-/app/data/graphs}
   LOG_FILE: /app/data/logs/app.log
   REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-genova-redis}
