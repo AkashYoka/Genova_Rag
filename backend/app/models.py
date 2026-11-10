@@ -431,10 +431,12 @@ class Document(Base):
 
     # Relationships
     owner = relationship("User", back_populates="documents")
+    # Chat history outlives the PDF: deleting a document must never cascade into
+    # sessions/messages. document_id is SET NULL on hard delete.
     messages = relationship(
         "ChatMessage",
         back_populates="document",
-        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
@@ -456,7 +458,7 @@ class ChatMessage(Base):
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
     document_id = Column(
         GUID,
-        ForeignKey("documents.id"),
+        ForeignKey("documents.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -568,7 +570,7 @@ class LLMUsage(Base):
     )
     document_id = Column(
         GUID,
-        ForeignKey("documents.id"),
+        ForeignKey("documents.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

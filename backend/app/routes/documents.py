@@ -1025,27 +1025,13 @@ def delete_document(
     db: Session = Depends(get_db),
 ):
     """
-    Soft-delete a document so it disappears from normal document APIs.
+    Soft-delete a document so it moves to Trash and leaves Active lists.
 
-    The underlying file, vectors, graph, and chat history are retained for a
-    future recycle-bin/restore flow. Normal read/list endpoints filter deleted
-    documents so accidental deletion is reversible at the database level.
-
-    Args:
-        document_id: The unique identifier of the document to delete.
-        user: The currently authenticated user, injected by the `get_current_user` dependency.
-        db: Database session, injected by the `get_db` dependency.
-
-    Returns:
-        dict: A JSON response containing a success message confirming the deletion of the document.
-
-    Raises:
-        HTTPException: With status code 404 if the document is not found or does not belong to the authenticated user.
-
-    Note:
-        ChromaDB deletion errors are caught and logged only; they do not
-        raise an HTTP exception because the main document record is already
-        removed from the database.
+    File, vectors, Knowledge Intelligence graph, and chat history are retained
+    so restore can re-enable retrieval. Query/list endpoints filter
+    ``is_deleted`` so trashed PDFs are excluded from future RAG answers.
+    Permanent delete (trash purge) removes file/chunks/graph without touching
+    conversation history.
     """
     doc = db.query(Document).filter(
         Document.id == document_id,
@@ -1057,8 +1043,6 @@ def delete_document(
         raise NotFoundException("Document")
 
     original_name = doc.original_name
-    document_id_value = str(doc.id)
-    user_id_value = str(user.id)
 
     doc.is_deleted = True
     doc.deleted_at = datetime.now(timezone.utc)
@@ -1090,15 +1074,6 @@ def delete_document(
                 )
             )
     db.commit()
-
-    # Drop this document's graph contribution. Entities and relationships that
-    # other documents still support are preserved; only unsupported ones go.
-    try:
-        from app.graph.service import remove_document as remove_document_graph
-
-        remove_document_graph(document_id_value, user_id_value, db=db)
-    except Exception as exc:  # graph cleanup must not fail the delete request
-        logger.warning("Graph cleanup failed for document %s: %s", document_id_value, exc)
 
     return {"message": f"Document '{original_name}' deleted successfully"}
 

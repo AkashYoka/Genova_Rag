@@ -30,6 +30,49 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 MAX_QUERY_VARIANTS = 4
 
+
+def _exclude_soft_deleted_chunks(
+    chunks: List[Dict[str, Any]],
+    user_id: str,
+) -> List[Dict[str, Any]]:
+    """Drop chunks whose document is in Trash (soft-deleted)."""
+    if not chunks:
+        return chunks
+    doc_ids = {
+        str(chunk.get("document_id"))
+        for chunk in chunks
+        if chunk.get("document_id")
+    }
+    if not doc_ids:
+        return chunks
+    try:
+        from app.database import SessionLocal
+        from app.models import Document
+
+        db = SessionLocal()
+        try:
+            active = {
+                str(row[0])
+                for row in db.query(Document.id)
+                .filter(
+                    Document.user_id == user_id,
+                    Document.id.in_(list(doc_ids)),
+                    Document.is_deleted.is_(False),
+                )
+                .all()
+            }
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("Could not filter soft-deleted chunks: %s", exc)
+        return chunks
+    return [
+        chunk
+        for chunk in chunks
+        if not chunk.get("document_id")
+        or str(chunk.get("document_id")) in active
+    ]
+
 _EX_Q = (
     "Does the XOLAIR prescribing label recommend every-2-week dosing for "
     "chronic spontaneous urticaria (CSU)?"
@@ -459,6 +502,8 @@ def retrieve(
                     chunk["score"] = round(chunk["rerank_score"], 4)
                     del chunk["rerank_score"]
 
+        selected = _exclude_soft_deleted_chunks(selected, user_id)
+
         from app.observability import chunks_retrieved_var
 
         chunks_retrieved_var.set(len(selected))
@@ -547,6 +592,8 @@ def retrieve(
             if "rerank_score" in chunk:
                 chunk["score"] = round(chunk["rerank_score"], 4)
                 del chunk["rerank_score"]
+
+    top_chunks = _exclude_soft_deleted_chunks(top_chunks, user_id)
 
     from app.observability import chunks_retrieved_var
     chunks_retrieved_var.set(len(top_chunks))

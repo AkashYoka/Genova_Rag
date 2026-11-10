@@ -157,6 +157,69 @@ def _ensure_index(table: str, index_name: str, columns: str) -> None:
         logger.warning("Index creation skipped for %s: %s", index_name, exc)
 
 
+def _ensure_fk_on_delete_set_null(
+    *,
+    table: str,
+    column: str,
+    ref_table: str,
+    constraint_name: str,
+) -> None:
+    """Ensure ``column`` references ``ref_table`` with ON DELETE SET NULL (MySQL).
+
+    Existing databases may have been created without an ON DELETE clause, which
+    can block or cascade document hard-deletes into chat history. Recreate the
+    FK safely when needed.
+    """
+    if not is_mysql:
+        return
+    try:
+        inspector = inspect(engine)
+        if table not in inspector.get_table_names():
+            return
+        fks = inspector.get_foreign_keys(table)
+        matching = [
+            fk
+            for fk in fks
+            if column in (fk.get("constrained_columns") or [])
+            and fk.get("referred_table") == ref_table
+        ]
+        already_ok = any(
+            (fk.get("options") or {}).get("ondelete", "").upper() == "SET NULL"
+            for fk in matching
+        )
+        if already_ok:
+            return
+
+        with engine.begin() as conn:
+            for fk in matching:
+                name = fk.get("name")
+                if name:
+                    conn.execute(
+                        text(f"ALTER TABLE {table} DROP FOREIGN KEY `{name}`")
+                    )
+            conn.execute(
+                text(
+                    f"ALTER TABLE {table} "
+                    f"ADD CONSTRAINT `{constraint_name}` "
+                    f"FOREIGN KEY (`{column}`) REFERENCES `{ref_table}` (`id`) "
+                    f"ON DELETE SET NULL"
+                )
+            )
+        logger.info(
+            "Migration: set ON DELETE SET NULL for %s.%s → %s.id",
+            table,
+            column,
+            ref_table,
+        )
+    except Exception as exc:
+        logger.warning(
+            "FK ON DELETE SET NULL migration skipped for %s.%s: %s",
+            table,
+            column,
+            exc,
+        )
+
+
 def _migrate_schema():
     """Apply schema migrations for existing databases (SQLite and MySQL).
 
@@ -299,6 +362,23 @@ def _migrate_schema():
         "ix_chat_messages_session_user_created",
         "session_id, user_id, created_at",
     )
+
+    # Document hard-delete must not erase chat history / usage rows.
+    # Prefer ON DELETE SET NULL for document_id FKs (MySQL). SQLite tests rely on
+    # create_all + explicit nulling in _hard_delete_document.
+    if is_mysql:
+        _ensure_fk_on_delete_set_null(
+            table="chat_messages",
+            column="document_id",
+            ref_table="documents",
+            constraint_name="fk_chat_messages_document_id",
+        )
+        _ensure_fk_on_delete_set_null(
+            table="llm_usage",
+            column="document_id",
+            ref_table="documents",
+            constraint_name="fk_llm_usage_document_id",
+        )
 
 
     # Migrate documents — embedding cache tracking

@@ -48,6 +48,59 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
+SOURCE_UNAVAILABLE_MESSAGE = (
+    "This source document is unavailable. It may have been moved to trash "
+    "or permanently deleted."
+)
+
+
+def _raise_source_unavailable() -> None:
+    """Signal that an attached PDF cannot be used for new retrieval."""
+    raise AppException(
+        "SOURCE_UNAVAILABLE",
+        SOURCE_UNAVAILABLE_MESSAGE,
+        404,
+    )
+
+
+def _get_active_owned_document(
+    db: Session,
+    user_id,
+    document_id: str,
+) -> Optional[Document]:
+    """Return an owned, non-trashed document or ``None`` if unavailable."""
+    return (
+        db.query(Document)
+        .filter(
+            Document.id == document_id,
+            Document.user_id == user_id,
+            Document.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+
+def _require_active_owned_documents(
+    db: Session,
+    user_id,
+    document_ids: List[str],
+) -> List[Document]:
+    """Load attached docs; raise if any id is missing or in trash."""
+    docs = (
+        db.query(Document)
+        .filter(
+            Document.id.in_(document_ids),
+            Document.user_id == user_id,
+            Document.is_deleted.is_(False),
+        )
+        .all()
+    )
+    found_ids = {str(doc.id) for doc in docs}
+    missing = [doc_id for doc_id in document_ids if str(doc_id) not in found_ids]
+    if missing:
+        _raise_source_unavailable()
+    return docs
+
 
 def _infer_usage_type(usage: Optional[dict], quiz=None) -> str:
     if quiz:
@@ -380,13 +433,11 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
 
         # Validate document if given
         if document_id:
-            doc = db.query(Document).filter(
-                Document.id == document_id,
-                Document.user_id == user.id,
-                Document.is_deleted.is_(False),
-            ).first()
+            doc = _get_active_owned_document(db, user.id, document_id)
             if not doc:
-                await websocket.send_json({"type": "error", "data": "Document not found"})
+                await websocket.send_json(
+                    {"type": "error", "data": SOURCE_UNAVAILABLE_MESSAGE}
+                )
                 await websocket.close()
                 return
             if doc.status != "ready":
@@ -401,19 +452,10 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 await websocket.close()
                 return
         elif document_ids:
-            docs = (
-                db.query(Document)
-                .filter(
-                    Document.id.in_(document_ids),
-                    Document.user_id == user.id,
-                    Document.is_deleted.is_(False),
-                )
-                .all()
-            )
-            found_ids = {doc.id for doc in docs}
-            missing = [doc_id for doc_id in document_ids if doc_id not in found_ids]
-            if missing:
-                await websocket.send_json({"type": "error", "data": "Document not found"})
+            try:
+                docs = _require_active_owned_documents(db, user.id, document_ids)
+            except AppException as exc:
+                await websocket.send_json({"type": "error", "data": str(exc)})
                 await websocket.close()
                 return
             not_ready = [doc.original_name for doc in docs if doc.status != "ready"]
@@ -672,14 +714,20 @@ def update_chat_session(
 @router.delete(
     "/sessions/{session_id}",
     summary="Delete a chat session",
-    description="Deletes one owned chat session and cascades its messages through the database relationship.",
+    description=(
+        "Deletes one owned chat session and its messages. "
+        "Source PDFs are never deleted when a chat session is removed."
+    ),
 )
 def delete_chat_session(
     session_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Delete a chat session owned by the authenticated user."""
+    """Delete a chat session owned by the authenticated user.
+
+    Only the session and its messages are removed. Linked documents stay intact.
+    """
     session = (
         db.query(ChatSession)
         .filter(
@@ -814,18 +862,9 @@ def ask_question(
 
         # Validate document exists if specified
         if payload.document_id:
-            doc = (
-                db.query(Document)
-                .filter(
-                    Document.id == payload.document_id,
-                    Document.user_id == user.id,
-                    Document.is_deleted.is_(False),
-                )
-                .first()
-            )
-
+            doc = _get_active_owned_document(db, user.id, payload.document_id)
             if not doc:
-                raise NotFoundException("Document")
+                _raise_source_unavailable()
 
             if doc.status != "ready":
                 progress = getattr(doc, "processing_progress", None)
@@ -843,20 +882,9 @@ def ask_question(
 
         # Validate documents if multiple specified
         elif payload.document_ids:
-            docs = (
-                db.query(Document)
-                .filter(
-                    Document.id.in_(payload.document_ids),
-                    Document.user_id == user.id,
-                    Document.is_deleted.is_(False),
-                )
-                .all()
+            docs = _require_active_owned_documents(
+                db, user.id, [str(d) for d in payload.document_ids]
             )
-
-            found_ids = {doc.id for doc in docs}
-            missing = [doc_id for doc_id in payload.document_ids if doc_id not in found_ids]
-            if missing:
-                raise NotFoundException("Document")
 
             not_ready = [doc.original_name for doc in docs if doc.status != "ready"]
             if not_ready:
@@ -1073,18 +1101,9 @@ def ask_question_stream(
 
     # Validate document
     if payload.document_id:
-        doc = (
-            db.query(Document)
-            .filter(
-                Document.id == payload.document_id,
-                Document.user_id == user.id,
-                Document.is_deleted.is_(False),
-            )
-            .first()
-        )
-
+        doc = _get_active_owned_document(db, user.id, payload.document_id)
         if not doc:
-            raise NotFoundException("Document")
+            _raise_source_unavailable()
 
         if doc.status != "ready":
             progress = getattr(doc, "processing_progress", None)
@@ -1102,20 +1121,9 @@ def ask_question_stream(
 
     # Validate documents if multiple specified
     elif payload.document_ids:
-        docs = (
-            db.query(Document)
-            .filter(
-                Document.id.in_(payload.document_ids),
-                Document.user_id == user.id,
-                Document.is_deleted.is_(False),
-            )
-            .all()
+        docs = _require_active_owned_documents(
+            db, user.id, [str(d) for d in payload.document_ids]
         )
-
-        found_ids = {doc.id for doc in docs}
-        missing = [doc_id for doc_id in payload.document_ids if doc_id not in found_ids]
-        if missing:
-            raise NotFoundException("Document")
 
         not_ready = [doc.original_name for doc in docs if doc.status != "ready"]
         if not_ready:
@@ -1502,11 +1510,14 @@ def export_chat_history(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Export the chat history for a document as a downloadable file."""
+    """Export the chat history for a document as a downloadable file.
+
+    Soft-deleted (trashed) documents remain exportable so conversation history
+    is still available from Trash until permanent purge.
+    """
     doc = db.query(Document).filter(
         Document.id == document_id,
         Document.user_id == user.id,
-        Document.is_deleted.is_(False),
     ).first()
 
     if not doc:

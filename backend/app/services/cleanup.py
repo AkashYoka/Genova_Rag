@@ -17,10 +17,12 @@ _CLEANUP_BATCH_SIZE = 100
 
 
 def _hard_delete_document(db, doc):
-    """Perform the three-step permanent deletion for a single document.
+    """Permanently remove a document's file, vectors, graph, and DB row.
 
-    Wrapped in try/except so that a failure on one document does not block
-    the remaining documents in the batch.
+    Conversation history is independent of the document lifecycle: chat
+    sessions, questions, answers, and citation snapshots are preserved.
+    ``document_id`` FKs on chat/usage rows are cleared (SET NULL) so the
+    document row can be removed without cascading into history.
     """
     doc_id = doc.id
     user_id = doc.user_id
@@ -54,6 +56,25 @@ def _hard_delete_document(db, doc):
             s3_storage.delete_pdf(str(user_id), doc.filename)
     except Exception as e:
         logger.warning("Cleanup: error deleting S3 object for %s: %s", doc_id, e)
+
+    # Detach conversation / usage rows before removing the document so history
+    # survives even when the DB does not enforce ON DELETE SET NULL.
+    try:
+        from app.models import ChatMessage, LLMUsage
+
+        db.query(ChatMessage).filter(ChatMessage.document_id == doc_id).update(
+            {ChatMessage.document_id: None},
+            synchronize_session=False,
+        )
+        db.query(LLMUsage).filter(LLMUsage.document_id == doc_id).update(
+            {LLMUsage.document_id: None},
+            synchronize_session=False,
+        )
+        db.flush()
+    except Exception as e:
+        logger.warning(
+            "Cleanup: error detaching chat/usage refs for %s: %s", doc_id, e
+        )
 
     try:
         db.delete(doc)
