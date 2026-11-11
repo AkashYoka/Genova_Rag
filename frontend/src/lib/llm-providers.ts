@@ -16,7 +16,7 @@ const PRODUCTION_HOSTS = new Set(["rag.genova-ai.yokaiq.in"]);
 
 const ALL_OPTIONS: { value: LlmProviderId; label: string }[] = [
   { value: "ollama", label: "Ollama" },
-  { value: "bedrock", label: "Nova 2 Lite" },
+  { value: "bedrock", label: "Amazon Nova 2 Lite" },
 ];
 
 export function isProductionDeploymentHost(hostname?: string): boolean {

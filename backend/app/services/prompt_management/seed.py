@@ -10,6 +10,7 @@ from app.models import PromptDomain, PromptTemplate, PromptVersion
 from app.services.prompt_management.defaults import (
     DOMAIN_META,
     DOMAIN_SYSTEM_DEFAULTS,
+    DOMAIN_TASK_DEFAULTS,
     domain_overlay_name,
     global_system_default,
     global_task_defaults,
@@ -42,6 +43,7 @@ def _snapshot(db: Session, template: PromptTemplate, note: str, user_id: Optiona
 
 
 _MEDICAL_PV_MARKER = "PHARMACOVIGILANCE / PRESCRIBING CASE ASSESSMENT"
+_MEDICAL_VOICE_MARKER = "CLINICAL VOICE"
 
 
 def _looks_like_stock_short_overlay(content: str) -> bool:
@@ -53,7 +55,7 @@ def _looks_like_stock_short_overlay(content: str) -> bool:
 
 
 def _should_upgrade_medical_overlay(content: str) -> bool:
-    """Upgrade stock medical overlay when it lacks the PV case-assessment block.
+    """Upgrade stock medical overlay when it lacks PV or clinician-voice guidance.
 
     Only upgrades content that still looks like the built-in DOMAIN FOCUS medical
     stub (starts with the stock header and was not clearly customized).
@@ -61,13 +63,15 @@ def _should_upgrade_medical_overlay(content: str) -> bool:
     text = (content or "").strip()
     if not text.startswith("DOMAIN FOCUS — Medical"):
         return False
-    if _MEDICAL_PV_MARKER in text:
-        return False
     # Heuristic: customized prompts usually remove or rewrite the stock header
     # behaviour bullets; require the stock "Never invent clinical guidance" line.
     if "Never invent clinical guidance" not in text:
         return False
-    return True
+    if _MEDICAL_PV_MARKER not in text:
+        return True
+    if _MEDICAL_VOICE_MARKER not in text:
+        return True
+    return False
 
 
 def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) -> None:
@@ -192,8 +196,8 @@ def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) 
             existing_overlay.version = int(existing_overlay.version or 1) + 1
             existing_overlay.is_active = True
             existing_overlay.is_default = True
-            _snapshot(db, existing_overlay, "Medical PV assessment overlay upgrade")
-            logger.info("Upgraded medical domain overlay with PV case assessment")
+            _snapshot(db, existing_overlay, "Medical clinician-voice overlay upgrade")
+            logger.info("Upgraded medical domain overlay with clinician voice / PV assessment")
             continue
         upsert_template(
             domain=domain,
@@ -219,6 +223,52 @@ def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) 
             content=content,
             description=description,
         )
+
+    # Domain-specific task prompts (e.g. medical PV case RAG).
+    for slug, tasks in DOMAIN_TASK_DEFAULTS.items():
+        domain = domain_by_slug.get(slug)
+        if not domain:
+            continue
+        for prompt_type, (name, description, content) in tasks.items():
+            if not (content or "").strip():
+                continue
+            existing = (
+                db.query(PromptTemplate)
+                .filter(
+                    PromptTemplate.domain_id == domain.id,
+                    PromptTemplate.prompt_type == prompt_type,
+                    PromptTemplate.name == name,
+                )
+                .first()
+            )
+            if existing:
+                # Upgrade stock medical RAG/QA when missing PV block or clinician voice.
+                needs_medical_task_upgrade = (
+                    slug == "medical"
+                    and prompt_type in {"rag", "qa"}
+                    and existing.is_default
+                    and (
+                        "Separately classify: Adverse Event" not in (existing.content or "")
+                        or _MEDICAL_VOICE_MARKER not in (existing.content or "")
+                    )
+                )
+                if needs_medical_task_upgrade:
+                    existing.content = content
+                    existing.description = description
+                    existing.version = int(existing.version or 1) + 1
+                    existing.is_active = True
+                    existing.is_default = True
+                    _snapshot(db, existing, "Medical clinician-voice RAG task upgrade")
+                    logger.info("Upgraded medical domain %s task prompt", prompt_type)
+                continue
+            upsert_template(
+                domain=domain,
+                prompt_type=prompt_type,
+                name=name,
+                content=content,
+                description=description,
+                is_default=True,
+            )
 
     db.flush()
 

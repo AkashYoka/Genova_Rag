@@ -379,6 +379,19 @@ def _migrate_schema():
             ref_table="documents",
             constraint_name="fk_llm_usage_document_id",
         )
+        # Session/message deletes must keep usage ledger rows for billing history.
+        _ensure_fk_on_delete_set_null(
+            table="llm_usage",
+            column="session_id",
+            ref_table="chat_sessions",
+            constraint_name="fk_llm_usage_session_id",
+        )
+        _ensure_fk_on_delete_set_null(
+            table="llm_usage",
+            column="message_id",
+            ref_table="chat_messages",
+            constraint_name="fk_llm_usage_message_id",
+        )
 
 
     # Migrate documents — embedding cache tracking

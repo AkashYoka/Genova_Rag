@@ -219,7 +219,7 @@ class Settings(BaseSettings):
     # can override to bedrock in non-production. Production forces Bedrock Nova.
     LLM_PROVIDER: str = "ollama"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    LLM_MODEL: str = "qwen2.5:3b"
+    LLM_MODEL: str = "mistral:7b"
     LLM_MAX_NEW_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.3
     SUMMARY_MAX_TOKENS: int = 512
@@ -441,7 +441,7 @@ class Settings(BaseSettings):
                     self, "CHROMA_PERSIST_DIR", "./data/chroma_db_bedrock_titan_v2"
                 )
 
-        # LLM_MODEL is always the Ollama chat model (default qwen2.5:3b).
+        # LLM_MODEL is always the Ollama chat model (default mistral:7b).
         # Bedrock uses BEDROCK_MODEL_ID via llm_model_for_provider() so the
         # frontend can switch Ollama <-> Nova without poisoning Ollama's model id.
         if "LLM_MODEL" not in os.environ:
@@ -454,7 +454,7 @@ class Settings(BaseSettings):
                 or ("/" in model and not model.startswith("qwen"))
             )
             if not model or looks_like_bedrock:
-                object.__setattr__(self, "LLM_MODEL", "qwen2.5:3b")
+                object.__setattr__(self, "LLM_MODEL", "mistral:7b")
 
         return self
 

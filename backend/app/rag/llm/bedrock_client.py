@@ -50,6 +50,19 @@ class BedrockAuthError(RuntimeError):
 class BedrockProviderError(RuntimeError):
     """Raised for non-auth Bedrock failures with a safe, actionable message."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        http_status: int | None = None,
+        kind: str = "provider_error",
+    ):
+        super().__init__(message)
+        self.code = code
+        self.http_status = http_status
+        self.kind = kind
+
 
 def _optional_bearer_token() -> str:
     """Return AWS_BEARER_TOKEN_BEDROCK when present; otherwise empty (use IAM)."""
@@ -77,19 +90,6 @@ def create_bedrock_runtime_client(region: str, client: Any | None = None) -> Any
     # When absent, boto3 uses the default credential chain (instance/task role).
     _optional_bearer_token()
     return boto3.client("bedrock-runtime", region_name=region)
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: str | None = None,
-        http_status: int | None = None,
-        kind: str = "provider_error",
-    ):
-        super().__init__(message)
-        self.code = code
-        self.http_status = http_status
-        self.kind = kind
 
 
 def estimate_nova2_lite_cost_usd(
@@ -362,10 +362,12 @@ def _aws_error_fields(exc: Exception) -> tuple[str | None, int | None, str | Non
 
 def _token_from_dotenv() -> str:
     """Read AWS_BEARER_TOKEN_BEDROCK from gitignored .env without printing it."""
+    # bedrock_client.py lives at backend/app/rag/llm/ → parents[3]=backend, [4]=repo root
+    here = Path(__file__).resolve()
     candidates = [
         Path.cwd() / ".env",
-        Path(__file__).resolve().parents[2] / ".env",  # backend/.env
-        Path(__file__).resolve().parents[3] / ".env",  # repo root .env
+        here.parents[3] / ".env",  # backend/.env
+        here.parents[4] / ".env",  # repo root .env
     ]
     for path in candidates:
         if not path.is_file():

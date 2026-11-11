@@ -53,5 +53,8 @@ describe("llm-providers", () => {
     expect(llmProviderSelectOptions(resolved.available).map((o) => o.value)).toEqual(
       ["ollama", "bedrock"],
     );
+    expect(llmProviderSelectOptions(resolved.available).map((o) => o.label)).toEqual(
+      ["Ollama", "Amazon Nova 2 Lite"],
+    );
   });
 });

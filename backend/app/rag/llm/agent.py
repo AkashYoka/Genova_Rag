@@ -17,6 +17,7 @@ Common example question (all six files):
 """
 import logging
 import json
+import re
 from typing import List, Dict, Any, Optional, Generator, Tuple
 
 from langchain_classic.agents import create_react_agent, AgentExecutor
@@ -101,6 +102,12 @@ from app.rag.utils.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, 
 from app.rag.utils.tools import PDFSearchTool, MathTool, WebSearchTool
 from app.rag.utils.tracing import trace_function
 from app.rag.utils.keywords import extract_keywords
+from app.rag.generation.structured_lookup import (
+    VerifiedEvidence,
+    attach_verified_evidence,
+    build_verified_evidence,
+    focus_chunks_for_evidence,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -586,6 +593,114 @@ def _multi_doc_prompt_prefix(document_ids: Optional[List[str]], chunks: List[Dic
         MULTI_DOC_COMPARISON_GUIDANCE.strip()
         + f"\nCover each attached document ({name_line}) when the question is broad.\n\n"
     )
+
+
+_STRUCTURED_EVIDENCE_RE = re.compile(
+    r"(?i)\b(table facts:|adverse event|special situation|off[- ]?label|"
+    r"medication error|dose|dosing|dosage)\b"
+)
+
+
+def _finalize_rag_user_prompt(
+    user_prompt: str,
+    *,
+    context: str,
+    question: str,
+    chat_history: Optional[List[Dict[str, Any]]] = None,
+    domain: str = "",
+) -> str:
+    """Append evidence-first reminders and keep document context above prior chat.
+
+    Domain-agnostic table reminder + stronger medical PV reminder when needed.
+    Prior chat is included but explicitly subordinated to current Document Context.
+    """
+    history = _format_chat_history(chat_history) if chat_history else ""
+    prompt = user_prompt
+    reminders: List[str] = []
+    ctx_l = (context or "").lower()
+    q_l = (question or "").lower()
+    if "table lookup evidence" in ctx_l:
+        reminders.append(
+            "TABLE LOOKUP: The Document Context opens with a matched table cell for "
+            "the user's parameters. Use that cell (value and schedule) as the source "
+            "of truth. If it notes a mismatch with a stated value, say so clearly. "
+            "Do not conclude the stated value is correct when the matched cell differs."
+        )
+    elif "table facts:" in ctx_l or re.search(r"(?i)\btable\s+\d+\b", context or ""):
+        reminders.append(
+            "EVIDENCE PRIORITY: The Document Context includes table / Table-facts "
+            "evidence. Match the user's parameters to the correct row/column before "
+            "answering. Prefer that cell over unrelated narrative chunks."
+        )
+    if (domain or "").lower() == "medical" and _STRUCTURED_EVIDENCE_RE.search(q_l):
+        reminders.append(
+            "PV CHECK: Separately assess Adverse Event, Special Situation, Off-label, "
+            "and dose error. A user statement that no adverse event was reported does "
+            "NOT mean the prescribed dose/frequency is appropriate."
+        )
+    if reminders:
+        prompt = f"{prompt}\n\n" + "\n".join(reminders)
+    if history:
+        prompt = (
+            f"{history}\n\n"
+            "---\n"
+            "The Document Context and instructions below are the source of truth. "
+            "If prior chat conclusions conflict with them, follow the Document Context.\n\n"
+            f"{prompt}"
+        )
+    return prompt
+
+
+def _context_with_verified_lookups(
+    question: str,
+    chunks: Optional[List[Dict[str, Any]]],
+    context: str,
+    *,
+    document_ids: Optional[List[str]] = None,
+) -> Tuple[str, Optional[VerifiedEvidence]]:
+    """Focus context on matched table cells; keep a normal LLM-written answer."""
+    if not chunks:
+        return context or "", None
+    try:
+        evidence = build_verified_evidence(question, chunks)
+        if not evidence.has_content:
+            return context or "", None
+        # When a confident cell match exists, do NOT paste the full matrix back
+        # into the prompt — smashed/adjacent rows cause small models to pick the
+        # wrong cell. Keep only the natural lookup brief (+ light narrative).
+        focused = focus_chunks_for_evidence(chunks, evidence, max_extra=2)
+        narrative = [
+            c
+            for c in focused
+            if "table facts:" not in (c.get("text") or "").lower()
+            and not c.get("table_json")
+        ]
+        brief = evidence.format_block()
+        if narrative:
+            focused_ctx = _format_context(narrative[:2])
+            if document_ids:
+                focused_ctx = (
+                    _multi_doc_prompt_prefix(document_ids, narrative[:2]) + focused_ctx
+                )
+            enriched = f"{brief}\n\n{focused_ctx}"
+        else:
+            enriched = brief
+        try:
+            from app.rag.retrieval.rag_debug import current_rag_debug
+
+            trace = current_rag_debug()
+            if trace is not None:
+                trace.notes.append(
+                    f"structured_lookup cells={len(evidence.lookups)} "
+                    f"comparisons={len(evidence.comparisons)} "
+                    f"narrative_chunks={len(narrative)}"
+                )
+        except Exception:
+            pass
+        return enriched, evidence
+    except Exception as exc:
+        logger.warning("Structured lookup failed; continuing without lookup brief: %s", exc)
+        return context or "", None
 
 
 def _format_context(chunks: List[Dict[str, Any]]) -> str:
@@ -1103,6 +1218,7 @@ def _generate_answer_direct(
         if attach_ids
         else None
     )
+    retrieved_chunks: Optional[List[Dict[str, Any]]] = None
     if summarize_pack:
         context, sources = summarize_pack
     else:
@@ -1113,6 +1229,7 @@ def _generate_answer_direct(
             document_ids=document_ids,
             top_k=top_k or settings.TOP_K_RERANK,
         )
+        retrieved_chunks = chunks
         sources = _sources_from_chunks(chunks)
         if not chunks and not graph_evidence:
             # Fall back to session memory when corpus has nothing but history does.
@@ -1140,6 +1257,13 @@ def _generate_answer_direct(
         context = f"{context}{graph_block}"
         sources = _merge_sources(sources, graph_evidence.sources)
 
+    context, _verified_evidence = _context_with_verified_lookups(
+        question,
+        retrieved_chunks,
+        context or "",
+        document_ids=document_ids,
+    )
+
     resolved = _resolve_runtime_prompts(
         question=question,
         user_id=user_id,
@@ -1151,10 +1275,13 @@ def _generate_answer_direct(
         prompt_type="rag",
         session_id=session_id,
     )
-    user_prompt = resolved.format_task(context=context, question=question)
-    history = _format_chat_history(chat_history) if chat_history else ""
-    if history:
-        user_prompt = f"{history}\n\n{user_prompt}"
+    user_prompt = _finalize_rag_user_prompt(
+        resolved.format_task(context=context, question=question),
+        context=context or "",
+        question=question,
+        chat_history=chat_history,
+        domain=getattr(resolved, "domain", "") or "",
+    )
 
     try:
         from app.rag.retrieval.rag_debug import record_prompt_assembly
@@ -1307,6 +1434,7 @@ def _generate_answer_stream_direct(
         if attach_ids
         else None
     )
+    retrieved_chunks: Optional[List[Dict[str, Any]]] = None
     if summarize_pack:
         context, sources = summarize_pack
     else:
@@ -1317,6 +1445,7 @@ def _generate_answer_stream_direct(
             document_ids=document_ids,
             top_k=top_k or settings.TOP_K_RERANK,
         )
+        retrieved_chunks = chunks
         sources = _sources_from_chunks(chunks)
         if not chunks and not graph_evidence:
             if chat_history:
@@ -1351,6 +1480,13 @@ def _generate_answer_stream_direct(
         context = f"{context}{graph_block}"
         sources = _merge_sources(sources, graph_evidence.sources)
 
+    context, _verified_evidence = _context_with_verified_lookups(
+        question,
+        retrieved_chunks,
+        context or "",
+        document_ids=document_ids,
+    )
+
     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
     resolved = _resolve_runtime_prompts(
         question=question,
@@ -1363,10 +1499,13 @@ def _generate_answer_stream_direct(
         prompt_type="rag",
         session_id=session_id,
     )
-    user_prompt = resolved.format_task(context=context, question=question)
-    history = _format_chat_history(chat_history) if chat_history else ""
-    if history:
-        user_prompt = f"{history}\n\n{user_prompt}"
+    user_prompt = _finalize_rag_user_prompt(
+        resolved.format_task(context=context, question=question),
+        context=context or "",
+        question=question,
+        chat_history=chat_history,
+        domain=getattr(resolved, "domain", "") or "",
+    )
 
     provider = normalize_llm_provider(llm_provider)
     try:

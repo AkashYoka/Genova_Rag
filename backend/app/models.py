@@ -558,13 +558,13 @@ class LLMUsage(Base):
     user_id = Column(GUID, ForeignKey("users.id"), nullable=False, index=True)
     session_id = Column(
         GUID,
-        ForeignKey("chat_sessions.id"),
+        ForeignKey("chat_sessions.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     message_id = Column(
         GUID,
-        ForeignKey("chat_messages.id"),
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

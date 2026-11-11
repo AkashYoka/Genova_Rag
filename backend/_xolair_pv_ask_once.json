@@ -1,0 +1,116 @@
+{
+  "answer": "Based on the document context provided, let's analyze the given case parameters against the recommended dosing for XOLAIR:\n\n1. Indication: Asthma (match)\n2. Age/Population: Not specified in the question but XOLAIR is approved for use in patients aged 6 to <12 years and >12 years with asthma [Source: xolair_prescribing.pdf, page 4]\n3. Weight: 78 kg (match) - weight-based dosing is not provided in the document context, but XOLAIR is dosed based on body weight in clinical trials [Source: xolair_prescribing.pdf, page 22]\n4. Pretreatment IgE: 350 IU/mL (not specified in the recommended dosing)\n5. Prescribed Dose: Xolair 150 mg every 4 weeks (match) - this dose is within the range of doses used in clinical trials for asthma patients [Source: xolair_prescribing.pdf, page 22]\n6. Route: Not specified in the question or document context\n7. Frequency: Every 4 weeks (match) - this frequency matches the recommended dosing schedule for XOLAIR [Source: xolair_prescribing.pdf, page 31]\n8. Adverse Event: No adverse event was reported in the user narrative, but anaphylaxis is a known adverse reaction associated with XOLAIR use [Source: xolair_prescribing.pdf, page 17]\n9. Special Situation: Not found based on the provided document context\n10. Off-label use: The patient's age (35 years) is outside the approved age range for XOLAIR in asthma patients [Source: xolair_prescribing.pdf, page 4]\n11. Medication error / inappropriate dose: No medication error or inappropriate dose based on the provided document context and the matched case parameters. However, it's important to note that the patient's age is outside the approved age range for XOLAIR in asthma patients [Source: xolair_prescribing.pdf, page 4]\n\nIn conclusion, while the prescribed dose and frequency are appropriate based on the document context provided, the use of XOLAIR in a 35-year-old patient with allergic asthma is off-label as the approved age range for this indication is 6 to <12 years and >12 years. It's essential to consult the most current prescribing information before administering any medication to ensure safe and appropriate use.\n\n[Source: xolair_prescribing.pdf]",
+  "sources": [
+    {
+      "text": "17 PATIENT COUNSELING INFORMATION\n\nDOSAGE AND ADMINISTRATION\n\n| (IU/mL) | Freq. | 30−60 kg | >60−70 kg |  | >70−90 kg >90−150 kg |\n| --- | --- | --- | --- | --- | --- |\n| ≥30−100 | Every 4 weeks | 150 | 150 |  | 150 300 |\n| >100−200 | Every 4 weeks | 300 | 300 |  | 300 225 |\n| >200−300 | Every 4 wee...",
+      "filename": "xolair_prescribing.pdf",
+      "page": 5,
+      "score": 0.05081985,
+      "confidence": 100.0,
+      "bbox": "",
+      "chunk_type": "table"
+    },
+    {
+      "text": "17 PATIENT COUNSELING INFORMATION\nDOSAGE AND ADMINISTRATION\n\n|  |  |  |  | CRSwNP |  |  |  |  |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n\n| Pretreatment |  |  |  |  |  |  |  |  |\n| Serum IgE |  |  |  |  | Body Weight |  |  |  |\n|  | Dosing |  |  |  |  |  |  |  |\n| (IU/mL) | Dosing |  ...",
+      "filename": "xolair_prescribing.pdf",
+      "page": 7,
+      "score": 0.0480655,
+      "confidence": 94.6,
+      "bbox": "",
+      "chunk_type": "table"
+    },
+    {
+      "text": "17 PATIENT COUNSELING INFORMATION\nDOSAGE AND ADMINISTRATION\n\n| Serum IgE |  |  |  |  |  |  |  | Body Weight (kg) |  |  |  |  |  |  |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n\n| (IU/mL) | Dosing |  |  |  |  |  |  |  |  |  |  |  |  |  |\n|  | Freq. |  ...",
+      "filename": "xolair_prescribing.pdf",
+      "page": 8,
+      "score": 0.04674645,
+      "confidence": 92.0,
+      "bbox": "",
+      "chunk_type": "table"
+    },
+    {
+      "text": "300 mg/2 mL single-dose prefilled autoinjector For injection: 150 mg white lyophilized powder in a single-dose vial for reconstitution\n\n14.2 Chronic Rhinosinusitis with Nasal Polyps\n\n|  |  | Trial1 | Trial2 |\n| --- | --- | --- | --- |\n|  | Placebo | XOLAIR | Placebo XOLAIR |\n| Numberofpatients | 65 ...",
+      "filename": "xolair_prescribing.pdf",
+      "page": 36,
+      "score": 0.04393935000000001,
+      "confidence": 86.5,
+      "bbox": "",
+      "chunk_type": "table"
+    },
+    {
+      "text": "300 mg/2 mL single-dose prefilled autoinjector For injection: 150 mg white lyophilized powder in a single-dose vial for reconstitution\n\n14.3 IgE-Mediated Food Allergy\n\n| Food ChallengeDose , | ResponseRatea(%) (n/N) |  | TreatmentDifference(%) (XOLAIR -Placebo) (95%CI) |\n| --- | --- | --- | --- |\n| ...",
+      "filename": "xolair_prescribing.pdf",
+      "page": 38,
+      "score": 0.04084505000000001,
+      "confidence": 80.4,
+      "bbox": "",
+      "chunk_type": "table"
+    },
+    {
+      "text": "Table 1. Subcutaneous XOLAIR Doses Every 2 or 4 Weeks* for Patients 12 Years of Age and Older with Asthma",
+      "filename": "xolair_prescribing.pdf",
+      "page": 5,
+      "score": 0.0,
+      "confidence": 0.0,
+      "bbox": "",
+      "chunk_type": "paragraph"
+    },
+    {
+      "text": "Figure on page 5\n\nTable 2. Subcutaneous XOLAIR Doses Every 2 or 4 Weeks* for Pediatric Patients with Asthma Who Begin XOLAIR Between the Ages of 6 to <12 Years Body Weight",
+      "filename": "xolair_prescribing.pdf",
+      "page": 5,
+      "score": 0.0,
+      "confidence": 0.0,
+      "bbox": "",
+      "chunk_type": "paragraph"
+    },
+    {
+      "text": "Table 13. Percentage of Patients with Asthma Exacerbations by Subgroup and Phase in Asthma Trial 3",
+      "filename": "xolair_prescribing.pdf",
+      "page": 33,
+      "score": 0.9,
+      "confidence": 90.0,
+      "bbox": "",
+      "chunk_type": null
+    },
+    {
+      "text": "XOLAIR anaphylaxis (57% of 30 cases) compared to controls (23% of 88 controls)",
+      "filename": "xolair_prescribing.pdf",
+      "page": 17,
+      "score": 0.5,
+      "confidence": 50.0,
+      "bbox": "",
+      "chunk_type": null
+    },
+    {
+      "text": "Anaphylaxis Case Control Study A retrospective case-control study investigated risk factors for anaphylaxis to XOLAIR among patients treated with XOLAIR for asthma.",
+      "filename": "xolair_prescribing.pdf",
+      "page": 17,
+      "score": 0.5,
+      "confidence": 50.0,
+      "bbox": "",
+      "chunk_type": null
+    }
+  ],
+  "document_id": "7cb23d1a-0c23-448c-993b-ac64b6ce97ed",
+  "quiz": null,
+  "graph": {
+    "entities": [
+      "XOLAIR",
+      "XOLAIR adverse reactions",
+      "anaphylaxis to XOLAIR",
+      "XOLAIR injection site reactions",
+      "XOLAIR phase reduction",
+      "Asthma Trials 1 and 2",
+      "XOLAIR prefilled autoinjector",
+      "XOLAIR clinical trials",
+      "Table 13",
+      "anaphylaxis",
+      "Anaphylaxis Case Control Study",
+      "Chronic Spontaneous Urticaria"
+    ],
+    "relationship_count": 9,
+    "source_count": 3,
+    "truncated": false
+  }
+}

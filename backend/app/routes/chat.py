@@ -26,7 +26,7 @@ from app.exceptions import (
     ValidationException,
 )
 from app.metrics import record_query_response_time
-from app.models import User, ChatMessage, Document, ChatSession, ResponseFeedback
+from app.models import User, ChatMessage, Document, ChatSession, LLMUsage, ResponseFeedback
 from app.rate_limit import CHAT_QUERY_RATE_LIMIT, check_chat_ws_rate_limit, limiter
 from app.rag.utils.security import UnsafePromptError, validate_user_input
 from app.schemas import (
@@ -727,6 +727,8 @@ def delete_chat_session(
     """Delete a chat session owned by the authenticated user.
 
     Only the session and its messages are removed. Linked documents stay intact.
+    Usage ledger rows keep their cost data but drop session/message FKs so
+    MySQL does not reject the delete with a foreign-key constraint error.
     """
     session = (
         db.query(ChatSession)
@@ -738,8 +740,45 @@ def delete_chat_session(
     )
     if not session:
         raise NotFoundException("Chat session")
-    db.delete(session)
-    db.commit()
+
+    message_ids = [
+        row[0]
+        for row in db.query(ChatMessage.id)
+        .filter(
+            ChatMessage.session_id == session_id,
+            ChatMessage.user_id == user.id,
+        )
+        .all()
+    ]
+
+    # Detach usage ledger refs before ORM cascade deletes messages/session.
+    # Production MySQL FKs on llm_usage.session_id / message_id are RESTRICT
+    # unless the SET NULL migration has already run.
+    db.query(LLMUsage).filter(LLMUsage.session_id == session_id).update(
+        {LLMUsage.session_id: None},
+        synchronize_session=False,
+    )
+    if message_ids:
+        db.query(LLMUsage).filter(LLMUsage.message_id.in_(message_ids)).update(
+            {LLMUsage.message_id: None},
+            synchronize_session=False,
+        )
+
+    try:
+        db.delete(session)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        logger.exception(
+            "Failed to delete chat session %s for user %s due to FK constraint",
+            session_id,
+            user.id,
+        )
+        raise AppException(
+            "SESSION_DELETE_FAILED",
+            "Unable to delete this chat session because related records could not be cleared.",
+            500,
+        ) from None
     return Response(status_code=204)
 
 
