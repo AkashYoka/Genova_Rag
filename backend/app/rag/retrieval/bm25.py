@@ -194,6 +194,7 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
             "ocr_confidence",
             "table_part",
             "table_index",
+            "table_id",
             "layout_metadata",
             "table_json",
             "bbox",

@@ -94,14 +94,24 @@ def _join_lines(lines: Sequence[TextLine]) -> str:
 
 
 def _caption_near(blocks: Sequence[TextBlock], bbox: BBox, page_height: float) -> Optional[TextBlock]:
-    candidates = [
-        block for block in blocks
-        if is_caption_line(block.text)
-        and abs(block.bbox.y0 - bbox.y1) <= max(24.0, page_height * 0.03)
-        and block.bbox.x0 < bbox.x1
-        and block.bbox.x1 > bbox.x0
-    ]
-    return candidates[0] if candidates else None
+    """Nearest caption above or below a table/figure (layout-generic)."""
+    threshold = max(36.0, page_height * 0.06)
+    candidates: List[tuple[float, TextBlock]] = []
+    for block in blocks:
+        if not is_caption_line(block.text):
+            continue
+        if not (block.bbox.x0 < bbox.x1 and block.bbox.x1 > bbox.x0):
+            continue
+        gap = min(
+            abs(block.bbox.y0 - bbox.y1),  # caption below the object
+            abs(bbox.y0 - block.bbox.y1),  # caption above the object
+        )
+        if gap <= threshold:
+            candidates.append((gap, block))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
 
 
 def build_page_elements(

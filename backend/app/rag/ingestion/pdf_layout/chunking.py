@@ -253,10 +253,27 @@ def _chunk_table(
     section: str,
     subsection: str,
 ) -> List[Dict[str, Any]]:
-    table = element.metadata.get("table") or {}
+    table = dict(element.metadata.get("table") or {})
     headers: List[str] = list(table.get("headers") or [])
     rows: List[List[str]] = [list(row) for row in (table.get("rows") or [])]
     caption = table.get("caption") or element.metadata.get("caption") or ""
+    from app.rag.tables.schema import make_table_id
+
+    table_id = str(table.get("table_id") or "").strip() or make_table_id(
+        document_id=document_id or "",
+        page=element.page_start,
+        bbox=table.get("bbox"),
+        headers=headers,
+        rows=rows,
+    )
+    # Every part keeps the COMPLETE table so retrieval can attach the whole
+    # grid even when only one row fragment was hit.
+    complete_table = {
+        **table,
+        "table_id": table_id,
+        "headers": list(headers),
+        "rows": [list(row) for row in rows],
+    }
     header_text = _table_header_text(headers)
     prefix_parts = [part for part in (section, subsection) if part]
     context = "\n".join(prefix_parts)
@@ -276,7 +293,8 @@ def _chunk_table(
                 "section": section,
                 "subsection": subsection,
                 "extraction_method": element.extraction_method,
-                "table_json": json.dumps(table, ensure_ascii=False),
+                "table_id": table_id,
+                "table_json": json.dumps(complete_table, ensure_ascii=False),
                 "layout_metadata": json.dumps({"bboxes": [list(element.bbox.as_tuple())] if element.bbox else []}),
                 **({"document_id": str(document_id)} if document_id else {}),
                 **({"document_name": document_name} if document_name else {}),
@@ -308,7 +326,8 @@ def _chunk_table(
                 "section": section,
                 "subsection": subsection,
                 "extraction_method": element.extraction_method,
-                "table_json": json.dumps(table, ensure_ascii=False),
+                "table_id": table_id,
+                "table_json": json.dumps(complete_table, ensure_ascii=False),
                 "layout_metadata": json.dumps({"bboxes": [list(element.bbox.as_tuple())] if element.bbox else []}),
                 **({"document_id": str(document_id)} if document_id else {}),
                 **({"document_name": document_name} if document_name else {}),
@@ -326,11 +345,14 @@ def _chunk_table(
         if not current:
             return
         part_table = {
-            **table,
-            "headers": headers,
-            "rows": current,
-            "n_rows": len(current) + (1 if headers else 0),
+            **complete_table,
             "part": len(chunks) + 1,
+            "part_row_start": (
+                table.get("rows", []).index(current[0])
+                if current and current[0] in table.get("rows", [])
+                else 0
+            ),
+            "part_row_count": len(current),
         }
         row_markdown = "\n".join(_table_row_markdown(headers, row) for row in current)
         part_facts = render_table_with_facts(
@@ -356,6 +378,7 @@ def _chunk_table(
                 "section": section,
                 "subsection": subsection,
                 "extraction_method": element.extraction_method,
+                "table_id": table_id,
                 "table_json": json.dumps(part_table, ensure_ascii=False),
                 "table_part": len(chunks) + 1,
                 "layout_metadata": json.dumps(

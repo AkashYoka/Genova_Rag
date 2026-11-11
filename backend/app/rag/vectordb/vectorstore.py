@@ -197,6 +197,7 @@ def _chunk_metadata(
         "ocr_confidence",
         "table_part",
         "table_index",
+        "table_id",
     ):
         value = chunk.get(key)
         if value not in (None, ""):
@@ -441,6 +442,7 @@ def query_chunks(
                 "ocr_confidence",
                 "table_part",
                 "table_index",
+                "table_id",
                 "chunk_index",
                 "table_json",
                 "layout_metadata",
@@ -511,6 +513,7 @@ def get_chunks_by_ids(user_id: str, chunk_ids: List[str]) -> List[Dict[str, Any]
             "content_type",
             "extraction_method",
             "chunk_index",
+            "table_id",
             "table_json",
             "layout_metadata",
         ):
@@ -536,6 +539,13 @@ def delete_document_chunks(document_id: str, user_id: str):
         delete_bm25_index(document_id, user_id)
     except Exception as e:
         logger.warning(f"Error deleting BM25 index: {e}")
+
+    try:
+        from app.rag.tables.store import delete_document_tables
+
+        delete_document_tables(user_id=user_id, document_id=document_id)
+    except Exception as e:
+        logger.debug(f"Error deleting table store: {e}")
 
     def _delete_doc_vectors():
         client = get_chroma_client()

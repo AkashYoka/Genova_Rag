@@ -108,6 +108,12 @@ from app.rag.generation.structured_lookup import (
     build_verified_evidence,
     focus_chunks_for_evidence,
 )
+from app.rag.generation.table_interpretation import (
+    TABLE_EVIDENCE_MARKER,
+    TABLE_UNCERTAINTY_MARKER,
+    build_table_context,
+    interpret_table_question,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -619,7 +625,21 @@ def _finalize_rag_user_prompt(
     reminders: List[str] = []
     ctx_l = (context or "").lower()
     q_l = (question or "").lower()
-    if "table lookup evidence" in ctx_l:
+    if "verified table evidence" in ctx_l:
+        reminders.append(
+            "TABLE EVIDENCE: The Document Context contains a table cell selected "
+            "from the complete extracted table and verified against its row, "
+            "column and coordinates. Use that cell as the source of truth. Do not "
+            "substitute a different cell from other excerpts."
+        )
+    elif "table evidence status: uncertain" in ctx_l:
+        reminders.append(
+            "TABLE UNCERTAINTY: A table lookup was attempted but could not be "
+            "verified against the extracted table. Do not guess a row, column or "
+            "value; state that the table evidence is ambiguous or incomplete and "
+            "explain what is missing."
+        )
+    elif "table lookup evidence" in ctx_l:
         reminders.append(
             "TABLE LOOKUP: The Document Context opens with a matched table cell for "
             "the user's parameters. Use that cell (value and schedule) as the source "
@@ -651,23 +671,125 @@ def _finalize_rag_user_prompt(
     return prompt
 
 
+def _chunk_looks_like_table(chunk: Dict[str, Any]) -> bool:
+    chunk_type = str(chunk.get("chunk_type") or chunk.get("content_type") or "").lower()
+    if chunk_type == "table":
+        return True
+    return bool(
+        chunk.get("table_json")
+        or chunk.get("complete_table")
+        or chunk.get("complete_tables")
+    )
+
+
+def _record_table_trace(interpretation: Any, narrative_count: int) -> None:
+    try:
+        from app.rag.retrieval.rag_debug import current_rag_debug
+
+        trace = current_rag_debug()
+        if trace is not None:
+            trace.notes.append(
+                f"table_interpretation status={interpretation.status} "
+                f"tables={len(interpretation.records)} "
+                f"selected_table={interpretation.table_id or '-'} "
+                f"cell={interpretation.cell_id or '-'} "
+                f"value={interpretation.value or '-'} "
+                f"reason={interpretation.reason or '-'} "
+                f"narrative_chunks={narrative_count}"
+            )
+    except Exception:
+        pass
+
+
 def _context_with_verified_lookups(
     question: str,
     chunks: Optional[List[Dict[str, Any]]],
     context: str,
     *,
     document_ids: Optional[List[str]] = None,
+    llm_provider: Optional[str] = None,
 ) -> Tuple[str, Optional[VerifiedEvidence]]:
-    """Focus context on matched table cells; keep a normal LLM-written answer."""
+    """Interpret complete tables with the LLM, then validate the selection.
+
+    The complete grids stay in the prompt. A model-selected cell is only
+    presented as evidence after it validates against the extracted table; if it
+    cannot be proven, an explicit uncertainty block replaces any guessed value.
+    """
     if not chunks:
         return context or "", None
+
+    narrative_chunks = [
+        chunk for chunk in chunks if not _chunk_looks_like_table(chunk)
+    ][:2]
+    narrative_context = _format_context(narrative_chunks) if narrative_chunks else ""
+    if document_ids and narrative_chunks:
+        narrative_context = (
+            _multi_doc_prompt_prefix(document_ids, narrative_chunks)
+            + narrative_context
+        )
+
+    interpretation = None
+    if getattr(settings, "TABLE_INTERPRETATION_ENABLED", True):
+        try:
+            provider = llm_provider
+            model_name: Optional[str] = None
+            try:
+                provider = normalize_llm_provider(llm_provider)
+                model_name = llm_model_for_provider(provider)
+            except Exception:
+                model_name = getattr(settings, "LLM_MODEL", "") or None
+            interpretation = interpret_table_question(
+                question,
+                chunks,
+                model=model_name,
+                llm_provider=provider,
+                max_tables=int(getattr(settings, "TABLE_MAX_CANDIDATES", 3) or 3),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Table interpretation failed; using deterministic lookup: %s", exc
+            )
+            interpretation = None
+
+    if interpretation is not None:
+        blocks: List[str] = []
+        if interpretation.status != "not_applicable":
+            blocks.append(interpretation.format_block())
+        complete_tables = build_table_context(interpretation.records)
+        if complete_tables:
+            blocks.append(complete_tables)
+        if narrative_context:
+            blocks.append(narrative_context)
+        enriched = "\n\n".join(block for block in blocks if block).strip()
+        if enriched:
+            _record_table_trace(interpretation, len(narrative_chunks))
+            logger.info(
+                "TABLE_FLOW %s",
+                json.dumps(
+                    {
+                        "event": "answer_context_built",
+                        "status": interpretation.status,
+                        "table_ids": [
+                            record.table_id for record in interpretation.records
+                        ],
+                        "selected_cell": interpretation.cell_id,
+                        "selected_value": interpretation.value,
+                        "context_chars": len(enriched),
+                        "tables_in_context": len(interpretation.records),
+                        "narrative_chunks": len(narrative_chunks),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            return enriched, None
+
+    # Fallback used only when the interpretation model could not be invoked
+    # (disabled, no client, transport failure): keep the legacy brief but retain
+    # the deterministic evidence object for callers/tests.
     try:
         evidence = build_verified_evidence(question, chunks)
         if not evidence.has_content:
             return context or "", None
-        # When a confident cell match exists, do NOT paste the full matrix back
-        # into the prompt — smashed/adjacent rows cause small models to pick the
-        # wrong cell. Keep only the natural lookup brief (+ light narrative).
         focused = focus_chunks_for_evidence(chunks, evidence, max_extra=2)
         narrative = [
             c
@@ -685,18 +807,21 @@ def _context_with_verified_lookups(
             enriched = f"{brief}\n\n{focused_ctx}"
         else:
             enriched = brief
-        try:
-            from app.rag.retrieval.rag_debug import current_rag_debug
-
-            trace = current_rag_debug()
-            if trace is not None:
-                trace.notes.append(
-                    f"structured_lookup cells={len(evidence.lookups)} "
-                    f"comparisons={len(evidence.comparisons)} "
-                    f"narrative_chunks={len(narrative)}"
-                )
-        except Exception:
-            pass
+        _record_table_trace(
+            type(
+                "EvidenceTrace",
+                (),
+                {
+                    "status": "deterministic_fallback",
+                    "records": [],
+                    "table_id": "",
+                    "cell_id": "",
+                    "value": evidence.lookups[0].value if evidence.lookups else "",
+                    "reason": "",
+                },
+            )(),
+            len(narrative),
+        )
         return enriched, evidence
     except Exception as exc:
         logger.warning("Structured lookup failed; continuing without lookup brief: %s", exc)
@@ -1262,6 +1387,7 @@ def _generate_answer_direct(
         retrieved_chunks,
         context or "",
         document_ids=document_ids,
+        llm_provider=llm_provider,
     )
 
     resolved = _resolve_runtime_prompts(
@@ -1485,6 +1611,7 @@ def _generate_answer_stream_direct(
         retrieved_chunks,
         context or "",
         document_ids=document_ids,
+        llm_provider=llm_provider,
     )
 
     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"

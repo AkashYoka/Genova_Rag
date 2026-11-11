@@ -226,6 +226,34 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             on_progress=_on_embed_progress,
         )
 
+        # Persist complete tables AFTER store_chunks(): re-indexing clears the
+        # document's previous chunks and table store first. A failure here must
+        # not lose the document; chunk-level table_json remains a fallback.
+        try:
+            from app.rag.tables.store import save_tables_from_chunks
+
+            stored_table_ids = save_tables_from_chunks(
+                document_id=document_id,
+                user_id=user_id,
+                filename=original_name,
+                chunks=chunks,
+            )
+            logger.info(
+                "TABLE_FLOW %s",
+                {
+                    "event": "ingestion_tables_persisted",
+                    "document_id": document_id,
+                    "tables": len(stored_table_ids),
+                    "table_ids": stored_table_ids,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not persist complete tables for document %s: %s",
+                document_id,
+                exc,
+            )
+
         persist_document_keywords(doc, chunks, db)
 
         doc.processing_progress = 92

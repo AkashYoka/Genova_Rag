@@ -699,6 +699,13 @@ def retrieve(
                     chunk["score"] = round(chunk["rerank_score"], 4)
                     del chunk["rerank_score"]
 
+        try:
+            from app.rag.tables.store import attach_complete_tables
+
+            selected = attach_complete_tables(selected, user_id=user_id)
+        except Exception as exc:
+            logger.warning("Complete-table attachment failed: %s", exc)
+
         selected = _exclude_soft_deleted_chunks(selected, user_id)
 
         from app.observability import chunks_retrieved_var
@@ -794,6 +801,15 @@ def retrieve(
             window=int(getattr(settings, "RAG_ADJACENT_CHUNK_WINDOW", 1) or 1),
             final_cap=max(final_k + 2, final_k),
         )
+
+    # Attach the complete source table for every table-referencing hit, so a
+    # caption/row fragment never reaches the model without its full grid.
+    try:
+        from app.rag.tables.store import attach_complete_tables
+
+        top_chunks = attach_complete_tables(top_chunks, user_id=user_id)
+    except Exception as exc:
+        logger.warning("Complete-table attachment failed: %s", exc)
 
     # ── Confidence normalisation ──────────────────────────────────────────────
     if top_chunks:
