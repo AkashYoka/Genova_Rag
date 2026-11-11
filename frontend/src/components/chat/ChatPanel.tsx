@@ -1396,7 +1396,7 @@ export default function ChatPanel({
                   onChange={(e) =>
                     setLlmProvider(e.target.value as LlmProviderId)
                   }
-                  className="h-8 max-w-[12.5rem] cursor-pointer appearance-none rounded-md bg-transparent py-0 pr-6 pl-7 text-xs font-medium text-[var(--gd-muted)] outline-none transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-8 max-w-[9.3rem] cursor-pointer appearance-none rounded-md bg-transparent py-0 pr-6 pl-7 text-xs font-medium text-[var(--gd-muted)] outline-none transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label="LLM provider"
                 >
                   {llmProviderSelectOptions(availableLlmProviders).map(
