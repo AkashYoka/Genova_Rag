@@ -12,13 +12,13 @@ Caller: ``agent._generate_answer_direct`` / ``_generate_answer_stream_direct``
   retrieve(query=question, user_id=..., document_id=..., top_k=TOP_K_RERANK or None)
 
 Common example question:
-  "Does the XOLAIR prescribing label recommend every-2-week dosing for
-   chronic spontaneous urticaria (CSU)?"
+  "According to the dosing schedule table, what value applies for the
+   stated patient parameters?"
 """
 import json
 import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 
 from app.config import get_settings
 from app.rag.embeddings.embeddings import embed_query
@@ -74,11 +74,10 @@ def _exclude_soft_deleted_chunks(
     ]
 
 _EX_Q = (
-    "Does the XOLAIR prescribing label recommend every-2-week dosing for "
-    "chronic spontaneous urticaria (CSU)?"
+    "According to the schedule table, what value applies for the stated parameters?"
 )
-_EX_USER = "f3d989fb-79af-4fe2-9360-12b06772348c"
-_EX_DOC = "8c57d30c-9568-4437-b51f-b52d9ac495d1"
+_EX_USER = "user-id"
+_EX_DOC = "document-id"
 
 
 # ── RRF core ─────────────────────────────────────────────────────────────────
@@ -98,8 +97,8 @@ def rrf_merge(
 
     Exact example (ILLUSTRATIVE ranks; k=60 verified default)
     ---------------------------------------------------------
-    vector_results[0] = CSU every-4-weeks chunk (id=..._42)  # rank 1
-    bm25_results[2]   = same id                               # rank 3
+    vector_results[0] = schedule-table chunk (id=..._42)  # rank 1
+    bm25_results[2]   = same id                           # rank 3
     rrf = 1/(60+1) + 1/(60+3) ≈ 0.016393 + 0.015873 ≈ 0.032266
     OUT chunk includes ``rrf_score`` rounded to 6 decimals.
 
@@ -143,6 +142,60 @@ def rrf_merge(
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
+# Domain-agnostic: questions that typically need a table / schedule / matrix.
+_STRUCTURED_LOOKUP_RE = re.compile(
+    r"(?i)\b("
+    r"table|chart|grid|matrix|schedule|frequency|rate|amount|total|"
+    r"dose|dosing|dosage|parameter|threshold|limit|range|"
+    r"off[- ]?label|special\s+situation|adverse\s+event|prescrib|"
+    r"medication\s+error|indication|body\s*weight|"
+    r"every\s+\d+\s+(?:weeks?|days?|hours?|months?)"
+    r")\b"
+)
+_STRUCTURED_UNIT_RE = re.compile(
+    r"(?i)\b\d+(?:\.\d+)?\s*(?:mg|kg|g|ml|l|%|\$|usd|eur|inr|"
+    r"weeks?|days?|hours?|hrs?|months?|iu/?mL|ppm|mhz|ghz|gb|mb)\b"
+)
+_QUERY_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{3,}", re.I)
+_QUERY_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "for", "with", "from", "that",
+    "this", "these", "those", "what", "which", "when", "where", "how",
+    "why", "does", "did", "have", "has", "was", "were", "please", "check",
+    "below", "content", "according", "using", "into", "about", "your",
+    "you", "any", "some", "all", "based", "should", "would", "could",
+}
+
+
+def _query_content_tokens(text: str) -> Set[str]:
+    return {
+        t.lower()
+        for t in _QUERY_TOKEN_RE.findall(text or "")
+        if t.lower() not in _QUERY_STOPWORDS
+    }
+
+
+def _structured_table_query_variants(query: str) -> List[str]:
+    """Deterministic variants that prioritize tables/schedules for lookup asks.
+
+    Domain-agnostic: no product names, indications, or lab assays. Surfaces
+    numeric+unit tokens from the question so BM25 can hit matching cells.
+    """
+    q = query.strip()
+    if not q or not _STRUCTURED_LOOKUP_RE.search(q):
+        return []
+    variants: List[str] = [
+        "recommended values table chart schedule parameters",
+        "lookup table row column matching criteria",
+    ]
+    nums = _STRUCTURED_UNIT_RE.findall(q)
+    if nums:
+        variants.append("table " + " ".join(nums[:6]))
+    topic_tokens = sorted(_query_content_tokens(q))[:8]
+    if topic_tokens:
+        variants.append("table " + " ".join(topic_tokens))
+    return variants
+
+
 def transform_query(query: str) -> List[str]:
     """Expand one question into ≤ MAX_QUERY_VARIANTS (4) search strings.
 
@@ -155,9 +208,9 @@ def transform_query(query: str) -> List[str]:
     ILLUSTRATIVE OUT (paraphrases depend on live LLM; shapes only):
       [
         _EX_Q,
-        "XOLAIR CSU dosing interval every two weeks vs label",
-        "chronic spontaneous urticaria omalizumab recommended frequency",
-        "Does prescribing information allow biweekly XOLAIR for CSU",
+        "recommended values table chart schedule parameters",
+        "lookup table row column matching criteria",
+        "<LLM paraphrase>",
       ]
 
     Fallback: LLM exception → log warning; generated=[]; return [original] only.
@@ -169,13 +222,19 @@ def transform_query(query: str) -> List[str]:
     if not original_query:
         return []
 
+    structured_variants = _structured_table_query_variants(original_query)
+
     try:
         generated_queries = _generate_query_variants(original_query)
     except Exception as e:
         logger.warning("Query transformation failed, using original query only: %s", e)
         generated_queries = []
 
-    return _dedupe_queries([original_query, *generated_queries])[:MAX_QUERY_VARIANTS]
+    # Prefer deterministic table-oriented variants ahead of LLM paraphrases so
+    # narrative chunks do not crowd out the matching schedule/matrix.
+    return _dedupe_queries(
+        [original_query, *structured_variants, *generated_queries]
+    )[:MAX_QUERY_VARIANTS]
 
 
 def _generate_query_variants(query: str) -> List[str]:
@@ -200,7 +259,7 @@ def _generate_query_variants(query: str) -> List[str]:
     → _parse_query_variants(content)[:3]
 
     ILLUSTRATIVE model output string:
-      '["XOLAIR CSU every 2 weeks dosing?", "...", "..."]'
+      '["schedule table lookup?", "...", "..."]'
 
     Fallback: no choices / bad parse → fewer or empty variants (original still kept).
     """
@@ -343,6 +402,144 @@ def _merge_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return list(merged.values())
 
 
+def _chunk_index_from_id(chunk_id: Any) -> Optional[int]:
+    if chunk_id is None:
+        return None
+    text = str(chunk_id)
+    if "_" not in text:
+        return None
+    tail = text.rsplit("_", 1)[-1]
+    if tail.isdigit():
+        return int(tail)
+    return None
+
+
+def _needs_adjacent_expansion(chunk: Dict[str, Any]) -> bool:
+    chunk_type = str(chunk.get("chunk_type") or chunk.get("content_type") or "").lower()
+    if chunk_type == "table":
+        return True
+    text = str(chunk.get("text") or "")
+    if re.search(r"(?i)\btable\s+\d+\b", text):
+        return True
+    if "table facts:" in text.lower():
+        return True
+    return False
+
+
+def _boost_table_candidates(
+    query: str,
+    candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Prefer table / Table-facts chunks for structured lookup questions.
+
+    Domain-agnostic: when the query looks like a table/schedule/parameter
+    lookup, boost any table (or linearized ``Table facts:`` block). Extra
+    weight when the table text shares content tokens with the query so the
+    relevant matrix outranks unrelated narrative paragraphs.
+    """
+    if not candidates or not _STRUCTURED_LOOKUP_RE.search(query or ""):
+        return candidates
+
+    q_tokens = _query_content_tokens(query or "")
+    boosted: List[Dict[str, Any]] = []
+    for chunk in candidates:
+        item = dict(chunk)
+        text = str(item.get("text") or "")
+        text_l = text.lower()
+        chunk_type = str(
+            item.get("chunk_type") or item.get("content_type") or ""
+        ).lower()
+        score = float(item.get("score") or 0)
+        factor = 1.0
+        is_table = chunk_type == "table" or "table facts:" in text_l
+        if is_table:
+            factor += 0.35
+        if re.search(r"(?i)\btable\s+\d+\b", text) and re.search(
+            r"(?i)dose|dosing|schedule|frequency|amount|rate|weight|"
+            r"every\s+\d+\s+(?:weeks?|days?|hours?|months?)",
+            text,
+        ):
+            factor += 0.25
+        if is_table and q_tokens:
+            overlap = len(q_tokens & _query_content_tokens(text))
+            if overlap >= 2:
+                factor += 0.2
+            elif overlap == 1:
+                factor += 0.1
+        if factor > 1.0:
+            item["score"] = score * factor
+            item["boost_reason"] = "structured_table"
+        boosted.append(item)
+    return boosted
+
+
+def _expand_adjacent_chunks(
+    selected: List[Dict[str, Any]],
+    *,
+    user_id: str,
+    window: int,
+    final_cap: int,
+) -> List[Dict[str, Any]]:
+    """Include neighboring chunk_index hits for tables / Table-N references.
+
+    Uses already-retrieved candidate metadata when present; otherwise fetches
+    adjacent ids from the vector store by reconstructed chunk id.
+    """
+    if not selected or window <= 0:
+        return selected
+
+    from app.rag.vectordb.vectorstore import get_chunks_by_ids
+
+    existing_ids = {str(c.get("id")) for c in selected if c.get("id")}
+    to_fetch: List[str] = []
+    for chunk in selected:
+        if not _needs_adjacent_expansion(chunk):
+            continue
+        doc_id = chunk.get("document_id")
+        idx = chunk.get("chunk_index")
+        if idx is None:
+            idx = _chunk_index_from_id(chunk.get("id"))
+        if doc_id is None or idx is None:
+            continue
+        try:
+            idx_i = int(idx)
+        except (TypeError, ValueError):
+            continue
+        for offset in range(-window, window + 1):
+            if offset == 0:
+                continue
+            neighbor_id = f"{doc_id}_{idx_i + offset}"
+            if neighbor_id not in existing_ids:
+                to_fetch.append(neighbor_id)
+                existing_ids.add(neighbor_id)
+
+    if not to_fetch:
+        return selected
+
+    try:
+        neighbors = get_chunks_by_ids(user_id=user_id, chunk_ids=to_fetch)
+    except Exception as exc:
+        logger.debug("Adjacent chunk expansion skipped: %s", exc)
+        return selected
+
+    # Keep original ranking; append neighbors until cap.
+    out = list(selected)
+    seen = {str(c.get("id")) for c in out if c.get("id")}
+    for neighbor in neighbors:
+        nid = str(neighbor.get("id") or "")
+        if not nid or nid in seen:
+            continue
+        # Slightly down-rank neighbors so primary hits stay first.
+        neighbor = dict(neighbor)
+        neighbor["score"] = float(neighbor.get("score") or 0) * 0.85
+        neighbor.setdefault("confidence", 0)
+        out.append(neighbor)
+        seen.add(nid)
+        if len(out) >= max(final_cap, len(selected)):
+            break
+    return out[: max(final_cap, len(selected))]
+
+
 # ── Main retrieval pipeline ───────────────────────────────────────────────────
 
 @trace_function(
@@ -374,15 +571,15 @@ def retrieve(
       user_id=_EX_USER,
       document_id=_EX_DOC,
       document_ids=None,
-      top_k=settings.TOP_K_RERANK,  # 8 passed as retrieval width from agent
+      top_k=settings.TOP_K_RERANK,  # final slice only; stage-1 width is TOP_K_RETRIEVAL
     )
-    Note: agent passes ``top_k or settings.TOP_K_RERANK``. If top_k is 8,
-    ``effective_top_k`` for Chroma/BM25 is 8 (not 20). If caller omits top_k
-    (None), effective_top_k = TOP_K_RETRIEVAL (20).
+    Note: agent passes ``top_k or settings.TOP_K_RERANK`` as the *final* count.
+    Stage-1 Chroma/BM25 always uses ``TOP_K_RETRIEVAL`` (20) so dosing tables
+    can enter the candidate pool before prescribing-table boost + final slice.
 
     Stage 1 per search_query in transform_query(query):
       query_vector = embed_query(search_query)
-      vector_results = query_chunks(..., top_k=effective_top_k)
+      vector_results = query_chunks(..., top_k=TOP_K_RETRIEVAL)
       if USE_HYBRID_SEARCH:
         bm25_results = query_bm25(...)  # except → [] + warning
         merged = rrf_merge(..., k=RRF_K); score = pop rrf_score
@@ -404,7 +601,7 @@ def retrieve(
     [{
       "id": "..._42",
       "text": "... every 4 weeks ...",
-      "filename": "xolair_prescribing.pdf",
+      "filename": "document.pdf",
       "document_id": "...",
       "page": 9,
       "score": 0.0323,       # RRF or rerank
@@ -515,12 +712,21 @@ def retrieve(
         )
         return selected
 
-    effective_top_k = top_k if top_k is not None else settings.TOP_K_RETRIEVAL
+    # Stage 1 always gathers a wide candidate pool. ``top_k`` only controls the
+    # final slice after boost/rerank (agent typically passes TOP_K_RERANK=8).
+    stage1_top_k = max(int(settings.TOP_K_RETRIEVAL or 20), int(top_k or 0))
 
     # ── Stage 1: Hybrid retrieval with query transformation ───────────────────
     all_candidates: List[Dict[str, Any]] = []
+    search_queries = transform_query(query)
+    try:
+        from app.rag.retrieval.rag_debug import record_rewrites
 
-    for search_query in transform_query(query):
+        record_rewrites(search_queries)
+    except Exception:
+        pass
+
+    for search_query in search_queries:
         query_vector = embed_query(search_query)
 
         # Vector results (always)
@@ -529,7 +735,7 @@ def retrieve(
             user_id=user_id,
             document_id=document_id,
             document_ids=document_ids,
-            top_k=effective_top_k,
+            top_k=stage1_top_k,
         )
 
         if settings.USE_HYBRID_SEARCH:
@@ -540,7 +746,7 @@ def retrieve(
                     user_id=user_id,
                     document_id=document_id,
                     document_ids=document_ids,
-                    top_k=effective_top_k,
+                    top_k=stage1_top_k,
                 )
             except Exception as exc:
                 logger.warning("BM25 retrieval failed, using vector-only: %s", exc)
@@ -563,11 +769,13 @@ def retrieve(
         return []
 
     candidates = _merge_candidates(all_candidates)
+    candidates = _boost_table_candidates(query, candidates)
 
     # ── Stage 2: Cross-encoder reranking ─────────────────────────────────────
     final_k = top_k if top_k is not None else settings.TOP_K_RERANK
     reranker = get_reranker()
 
+    rerank_enabled = reranker is not None
     if reranker is not None:
         top_chunks = reranker.rerank(
             query=query,
@@ -577,6 +785,15 @@ def retrieve(
     else:
         candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
         top_chunks = candidates[:final_k]
+
+    # Expand table / Table-N hits with neighboring chunks for complete grids.
+    if getattr(settings, "RAG_EXPAND_ADJACENT_CHUNKS", True):
+        top_chunks = _expand_adjacent_chunks(
+            top_chunks,
+            user_id=user_id,
+            window=int(getattr(settings, "RAG_ADJACENT_CHUNK_WINDOW", 1) or 1),
+            final_cap=max(final_k + 2, final_k),
+        )
 
     # ── Confidence normalisation ──────────────────────────────────────────────
     if top_chunks:
@@ -597,6 +814,19 @@ def retrieve(
 
     from app.observability import chunks_retrieved_var
     chunks_retrieved_var.set(len(top_chunks))
+    try:
+        from app.rag.retrieval.rag_debug import record_retrieval
+
+        method = "hybrid_rrf" if settings.USE_HYBRID_SEARCH else "vector"
+        if rerank_enabled:
+            method = f"{method}+rerank"
+        record_retrieval(
+            method=method,
+            chunks=top_chunks,
+            rerank_enabled=rerank_enabled,
+        )
+    except Exception:
+        pass
     logger.info(
         "Retrieved %d relevant chunks for query: '%s'",
         len(top_chunks),
@@ -623,13 +853,15 @@ def retrieve(
 #
 #    for each search_query:
 #      embed_query(search_query)           → List[float] dim 768
-#      query_chunks(..., top_k=8)          → semantic hits
-#      query_bm25(..., top_k=8)            → lexical hits
+#      query_chunks(..., top_k=TOP_K_RETRIEVAL)  → semantic hits
+#      query_bm25(..., top_k=TOP_K_RETRIEVAL)    → lexical hits
 #      rrf_merge(..., k=60)                → rrf_score → renamed score
 #
 #    _merge_candidates(all_candidates)
+#    _boost_table_candidates(...)
 #    get_reranker() → None
-#    sort by score; top_chunks = candidates[:8]
+#    sort by score; top_chunks = candidates[:final_k]  # final_k = top_k or 8
+#    optional adjacent expand for table hits
 #    confidence % relative to max score
 #
 # C. Before → after (compact)
@@ -640,8 +872,9 @@ def retrieve(
 #      → BM25 results (list[dict] raw BM25 score)
 #      → RRF merge (rrf_score / score)
 #      → deduplication (_merge_candidates)
+#      → structured-table boost (domain-agnostic lookup queries)
 #      → reranking SKIPPED (RERANKER_ENABLED=False)
-#      → final chunks ≤8 with confidence
+#      → final chunks ≤8 with confidence (+ adjacent expand)
 #
 # D. Verified vs illustrative
 #    VERIFIED: TOP_K_*, RRF_K, USE_HYBRID_SEARCH, RERANKER_ENABLED=False,

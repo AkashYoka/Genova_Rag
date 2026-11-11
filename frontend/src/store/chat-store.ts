@@ -22,6 +22,8 @@ export interface SourceChunk {
   /** JSON bbox string from the API (`[[x0,y0,x1,y1], ...]` normalized). */
   bbox?: string | null;
   highlightRects?: SourceBoundingBox[];
+  /** Layout/content kind from retrieval: table, paragraph, list, heading, … */
+  chunk_type?: string | null;
 }
 
 export interface LlmUsage {

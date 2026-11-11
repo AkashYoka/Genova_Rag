@@ -163,6 +163,12 @@ class Settings(BaseSettings):
     # ── Hybrid Search / RRF ───────────────────────────────
     USE_HYBRID_SEARCH: bool = True   # set to False to fall back to vector-only
     RRF_K: int = 60                  # RRF rank constant; 60 is the standard default
+    # Pull neighboring chunks when a hit is a table or references Table N.
+    RAG_EXPAND_ADJACENT_CHUNKS: bool = True
+    RAG_ADJACENT_CHUNK_WINDOW: int = 1
+    # Per-query RAG debug payload (redacted by default).
+    RAG_DEBUG_ENABLED: bool = False
+    RAG_DEBUG_REDACT: bool = True
 
     # ── Knowledge Graph (GraphRAG) ───────────────────────
     GRAPH_PERSIST_DIR: str = "./data/graphs"

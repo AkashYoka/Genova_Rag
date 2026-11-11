@@ -29,7 +29,7 @@ DOMAIN_ALIASES: Dict[str, frozenset[str]] = {
 }
 
 _FILENAME_DOMAIN_HINTS: List[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"avastin|xolair|prescrib|ndc|bevacizumab|omalizumab", re.I), "medical"),
+    (re.compile(r"prescrib|ndc|dosage|contraindic|anaphylaxis|pharmac", re.I), "medical"),
     (re.compile(r"invoice|igst|cgst|sgst|vendor|gst|tds|payment", re.I), "payment"),
     (re.compile(r"graph\d|graphrag|arxiv|survey|paper", re.I), "research"),
     (re.compile(r"roadmap|engineer|api[_-]?doc|sdk|readme", re.I), "technical"),
@@ -166,11 +166,10 @@ def _question_domain_hints(question: str, allowed: Sequence[str]) -> List[str]:
         "adverse",
         "anaphylaxis",
         "prescribing",
-        "avastin",
-        "xolair",
-        "bevacizumab",
-        "omalizumab",
+        "pharmacovigilance",
         "mg/kg",
+        "off-label",
+        "special situation",
     )
     research_toks = (
         "graphrag",
@@ -357,9 +356,9 @@ def _heuristic_domain(
         # Question clearly points at another attached-compatible domain.
         cross = {
             "medical": ("invoice", "igst", "cgst", "payment due", "taxable"),
-            "payment": ("dosage", "contraindication", "anaphylaxis", "avastin", "xolair"),
-            "finance": ("dosage", "contraindication", "anaphylaxis", "avastin", "xolair"),
-            "education": ("invoice total", "igst", "bevacizumab"),
+            "payment": ("dosage", "contraindication", "anaphylaxis", "off-label"),
+            "finance": ("dosage", "contraindication", "anaphylaxis", "off-label"),
+            "education": ("invoice total", "igst", "contraindication"),
             "research": ("invoice", "dosage mg"),
             "technical": ("invoice", "contraindication"),
         }

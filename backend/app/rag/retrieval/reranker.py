@@ -10,8 +10,8 @@ When disabled (default Ollama setup), ``retriever.retrieve`` sorts by RRF
 ``score`` and slices ``[:TOP_K_RERANK]`` — this file is not invoked.
 
 Common example question:
-  "Does the XOLAIR prescribing label recommend every-2-week dosing for
-   chronic spontaneous urticaria (CSU)?"
+  "According to the schedule table, what value applies for the
+   stated parameters?"
 """
 
 import logging
@@ -25,8 +25,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _EX_Q = (
-    "Does the XOLAIR prescribing label recommend every-2-week dosing for "
-    "chronic spontaneous urticaria (CSU)?"
+    "According to the schedule table, what value applies for the "
+    "stated parameters?"
 )
 
 
@@ -92,7 +92,7 @@ class Reranker:
         -----------------------------------------------
         query = _EX_Q
         documents = [
-          {"text": "... CSU ... every 4 weeks ...", "page": 9, "score": 0.031},
+          {"text": "... schedule ... every 4 weeks ...", "page": 9, "score": 0.031},
           {"text": "... asthma dosing table ...", "page": 5, "score": 0.028},
         ]
         pairs = [

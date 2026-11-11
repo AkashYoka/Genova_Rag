@@ -9,10 +9,98 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronUp, FileText, Eye, TextQuote } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Eye,
+  TextQuote,
+  Table2,
+  AlignLeft,
+  List,
+  Heading2,
+  Image as ImageIcon,
+  Captions,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const EXCERPT_THRESHOLD = 200;
+
+type LayoutKind =
+  | "table"
+  | "paragraph"
+  | "list"
+  | "heading"
+  | "figure"
+  | "caption"
+  | "summary"
+  | "other";
+
+const LAYOUT_LABELS: Record<LayoutKind, string> = {
+  table: "Table",
+  paragraph: "Paragraph",
+  list: "List",
+  heading: "Heading",
+  figure: "Figure",
+  caption: "Caption",
+  summary: "Summary",
+  other: "Block",
+};
+
+const normalizeLayoutKind = (value?: string | null): LayoutKind => {
+  const raw = (value || "").trim().toLowerCase().replace(/[-\s]+/g, "_");
+  if (!raw) return "paragraph";
+  if (raw === "text" || raw === "para" || raw === "paragraphs") return "paragraph";
+  if (raw === "table" || raw === "tables" || raw === "table_row") return "table";
+  if (raw === "list" || raw === "list_item" || raw === "bullet") return "list";
+  if (raw === "heading" || raw === "header") return "heading";
+  if (raw === "figure" || raw === "figure_caption" || raw === "image" || raw === "img") {
+    return "figure";
+  }
+  if (raw === "caption") return "caption";
+  if (raw === "summary") return "summary";
+  if (
+    (Object.keys(LAYOUT_LABELS) as LayoutKind[]).includes(raw as LayoutKind)
+  ) {
+    return raw as LayoutKind;
+  }
+  return "other";
+};
+
+const LayoutIcon = ({ kind }: { kind: LayoutKind }) => {
+  const className = "h-3 w-3";
+  switch (kind) {
+    case "table":
+      return <Table2 className={className} />;
+    case "list":
+      return <List className={className} />;
+    case "heading":
+      return <Heading2 className={className} />;
+    case "figure":
+      return <ImageIcon className={className} />;
+    case "caption":
+      return <Captions className={className} />;
+    case "summary":
+      return <FileText className={className} />;
+    default:
+      return <AlignLeft className={className} />;
+  }
+};
+
+const LayoutChip = ({ chunkType }: { chunkType?: string | null }) => {
+  const kind = normalizeLayoutKind(chunkType);
+  const label = LAYOUT_LABELS[kind];
+  return (
+    <span
+      className="inline-flex h-5 items-center gap-1 rounded-md border border-[var(--gd-border)] bg-[var(--gd-raised)] px-1.5 text-[9px] font-medium text-[var(--gd-muted)]"
+      title={`Cited layout: ${label}`}
+      aria-label={`Cited layout: ${label}`}
+    >
+      <LayoutIcon kind={kind} />
+      {label}
+    </span>
+  );
+};
 
 type ConfidenceLevel = "High" | "Medium" | "Low" | "Unknown";
 
@@ -202,6 +290,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                   className="max-w-xs p-2"
                 >
                   <div className="mb-1 flex flex-wrap gap-1">
+                    <LayoutChip chunkType={src.chunk_type} />
                     <MetricChip label="Score" value={src.score} />
                     <MetricChip label="Confidence" value={src.confidence} />
                   </div>
@@ -239,23 +328,26 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                     <MetricChip label="Score" value={src.score} />
                     <MetricChip label="Confidence" value={src.confidence} />
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 shrink-0 px-2 text-[10px] text-[var(--gd-muted)] hover:text-[var(--gd-text)]"
-                    disabled={!canOpen}
-                    onClick={() => openCitation(src)}
-                    aria-label={
-                      validPage
-                        ? `View source page ${src.page}`
-                        : canOpen
-                          ? `View source in ${src.filename}`
-                          : "Page reference unavailable for this source"
-                    }
-                  >
-                    <Eye className="mr-1 h-3 w-3" />
-                    {canOpen ? "View" : "N/A"}
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <LayoutChip chunkType={src.chunk_type} />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px] text-[var(--gd-muted)] hover:text-[var(--gd-text)]"
+                      disabled={!canOpen}
+                      onClick={() => openCitation(src)}
+                      aria-label={
+                        validPage
+                          ? `View source page ${src.page}`
+                          : canOpen
+                            ? `View source in ${src.filename}`
+                            : "Page reference unavailable for this source"
+                      }
+                    >
+                      <Eye className="mr-1 h-3 w-3" />
+                      {canOpen ? "View" : "N/A"}
+                    </Button>
+                  </div>
                 </div>
                 <p
                   id={excerptId}

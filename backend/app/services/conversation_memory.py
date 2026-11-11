@@ -156,17 +156,26 @@ _DOC_MARKERS = (
     "the invoice",
     "this invoice",
     "the prescribing",
+    "prescribing information",
     "the textbook",
     "the label",
     "page ",
     "cited source",
     "from the source",
+    "below content",
+    "provided content",
+    "adverse event",
+    "special situation",
+    "off-label",
+    "off label",
 )
 
 _DOC_REGEX = (
     re.compile(
         r"\b(invoice|pdf|document|prescribing|textbook|chunk|citation|igst|"
-        r"cgst|sgst|taxable value|grand total|page\s*\d+)\b",
+        r"cgst|sgst|taxable value|grand total|page\s*\d+|adverse event|"
+        r"special situation|off[- ]?label|dosage|dosing|dose|anaphylaxis|"
+        r"contraindication|indication)\b",
         re.I,
     ),
 )
@@ -361,10 +370,15 @@ def classify_query_intent(
     Priority:
     1. Capability / greeting — never hijacked by PDF or corpus.
     2. Explicit chat-memory / conversation-meta questions — even with PDF attached.
-    3. History-answerable personal facts — even with PDF attached.
-    4. Document questions (attached PDF or explicit doc language).
-    5. Hybrid when a follow-up needs prior chat + document context.
+    3. Personal fact statements the user is teaching the chat — even with PDF attached.
+    4. Document questions (attached PDF or explicit doc language) — must retrieve.
+    5. Hybrid when history overlap / follow-up needs prior chat + document context.
     6. Otherwise general (may still retrieve when no attach).
+
+    Important: lexical overlap with prior turns (``history_likely_answers``) must
+    NOT force ``CHAT_MEMORY`` when a PDF is attached. That path skips retrieval
+    and knowledge-graph evidence, so citations/graph disappear mid-session.
+    Chat history is still injected into the RAG prompt for DOCUMENT/HYBRID turns.
     """
     q = (question or "").strip()
     if not q:
@@ -380,11 +394,17 @@ def classify_query_intent(
     has_history = bool(chat_history)
     personal_fact = is_personal_fact_statement(q)
 
-    # Conversation meta / personal recall always beats attached PDFs.
-    if memory_q or history_hit or personal_fact:
-        if has_attach and doc_q and not memory_q and not personal_fact:
-            # e.g. "what was the invoice total we discussed" with PDF attached
-            return QueryIntent.HYBRID
+    # Explicit conversation-meta / personal teaching beats attached PDFs.
+    if memory_q or personal_fact:
+        return QueryIntent.CHAT_MEMORY
+
+    # History overlap with an attached PDF → keep RAG (citations + graph).
+    # Use HYBRID when the turn also looks like a follow-up / doc-grounded ask.
+    if history_hit:
+        if has_attach:
+            if doc_q or followup:
+                return QueryIntent.HYBRID
+            return QueryIntent.DOCUMENT
         return QueryIntent.CHAT_MEMORY
 
     if has_attach:

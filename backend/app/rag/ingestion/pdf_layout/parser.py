@@ -117,6 +117,28 @@ def _clean_table_rows(rows: Sequence[Sequence[Any]]) -> List[List[str]]:
     return cleaned
 
 
+def _repair_page_tables(
+    tables: Sequence[TableData],
+    *,
+    filepath: str,
+) -> List[TableData]:
+    """Repair collapsed grids and attach linearized facts (drug-agnostic)."""
+    from app.rag.ingestion.pdf_layout.table_normalize import repair_table_data
+
+    repaired: List[TableData] = []
+    for table in tables:
+        try:
+            repair_table_data(table, filepath=filepath, caption=table.caption or "")
+        except Exception as exc:
+            logger.debug(
+                "Table repair skipped on page %s: %s",
+                getattr(table, "page", "?"),
+                exc,
+            )
+        repaired.append(table)
+    return repaired
+
+
 def _native_tables(page: fitz.Page) -> List[TableData]:
     if not hasattr(page, "find_tables"):
         return []
@@ -365,6 +387,12 @@ def parse_pdf(
                 else:
                     page_ext.status = "empty"
                     page_ext.metrics["note"] = "blank page with no text or image"
+
+                # Repair collapsed numeric grids via Camelot when needed.
+                if page_ext.tables:
+                    page_ext.tables = _repair_page_tables(
+                        page_ext.tables, filepath=str(path)
+                    )
 
                 page_ext.metrics["gutter"] = detect_column_gutter(
                     page_ext.lines, float(page.rect.width), float(page.rect.height)

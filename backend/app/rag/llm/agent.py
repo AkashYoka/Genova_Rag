@@ -12,8 +12,8 @@ Default ask path when ``settings.uses_ollama_llm`` is True:
     → OllamaChatClient.chat_completion(model=qwen2.5:3b)
 
 Common example question (all six files):
-  "Does the XOLAIR prescribing label recommend every-2-week dosing for
-   chronic spontaneous urticaria (CSU)?"
+  "According to the schedule table, what value applies for the
+   stated parameters?"
 """
 import logging
 import json
@@ -535,6 +535,7 @@ def _build_attached_summarize_context(
                             "score": chunk.get("score", 0),
                             "confidence": chunk.get("confidence", 0),
                             "bbox": chunk.get("bbox", ""),
+                            "chunk_type": _source_chunk_type(chunk),
                         }
                     )
             else:
@@ -551,6 +552,7 @@ def _build_attached_summarize_context(
                     "score": 1.0,
                     "confidence": 100.0,
                     "bbox": "",
+                    "chunk_type": "summary",
                 }
             )
 
@@ -593,17 +595,18 @@ def _format_context(chunks: List[Dict[str, Any]]) -> str:
       f"[{i}] Source: {filename}, Page {page}\\n{text}"
       joined with "\\n\\n"
 
+    When available, section / subsection / chunk_type are included so the model
+    can prefer the correct table or section for the stated topic.
+
     Exact example (ILLUSTRATIVE chunk text; format is exact)
     -------------------------------------------------------
     IN chunks[0] = {
-      "filename": "xolair_prescribing.pdf", "page": 9,
-      "text": "The recommended dose for CSU is 150 mg or 300 mg by "
-              "subcutaneous injection every 4 weeks.",
+      "filename": "document.pdf", "page": 9,
+      "text": "The recommended value from Table 1 is 300 every 4 weeks.",
     }
     OUT starts with:
-      [1] Source: xolair_prescribing.pdf, Page 9
-      The recommended dose for CSU is 150 mg or 300 mg by subcutaneous
-      injection every 4 weeks.
+      [1] Source: document.pdf, Page 9
+      The recommended value from Table 1 is 300 every 4 weeks.
 
     Next: RAG_PROMPT_TEMPLATE.format(context=OUT, question=question)
     """
@@ -612,7 +615,20 @@ def _format_context(chunks: List[Dict[str, Any]]) -> str:
         filename = chunk.get("filename", "document")
         page = chunk.get("page", "?")
         text = chunk.get("text", "")
-        parts.append(f"[{i}] Source: {filename}, Page {page}\n{text}")
+        meta_bits = []
+        section = (chunk.get("section") or "").strip()
+        subsection = (chunk.get("subsection") or "").strip()
+        chunk_type = (chunk.get("chunk_type") or chunk.get("content_type") or "").strip()
+        if section:
+            meta_bits.append(f"Section: {section}")
+        if subsection:
+            meta_bits.append(f"Subsection: {subsection}")
+        if chunk_type:
+            meta_bits.append(f"Type: {chunk_type}")
+        header = f"[{i}] Source: {filename}, Page {page}"
+        if meta_bits:
+            header = f"{header} | " + " | ".join(meta_bits)
+        parts.append(f"{header}\n{text}")
     return "\n\n".join(parts)
 
 
@@ -623,17 +639,46 @@ def _coerce_source_page(page: Any) -> int:
         return 0
 
 
+def _source_chunk_type(chunk: Dict[str, Any]) -> str:
+    """Normalize layout/content type for citation UI (table, paragraph, …)."""
+    raw = (
+        chunk.get("chunk_type")
+        or chunk.get("content_type")
+        or chunk.get("layout")
+        or ""
+    )
+    value = str(raw).strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "text": "paragraph",
+        "para": "paragraph",
+        "paragraphs": "paragraph",
+        "table_row": "table",
+        "tables": "table",
+        "figure_caption": "figure",
+        "image": "figure",
+        "img": "figure",
+        "heading": "heading",
+        "header": "heading",
+        "list_item": "list",
+        "bullet": "list",
+        "caption": "caption",
+        "summary": "summary",
+    }
+    value = aliases.get(value, value)
+    return value or "paragraph"
+
+
 def _sources_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Map retrieve chunks → citation payloads for the UI (text truncated to 300).
 
-    Exact OUT keys (code): text, filename, page, score, confidence, bbox.
+    Exact OUT keys (code): text, filename, page, score, confidence, bbox, chunk_type.
 
     Exact example
     -------------
     IN chunk text length 500 → OUT text length 303 (300 + "...")
     OUT item ILLUSTRATIVE:
-      {"text": "The recommended dose for CSU is ...", "filename": "xolair_prescribing.pdf",
-       "page": 9, "score": 0.0323, "confidence": 100.0, "bbox": ""}
+      {"text": "The recommended value from Table 1 is ...", "filename": "document.pdf",
+       "page": 9, "score": 0.0323, "confidence": 100.0, "bbox": "", "chunk_type": "table"}
 
     Stream path yields: data: {"type":"sources","data":[<items>]}\n\n  BEFORE tokens.
     """
@@ -645,6 +690,7 @@ def _sources_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "score": float(chunk.get("score") or 0),
             "confidence": float(chunk.get("confidence") or 0),
             "bbox": chunk.get("bbox", "") or "",
+            "chunk_type": _source_chunk_type(chunk),
         }
         for chunk in chunks
     ]
@@ -982,7 +1028,7 @@ def _generate_answer_direct(
 ) -> Dict[str, Any]:
     """Retrieve-then-generate (non-streaming) for Ollama or Bedrock.
 
-    Exact call sequence for the shared XOLAIR question
+    Exact call sequence for a document-grounded question
     --------------------------------------------------
     1) chunks = retrieve(query=question, user_id=..., document_id=...,
                          top_k=top_k or settings.TOP_K_RERANK)  # default 8
@@ -1003,8 +1049,8 @@ def _generate_answer_direct(
     Exact OUT: {"answer": str, "sources": list[dict], "usage"?: dict}
 
     ILLUSTRATIVE answer (not a live model run):
-      "No. The label recommends 150 mg or 300 mg SC every 4 weeks for CSU,
-       not every 2 weeks. [Source: xolair_prescribing.pdf, Page 9]"
+      "No. Table 1 recommends 300 every 2 weeks for those parameters.
+       [Source: document.pdf, Page 9]"
     """
     has_attach = bool(document_id or _unique_document_ids(document_ids))
     special = _try_special_turn_answer(
@@ -1110,6 +1156,19 @@ def _generate_answer_direct(
     if history:
         user_prompt = f"{history}\n\n{user_prompt}"
 
+    try:
+        from app.rag.retrieval.rag_debug import record_prompt_assembly
+
+        record_prompt_assembly(
+            domain=getattr(resolved, "domain", "") or "",
+            prompt_type=getattr(resolved, "prompt_type", "") or "rag",
+            system_prompt=resolved.system_prompt,
+            user_prompt=user_prompt,
+            context=context or "",
+        )
+    except Exception:
+        pass
+
     provider = normalize_llm_provider(llm_provider)
     client = get_llm_client(llm_provider=provider)
     response = client.chat_completion(
@@ -1126,12 +1185,29 @@ def _generate_answer_direct(
         answer = (response.choices[0].message.content or "").strip()
     if not answer:
         answer = MALFORMED_OUTPUT_MESSAGE
+    try:
+        from app.rag.retrieval.rag_debug import record_answer
+
+        record_answer(answer)
+    except Exception:
+        pass
     result: Dict[str, Any] = {"answer": answer, "sources": sources}
     if graph_info:
         result["graph"] = graph_info
     usage = getattr(client, "last_usage", None)
     if isinstance(usage, dict) and usage:
         result["usage"] = usage
+    if getattr(settings, "RAG_DEBUG_ENABLED", False):
+        try:
+            from app.rag.retrieval.rag_debug import current_rag_debug
+
+            trace = current_rag_debug()
+            if trace is not None:
+                result["debug"] = trace.to_dict(
+                    redact=bool(getattr(settings, "RAG_DEBUG_REDACT", True))
+                )
+        except Exception:
+            pass
     return result
 
 
@@ -1160,7 +1236,7 @@ def _generate_answer_stream_direct(
 
     Exact example first events (ILLUSTRATIVE token pieces)
     ------------------------------------------------------
-    data: {"type":"sources","data":[{"page":9,"filename":"xolair_prescribing.pdf",...}]}
+    data: {"type":"sources","data":[{"page":9,"filename":"document.pdf",...}]}
     data: {"type":"token","data":"No"}
     data: {"type":"token","data":". The label"}
     ...
@@ -1352,14 +1428,21 @@ def generate_answer(
          sources from pdf_tool.last_sources
          malformed → MALFORMED_OUTPUT_MESSAGE
 
-    Exact example (default Ollama + XOLAIR question)
+    Exact example (default Ollama + document question)
     ------------------------------------------------
     generate_answer(
-      question=<CSU every-2-week question>,
-      user_id=..., document_id=<xolair id>, chat_history=[],
+      question=<schedule-table question>,
+      user_id=..., document_id=<document id>, chat_history=[],
     )
     → branch 2 → _generate_answer_direct → {"answer": "...", "sources": [...]}
     """
+    if getattr(settings, "RAG_DEBUG_ENABLED", False):
+        try:
+            from app.rag.retrieval.rag_debug import begin_rag_debug
+
+            begin_rag_debug(question)
+        except Exception:
+            pass
     provider = normalize_llm_provider(llm_provider)
 
     # ── Interactive quiz (conversation / document / summary) ─
@@ -1452,6 +1535,7 @@ def generate_answer(
                 "score": chunk["score"],
                 "confidence": chunk.get("confidence", 0),
                 "bbox": chunk.get("bbox", ""),
+                "chunk_type": _source_chunk_type(chunk),
             }
             for chunk in getattr(pdf_tool, "last_sources", [])
         ]
@@ -1495,9 +1579,16 @@ def generate_answer_stream(
 
     Exact example (default Ollama dashboard ask)
     --------------------------------------------
-    generate_answer_stream(question=<CSU question>, user_id=..., document_id=...)
+    generate_answer_stream(question=<table question>, user_id=..., document_id=...)
       → sources event, then token events, then done
     """
+    if getattr(settings, "RAG_DEBUG_ENABLED", False):
+        try:
+            from app.rag.retrieval.rag_debug import begin_rag_debug
+
+            begin_rag_debug(question)
+        except Exception:
+            pass
     provider = normalize_llm_provider(llm_provider)
 
     # ── Interactive quiz ─────────────────────────────
@@ -1591,6 +1682,7 @@ def generate_answer_stream(
                             "score": chunk["score"],
                             "confidence": chunk.get("confidence", 0),
                             "bbox": chunk.get("bbox", ""),
+                            "chunk_type": _source_chunk_type(chunk),
                         }
                         for chunk in pdf_tool.last_sources
                     ]
@@ -1618,13 +1710,12 @@ def generate_answer_stream(
 # =============================================================================
 #
 # Shared question Q:
-#   "Does the XOLAIR prescribing label recommend every-2-week dosing for
-#    chronic spontaneous urticaria (CSU)?"
+#   "According to the schedule table, what value applies?"
 #
 # A. Actual input into this file (dashboard /ask or /ask/stream)
 #    question: str = Q
 #    user_id: str
-#    document_id: str | None   # selected PDF, e.g. xolair_prescribing.pdf
+#    document_id: str | None   # selected PDF
 #    chat_history: list[dict]  # [] on first turn
 #    top_k: Optional[int]      # usually None → agent uses TOP_K_RERANK (8)
 #
@@ -1649,7 +1740,7 @@ def generate_answer_stream(
 #    system: SYSTEM_PROMPT (cite [Source: filename, Page X], answer only from context)
 #    user: RAG_PROMPT_TEMPLATE with
 #      ## Document Context
-#      [1] Source: xolair_prescribing.pdf, Page 9
+#      [1] Source: document.pdf, Page 9
 #      ... every 4 weeks ...
 #      ## User Question
 #      Q

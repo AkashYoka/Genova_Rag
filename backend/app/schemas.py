@@ -540,6 +540,8 @@ class SourceChunk(BaseModel):
     score: float
     confidence: float
     bbox: Optional[str] = None
+    # Layout/content kind from retrieval (table, paragraph, list, heading, …).
+    chunk_type: Optional[str] = None
 
 
 class QuizOption(BaseModel):

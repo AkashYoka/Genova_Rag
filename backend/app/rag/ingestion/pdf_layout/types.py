@@ -193,6 +193,8 @@ class TableData:
     # Cells whose OCR confidence was too low for trustworthy financial values.
     # Each entry: {"row": int, "col": int, "text": str, "confidence": float}
     low_confidence_cells: List[Dict[str, Any]] = field(default_factory=list)
+    # Populated by table_normalize.repair_table_data / normalize_table_grid.
+    linearized_facts: List[str] = field(default_factory=list)
 
     @property
     def n_cols(self) -> int:
@@ -219,6 +221,20 @@ class TableData:
         for row in self.rows:
             cells = (list(row) + [""] * width)[:width]
             lines.append("| " + " | ".join(self._cell(c) for c in cells) + " |")
+        facts = list(self.linearized_facts or [])
+        if not facts:
+            try:
+                from app.rag.ingestion.pdf_layout.table_normalize import linearize_table_facts
+
+                facts = linearize_table_facts(
+                    self.headers, self.rows, caption=self.caption or ""
+                )
+            except Exception:
+                facts = []
+        if facts:
+            lines.append("")
+            lines.append("Table facts:")
+            lines.extend(f"- {fact}" for fact in facts)
         return "\n".join(lines)
 
     def to_json(self, include_markdown: bool = True) -> Dict[str, Any]:
@@ -233,6 +249,7 @@ class TableData:
             "caption": self.caption,
             "low_confidence_cells": self.low_confidence_cells,
             "needs_verification": bool(self.low_confidence_cells),
+            "linearized_facts": list(self.linearized_facts or []),
         }
         if include_markdown:
             data["markdown"] = self.markdown

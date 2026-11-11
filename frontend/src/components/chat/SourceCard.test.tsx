@@ -11,6 +11,7 @@ const sources: SourceChunk[] = [
     text: "Revenue increased after the new pricing plan rolled out.",
     score: 0.91,
     confidence: 0.76,
+    chunk_type: "table",
     highlightRects: [{ left: 10, top: 20, width: 30, height: 40 }],
   },
   {
@@ -18,12 +19,14 @@ const sources: SourceChunk[] = [
     page: 5,
     text: "Risk review notes mention customer concentration and renewal timing.",
     score: 0.42,
+    chunk_type: "paragraph",
   },
   {
     filename: "summary.txt",
     page: 0,
     text: "A".repeat(220),
     score: 0.2,
+    chunk_type: "list",
   },
 ];
 
@@ -72,6 +75,9 @@ describe("SourceCard", () => {
     expect(screen.getByText("Page 3")).toBeInTheDocument();
     expect(screen.getByText("Score: High")).toBeInTheDocument();
     expect(screen.getByText("Confidence: Medium")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Cited layout: Table"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Revenue increased after the new pricing plan rolled out."),
     ).toBeInTheDocument();

@@ -41,12 +41,33 @@ def _snapshot(db: Session, template: PromptTemplate, note: str, user_id: Optiona
     )
 
 
+_MEDICAL_PV_MARKER = "PHARMACOVIGILANCE / PRESCRIBING CASE ASSESSMENT"
+
+
 def _looks_like_stock_short_overlay(content: str) -> bool:
     """True for the original brief DOMAIN FOCUS stubs (safe to upgrade once)."""
     text = (content or "").strip()
     if not text.startswith("DOMAIN FOCUS"):
         return False
     return len(text) < 450
+
+
+def _should_upgrade_medical_overlay(content: str) -> bool:
+    """Upgrade stock medical overlay when it lacks the PV case-assessment block.
+
+    Only upgrades content that still looks like the built-in DOMAIN FOCUS medical
+    stub (starts with the stock header and was not clearly customized).
+    """
+    text = (content or "").strip()
+    if not text.startswith("DOMAIN FOCUS — Medical"):
+        return False
+    if _MEDICAL_PV_MARKER in text:
+        return False
+    # Heuristic: customized prompts usually remove or rewrite the stock header
+    # behaviour bullets; require the stock "Never invent clinical guidance" line.
+    if "Never invent clinical guidance" not in text:
+        return False
+    return True
 
 
 def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) -> None:
@@ -149,6 +170,30 @@ def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) 
                 legacy.description = DOMAIN_META[slug]["purpose"]
                 legacy.version = int(legacy.version or 1) + 1
                 _snapshot(db, legacy, "V1 default template upgrade")
+            continue
+        existing_overlay = (
+            db.query(PromptTemplate)
+            .filter(
+                PromptTemplate.domain_id == domain.id,
+                PromptTemplate.prompt_type == "system",
+                PromptTemplate.name == modern_name,
+            )
+            .first()
+        )
+        if (
+            slug == "medical"
+            and existing_overlay
+            and _should_upgrade_medical_overlay(existing_overlay.content)
+            and content.strip()
+            and existing_overlay.content.strip() != content.strip()
+        ):
+            existing_overlay.content = content
+            existing_overlay.description = DOMAIN_META[slug]["purpose"]
+            existing_overlay.version = int(existing_overlay.version or 1) + 1
+            existing_overlay.is_active = True
+            existing_overlay.is_default = True
+            _snapshot(db, existing_overlay, "Medical PV assessment overlay upgrade")
+            logger.info("Upgraded medical domain overlay with PV case assessment")
             continue
         upsert_template(
             domain=domain,

@@ -9,8 +9,8 @@ Ask-time: ``retriever.retrieve`` imports ``query_bm25`` when USE_HYBRID_SEARCH=T
 Differs from vector search: scores raw token overlap, not embedding similarity.
 
 Common example question:
-  "Does the XOLAIR prescribing label recommend every-2-week dosing for
-   chronic spontaneous urticaria (CSU)?"
+  "According to the schedule table, what value applies for the
+   stated parameters?"
 """
 import os
 import glob
@@ -91,12 +91,11 @@ def _load_signed_bm25(path: str) -> Optional[Dict[str, Any]]:
 
 
 _EX_Q = (
-    "Does the XOLAIR prescribing label recommend every-2-week dosing for "
-    "chronic spontaneous urticaria (CSU)?"
+    "According to the schedule table, what value applies for the stated parameters?"
 )
-_EX_DOC = "8c57d30c-9568-4437-b51f-b52d9ac495d1"
-_EX_USER = "f3d989fb-79af-4fe2-9360-12b06772348c"
-_EX_FILE = "xolair_prescribing.pdf"
+_EX_DOC = "document-id"
+_EX_USER = "user-id"
+_EX_FILE = "document.pdf"
 
 
 def get_bm25_dir(user_id: str) -> str:
@@ -129,11 +128,10 @@ def tokenize(text: str) -> List[str]:
     -----------------------------------
     IN:  _EX_Q
     OUT: [
-      "does", "the", "xolair", "prescribing", "label", "recommend",
-      "every", "2", "week", "dosing", "for", "chronic", "spontaneous",
-      "urticaria", "csu",
+      "according", "to", "the", "schedule", "table", "what", "value",
+      "applies", "for", "the", "stated", "parameters",
     ]
-    Note: "every-2-week" splits into every, 2, week because ``\\w+`` breaks on hyphens.
+    Note: hyphenated tokens split on ``\\w+`` boundaries.
 
     Exact example (label chunk text, ILLUSTRATIVE)
     ----------------------------------------------
@@ -150,7 +148,7 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
     Exact example
     -------------
     chunks = [{
-      "text": "Recommended dosage for CSU: 150 mg or 300 mg SC every 4 weeks.",
+      "text": "Recommended schedule value: 300 SC every 4 weeks.",
       "page": 9, "chunk_index": 42,
     }]  # ILLUSTRATIVE
     tokenized_texts = [tokenize(chunks[0]["text"]), ...]
@@ -231,7 +229,7 @@ def _query_single_index(path: str, tokenized_query: List[str], top_k: int) -> Li
       {
         "id": "8c57d30c-..._42",
         "text": "... every 4 weeks ...",
-        "filename": "xolair_prescribing.pdf",
+        "filename": "document.pdf",
         "document_id": "8c57d30c-...",
         "page": 9,
         "score": 5.21,   # RAW BM25 — not 0..1; RRF only uses rank
@@ -295,10 +293,10 @@ def query_bm25(
       return _query_single_index(get_bm25_path(user_id, document_id), tokenized_query, 20)
 
     OUT: up to 20 dicts sorted by raw BM25 score (ILLUSTRATIVE ordering favors
-    chunks containing "xolair", "csu", "week", "dosing", etc.)
+    chunks containing table/schedule tokens from the query)
 
     Vs vector search: BM25 needs shared tokens; "urticaria schedule" without
-    "CSU" may rank lower even if semantically related.
+    related synonyms may rank lower even if semantically related.
 
     Next: rrf_merge(vector_results, bm25_results, k=60).
     """
@@ -366,7 +364,7 @@ def delete_user_bm25_indexes(user_id: str):
 #
 # B. Function chain
 #    tokenize(query)
-#      → ["does","the","xolair",...,"csu"]
+#      → ["according","to","the","schedule",...]
 #    query_bm25 → get_bm25_path → _query_single_index
 #      → bm25.get_scores(tokens) → top indices with score>0
 #

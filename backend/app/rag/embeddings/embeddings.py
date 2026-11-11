@@ -33,8 +33,8 @@ _emb_lru_order: list = []
 
 # Shared sample question for docstring examples in this module.
 _EX_Q = (
-    "Does the XOLAIR prescribing label recommend every-2-week dosing for "
-    "chronic spontaneous urticaria (CSU)?"
+    "According to the schedule table, what value applies for the "
+    "stated parameters?"
 )
 
 
@@ -273,7 +273,7 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
     Exact example
     -------------
     texts = [
-      "The recommended dose for CSU is 150 mg or 300 mg by subcutaneous "
+      "The recommended schedule value is 300 by subcutaneous "
       "injection every 4 weeks.",                           # ILLUSTRATIVE label text
     ]
     keys = [_make_embedding_key(t) for t in texts]
@@ -396,8 +396,8 @@ def embed_query(query: str) -> List[float]:
 #
 # A. Actual input (type + sample)
 #    query: str =
-#      "Does the XOLAIR prescribing label recommend every-2-week dosing for
-#       chronic spontaneous urticaria (CSU)?"
+#      "According to the schedule table, what value applies for the
+#       stated parameters?"
 #
 # B. Function-by-function (ask path used by retriever.retrieve)
 #

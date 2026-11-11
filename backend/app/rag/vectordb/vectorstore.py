@@ -9,9 +9,10 @@ Ask-time: ``retriever.retrieve`` → ``query_chunks(query_embedding=..., top_k=2
 Index-time: ingestion → ``store_chunks`` → BM25 + embed_documents + collection.add.
 
 Common example question:
-  "Does the XOLAIR prescribing label recommend every-2-week dosing for
-   chronic spontaneous urticaria (CSU)?"
+  "According to the schedule table, what value applies for the
+   stated parameters?"
 """
+import json
 import logging
 import os
 import threading
@@ -40,12 +41,11 @@ _CHROMA_RETRY_BASE_SEC = 0.05
 
 # ILLUSTRATIVE ids used only in comments (from a prior UI test session shape;
 # not read from the DB by this documentation).
-_EX_USER = "f3d989fb-79af-4fe2-9360-12b06772348c"
-_EX_DOC = "8c57d30c-9568-4437-b51f-b52d9ac495d1"
-_EX_FILE = "xolair_prescribing.pdf"
+_EX_USER = "user-id"
+_EX_DOC = "document-id"
+_EX_FILE = "document.pdf"
 _EX_Q = (
-    "Does the XOLAIR prescribing label recommend every-2-week dosing for "
-    "chronic spontaneous urticaria (CSU)?"
+    "According to the schedule table, what value applies for the stated parameters?"
 )
 
 
@@ -362,8 +362,8 @@ def query_chunks(
     OUT (ILLUSTRATIVE one hit; shape is real):
       [{
         "id": "8c57d30c-9568-4437-b51f-b52d9ac495d1_42",
-        "text": "Recommended dosage for CSU is 150 mg or 300 mg ... every 4 weeks.",
-        "filename": "xolair_prescribing.pdf",
+        "text": "Recommended schedule value is 300 ... every 4 weeks.",
+        "filename": "document.pdf",
         "document_id": "8c57d30c-...",
         "page": 9,
         "chunk_type": "text",
@@ -441,6 +441,7 @@ def query_chunks(
                 "ocr_confidence",
                 "table_part",
                 "table_index",
+                "chunk_index",
                 "table_json",
                 "layout_metadata",
                 "is_image",
@@ -450,6 +451,72 @@ def query_chunks(
                     chunk[key] = metadata[key]
             chunks.append(chunk)
 
+    return chunks
+
+
+def get_chunks_by_ids(user_id: str, chunk_ids: List[str]) -> List[Dict[str, Any]]:
+    """Fetch stored chunks by Chroma ids (used for adjacent-table expansion)."""
+    if not chunk_ids:
+        return []
+    collection_name = get_collection_name(user_id)
+    unique_ids = []
+    seen = set()
+    for cid in chunk_ids:
+        text = str(cid)
+        if text and text not in seen:
+            seen.add(text)
+            unique_ids.append(text)
+
+    def _get():
+        client = get_chroma_client()
+        try:
+            collection = client.get_collection(name=collection_name)
+        except Exception:
+            return None
+        return collection.get(
+            ids=unique_ids,
+            include=["documents", "metadatas"],
+        )
+
+    try:
+        results = _chroma_retry("collection.get_by_ids", _get)
+    except Exception as exc:
+        logger.debug("get_chunks_by_ids failed: %s", exc)
+        return []
+    if not results or not results.get("ids"):
+        return []
+
+    chunks: List[Dict[str, Any]] = []
+    ids = results.get("ids") or []
+    docs = results.get("documents") or []
+    metas = results.get("metadatas") or []
+    for i, chunk_id in enumerate(ids):
+        metadata = metas[i] if i < len(metas) and metas[i] else {}
+        text = docs[i] if i < len(docs) else ""
+        chunk = {
+            "id": chunk_id,
+            "text": text or "",
+            "filename": metadata.get("filename", ""),
+            "document_id": metadata.get("document_id", ""),
+            "page": metadata.get("page", 1),
+            "chunk_type": metadata.get("chunk_type", "text"),
+            "bbox": metadata.get("bbox", ""),
+            "score": 0.0,
+        }
+        for key in (
+            "page_start",
+            "page_end",
+            "section",
+            "subsection",
+            "content_type",
+            "extraction_method",
+            "chunk_index",
+            "table_json",
+            "layout_metadata",
+        ):
+            if key in metadata and metadata[key] not in (None, ""):
+                chunk[key] = metadata[key]
+        chunks.append(chunk)
     return chunks
 
 

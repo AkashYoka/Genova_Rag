@@ -283,8 +283,18 @@ def _chunk_table(
             }
         ]
 
-    # 1) Everything fits: keep the table intact with its context.
-    full_text = "\n\n".join(part for part in (context, element.text) if part)
+    # Prefer section + caption + markdown + linearized facts for retrieval.
+    from app.rag.ingestion.pdf_layout.table_normalize import render_table_with_facts
+
+    rich_text = render_table_with_facts(
+        headers,
+        rows,
+        caption=caption,
+        section=section,
+        subsection=subsection,
+        include_markdown=True,
+    )
+    full_text = rich_text.strip() or "\n\n".join(part for part in (context, element.text) if part)
     if len(full_text) <= chunk_size:
         return [
             {
@@ -323,7 +333,17 @@ def _chunk_table(
             "part": len(chunks) + 1,
         }
         row_markdown = "\n".join(_table_row_markdown(headers, row) for row in current)
-        text = "\n\n".join(part for part in (context, header_text, row_markdown) if part)
+        part_facts = render_table_with_facts(
+            headers,
+            current,
+            caption=caption,
+            section="",
+            subsection="",
+            include_markdown=False,
+        )
+        text = "\n\n".join(
+            part for part in (context, header_text, row_markdown, part_facts) if part
+        )
         chunks.append(
             {
                 "text": text,
