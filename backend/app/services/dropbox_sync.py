@@ -3,7 +3,7 @@
 Bridges ``User.dropbox_refresh_token`` (OAuth) and public shared links with
 ``DropboxConnection`` rows, downloads PDFs to the same working directory used by
 manual uploads, and reuses ``ingest_document`` for extraction, chunking,
-embeddings, ChromaDB, BM25 and the knowledge graph.
+embeddings, ChromaDB, and BM25.
 
 Lifecycle rules
 ---------------
@@ -592,7 +592,7 @@ def _prepare_working_copy(user_id: str, data: bytes) -> tuple[str, str]:
     return stored_filename, filepath
 
 
-def _clear_vectors_and_graph(document: Document) -> None:
+def _clear_vectors(document: Document) -> None:
     try:
         from app.rag.vectordb.vectorstore import delete_document_chunks
 
@@ -600,14 +600,6 @@ def _clear_vectors_and_graph(document: Document) -> None:
     except Exception as exc:
         logger.warning(
             "Could not clear vectors for Dropbox document %s: %s", document.id, exc
-        )
-    try:
-        from app.graph.service import remove_document as remove_document_graph
-
-        remove_document_graph(str(document.id), str(document.user_id))
-    except Exception as exc:
-        logger.warning(
-            "Could not clear graph for Dropbox document %s: %s", document.id, exc
         )
 
 
@@ -671,7 +663,7 @@ def _apply_file(
     document.processing_stage = "queued"
     db.commit()
 
-    _clear_vectors_and_graph(document)
+    _clear_vectors(document)
     _mirror_to_s3(str(document.user_id), document.filename, filepath)
     # Queue per-document ingest so multiple Dropbox files can process in parallel
     # (solo workers still serialize; use --pool=threads --concurrency=N for overlap).
@@ -755,7 +747,7 @@ def _mark_source_deleted(db: Session, document: Document) -> None:
     document.lifecycle_status = LIFECYCLE_SOURCE_DELETED
     document.source_deleted_at = _now()
     db.commit()
-    _clear_vectors_and_graph(document)
+    _clear_vectors(document)
 
 
 def _sync_file_list(

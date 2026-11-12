@@ -164,8 +164,7 @@ def process_document(
     This task is a thin dispatch wrapper around
     ``app.services.document_ingestion.ingest_document``, which is the single
     source of truth for the ingestion state machine (status, progress,
-    chunk_count, page_count, summary, URL extraction, knowledge graph, and
-    vector storage). The task itself only records retry bookkeeping before
+    chunk_count, page_count, summary, URL extraction, and vector storage). The task itself only records retry bookkeeping before
     delegating; it does not open a second DB session that writes the same
     Document row, since ingest_document manages its own SessionLocal()
     session end-to-end and commits/rolls back independently.

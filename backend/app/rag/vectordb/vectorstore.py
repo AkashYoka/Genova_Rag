@@ -198,6 +198,14 @@ def _chunk_metadata(
         "table_part",
         "table_index",
         "table_id",
+        "section_id",
+        "parent_section_id",
+        "section_level",
+        "section_path",
+        "source_block_ids",
+        "table_ids",
+        "index_version",
+        "token_count",
     ):
         value = chunk.get(key)
         if value not in (None, ""):
@@ -244,10 +252,10 @@ def store_chunks(
     document_id=_EX_DOC, filename=_EX_FILE, user_id=_EX_USER
 
     Steps in code order:
-      1) delete_document_chunks(document_id, user_id)  # wipe old Chroma+BM25
-      2) store_bm25_index(chunks, ...)                 # bm25.py
-      3) generate_captions_for_chunks(chunks)          # optional; warn on fail
-      4) get_embedding_model().embed_documents(batch)  # search_document: prefix
+      1) generate_captions_for_chunks(chunks)          # optional; warn on fail
+      2) get_embedding_model().embed_documents(batch)  # search_document: prefix
+      3) delete_document_chunks(document_id, user_id)  # only after embeddings succeed
+      4) store_bm25_index(chunks, ...)                 # bm25.py
       5) collection.add(ids=[f"{document_id}_{chunk_index}"], embeddings, metadatas, documents)
     OUT: 1 (or N for full PDF; prior session noted ~217 chunks for Xolair — ILLUSTRATIVE count)
 
@@ -256,18 +264,7 @@ def store_chunks(
     if not chunks:
         return 0
 
-    # Delete existing chunks for this document and user before inserting new ones
-    # to avoid stale/orphaned chunks in ChromaDB and BM25.
-    delete_document_chunks(document_id, user_id)
-
-    # Build and store BM25 index
-    from app.rag.retrieval.bm25 import store_bm25_index
-    try:
-        store_bm25_index(chunks, document_id, filename, user_id)
-    except Exception as e:
-        logger.error(f"Could not build BM25 index: {e}")
-
-    # Generate captions for any extracted images before embedding
+    # Generate captions for any extracted images before embedding.
     try:
         from app.rag.ingestion.vision import generate_captions_for_chunks
 
@@ -285,10 +282,12 @@ def store_chunks(
     ids = [f"{document_id}_{chunk['chunk_index']}" for chunk in chunks]
     metadatas = [_chunk_metadata(chunk, filename, document_id) for chunk in chunks]
 
-    # ── Embed and upsert in batches ──────────────────
+    # ── Embed in batches BEFORE touching the live index ──
+    # A reindex must not destroy the previous vectors/BM25 index when embedding
+    # fails (network error, provider outage). Deletion happens only after every
+    # batch has been embedded successfully.
     batch_size = 50
-    total_stored = 0
-
+    embedded_batches = []
     for i in range(0, len(texts), batch_size):
         batch_texts = texts[i:i + batch_size]
         batch_ids = ids[i:i + batch_size]
@@ -296,7 +295,23 @@ def store_chunks(
 
         # Generate embeddings outside the Chroma lock (network / Ollama).
         embeddings = embedding_model.embed_documents(batch_texts)
+        embedded_batches.append(
+            (batch_ids, embeddings, batch_metadatas, batch_texts)
+        )
 
+    # Replace the old document index only now that new embeddings are ready.
+    delete_document_chunks(document_id, user_id)
+
+    # Build and store BM25 index
+    from app.rag.retrieval.bm25 import store_bm25_index
+    try:
+        store_bm25_index(chunks, document_id, filename, user_id)
+    except Exception as e:
+        logger.error(f"Could not build BM25 index: {e}")
+
+    # ── Upsert embedded batches ──────────────────────
+    total_stored = 0
+    for batch_ids, embeddings, batch_metadatas, batch_texts in embedded_batches:
         def _add_batch(
             _ids=batch_ids,
             _embeddings=embeddings,
@@ -448,6 +463,14 @@ def query_chunks(
                 "layout_metadata",
                 "is_image",
                 "image_caption",
+                "section_id",
+                "parent_section_id",
+                "section_level",
+                "section_path",
+                "source_block_ids",
+                "table_ids",
+                "index_version",
+                "token_count",
             ):
                 if key in metadata and metadata[key] not in (None, ""):
                     chunk[key] = metadata[key]
@@ -516,6 +539,14 @@ def get_chunks_by_ids(user_id: str, chunk_ids: List[str]) -> List[Dict[str, Any]
             "table_id",
             "table_json",
             "layout_metadata",
+            "section_id",
+            "parent_section_id",
+            "section_level",
+            "section_path",
+            "source_block_ids",
+            "table_ids",
+            "index_version",
+            "token_count",
         ):
             if key in metadata and metadata[key] not in (None, ""):
                 chunk[key] = metadata[key]

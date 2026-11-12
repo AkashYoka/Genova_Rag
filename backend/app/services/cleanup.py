@@ -17,7 +17,7 @@ _CLEANUP_BATCH_SIZE = 100
 
 
 def _hard_delete_document(db, doc):
-    """Permanently remove a document's file, vectors, graph, and DB row.
+    """Permanently remove a document's file, vectors, and DB row.
 
     Conversation history is independent of the document lifecycle: chat
     sessions, questions, answers, and citation snapshots are preserved.
@@ -33,13 +33,6 @@ def _hard_delete_document(db, doc):
         delete_document_chunks(document_id=doc_id, user_id=user_id)
     except Exception as e:
         logger.warning("Cleanup: error deleting vectors for %s: %s", doc_id, e)
-
-    try:
-        from app.graph.service import remove_document as remove_document_graph
-
-        remove_document_graph(str(doc_id), str(user_id))
-    except Exception as e:
-        logger.warning("Cleanup: error deleting graph for %s: %s", doc_id, e)
 
     try:
         import os

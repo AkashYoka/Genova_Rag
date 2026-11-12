@@ -6,10 +6,10 @@ import { useAuth } from "@/lib/auth";
 import {
   FileText,
   MessageSquare,
-  Network,
   StickyNote,
   Shield,
   Search,
+  ListTree,
   ArrowRight,
   Loader2,
 } from "lucide-react";
@@ -35,9 +35,9 @@ const FEATURES = [
     desc: "Answers arrive token by token, each claim tagged with its page.",
   },
   {
-    icon: Network,
-    title: "Knowledge graph",
-    desc: "See entities and the links between them across your documents.",
+    icon: ListTree,
+    title: "Document explorer",
+    desc: "Browse sections, tables, and related parts in reading order.",
   },
   {
     icon: StickyNote,
@@ -192,7 +192,7 @@ export default function HomePage() {
             <p className="max-w-lg text-base leading-relaxed text-muted-foreground sm:text-lg">
               Upload reports, contracts and research. Ask questions in plain
               language and get streamed answers with page citations you can
-              open and check, backed by a knowledge graph of your documents.
+              open and check against the source.
             </p>
             <div className="flex flex-wrap gap-3 pt-1">
               <Link

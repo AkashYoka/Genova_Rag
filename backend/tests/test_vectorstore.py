@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 def test_store_chunks_deletes_old_chunks(monkeypatch):
     """
-    Test that store_chunks cleans up old chunks for the specific document and user
-    before embedding and saving the new chunks.
+    Test that store_chunks cleans up old chunks for the specific document and
+    user, but only after the new embeddings have been generated successfully.
     """
     # Keep track of fake module from sys.modules
     fake_module = sys.modules.get("app.rag.vectordb.vectorstore")

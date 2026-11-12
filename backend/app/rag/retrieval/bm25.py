@@ -198,6 +198,14 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
             "layout_metadata",
             "table_json",
             "bbox",
+            "section_id",
+            "parent_section_id",
+            "section_level",
+            "section_path",
+            "source_block_ids",
+            "table_ids",
+            "index_version",
+            "token_count",
         ):
             value = chunk.get(key)
             if value not in (None, ""):

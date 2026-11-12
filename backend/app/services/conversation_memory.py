@@ -377,7 +377,6 @@ def classify_query_intent(
 
     Important: lexical overlap with prior turns (``history_likely_answers``) must
     NOT force ``CHAT_MEMORY`` when a PDF is attached. That path skips retrieval
-    and knowledge-graph evidence, so citations/graph disappear mid-session.
     Chat history is still injected into the RAG prompt for DOCUMENT/HYBRID turns.
     """
     q = (question or "").strip()
@@ -398,7 +397,7 @@ def classify_query_intent(
     if memory_q or personal_fact:
         return QueryIntent.CHAT_MEMORY
 
-    # History overlap with an attached PDF → keep RAG (citations + graph).
+    # History overlap with an attached PDF → keep RAG (citations).
     # Use HYBRID when the turn also looks like a follow-up / doc-grounded ask.
     if history_hit:
         if has_attach:

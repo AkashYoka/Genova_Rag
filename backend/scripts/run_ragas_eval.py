@@ -1,4 +1,4 @@
-"""Run a 50-question RAGAS comparison for vector search and GraphRAG."""
+"""Run a RAGAS evaluation for vector-search retrieval."""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +18,7 @@ DEFAULT_OUTPUT = BACKEND_DIR / "evaluation" / "ragas_results.json"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate vector search versus GraphRAG with RAGAS.",
+        description="Evaluate vector search with RAGAS.",
     )
     parser.add_argument("--user-id", required=True, help="Owner user id for indexed documents.")
     parser.add_argument("--document-id", help="Optional single document id to evaluate.")

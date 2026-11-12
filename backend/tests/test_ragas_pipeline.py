@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from app.evaluation import ragas_pipeline
 from app.evaluation.ragas_pipeline import (
     EvaluationQuestion,
-    append_graph_context,
     collect_records,
     load_questions,
     summarize_ragas_result,
@@ -25,15 +24,7 @@ def test_load_questions_requires_exact_limit(tmp_path):
     assert questions[0].question == "Question 1?"
 
 
-def test_append_graph_context_skips_empty_context():
-    assert append_graph_context(["vector context"], "  ") == ["vector context"]
-    assert append_graph_context(["vector context"], "graph context") == [
-        "vector context",
-        "graph context",
-    ]
-
-
-def test_collect_records_builds_vector_and_graphrag_samples(monkeypatch):
+def test_collect_records_builds_vector_samples(monkeypatch):
     questions = [
         EvaluationQuestion(id="q1", question="What is Alpha?", reference="Alpha is a product."),
     ]
@@ -42,11 +33,6 @@ def test_collect_records_builds_vector_and_graphrag_samples(monkeypatch):
         ragas_pipeline,
         "retrieve_vector_contexts",
         lambda **_kwargs: ["Alpha vector context."],
-    )
-    monkeypatch.setattr(
-        ragas_pipeline,
-        "retrieve_graphrag_contexts",
-        lambda **_kwargs: ["Alpha vector context.", "Alpha is related to Beta."],
     )
 
     records = collect_records(
@@ -57,8 +43,7 @@ def test_collect_records_builds_vector_and_graphrag_samples(monkeypatch):
 
     assert records["vector"][0].mode == "vector"
     assert records["vector"][0].response.endswith("1 contexts")
-    assert records["graphrag"][0].mode == "graphrag"
-    assert records["graphrag"][0].response.endswith("2 contexts")
+    assert "graphrag" not in records
 
 
 def test_summarize_ragas_result_averages_score_rows():

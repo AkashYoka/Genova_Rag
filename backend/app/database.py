@@ -317,6 +317,9 @@ def _migrate_schema():
         ("documents", "storage_backend", "ALTER TABLE documents ADD COLUMN storage_backend VARCHAR(20) DEFAULT 'local'"),
         ("documents", "detected_domain", "ALTER TABLE documents ADD COLUMN detected_domain VARCHAR(64)"),
         ("documents", "domain_confidence", "ALTER TABLE documents ADD COLUMN domain_confidence FLOAT"),
+        ("documents", "chunk_strategy", "ALTER TABLE documents ADD COLUMN chunk_strategy VARCHAR(32) DEFAULT 'semantic_llm'"),
+        ("documents", "index_version", "ALTER TABLE documents ADD COLUMN index_version VARCHAR(32)"),
+        ("documents", "chunking_report", f"ALTER TABLE documents ADD COLUMN chunking_report {text_type}"),
     ]
     for table, column, ddl in docs_migrations:
         if column not in existing_docs_columns:
@@ -723,6 +726,112 @@ def _migrate_schema():
             logger.info("Migration: created table response_feedback")
         except Exception as exc:
             logger.warning("Migration skipped response_feedback: %s", exc)
+
+    # ── Hierarchical semantic chunk index ──────────────────────────────────
+    existing_tables = set(inspector.get_table_names())
+    if "document_sections" not in existing_tables:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"""
+                    CREATE TABLE document_sections (
+                        id                VARCHAR(64)   PRIMARY KEY,
+                        document_id       CHAR(36)      NOT NULL,
+                        user_id           CHAR(36)      NOT NULL,
+                        parent_section_id VARCHAR(64),
+                        title             VARCHAR(512)  NOT NULL,
+                        level             INTEGER       NOT NULL DEFAULT 1,
+                        ordinal           INTEGER       NOT NULL DEFAULT 0,
+                        page_start        INTEGER,
+                        page_end          INTEGER,
+                        summary           {text_type},
+                        block_ids_json    {text_type},
+                        tables_json       {text_type},
+                        chunk_count       INTEGER       NOT NULL DEFAULT 0,
+                        index_version     VARCHAR(32),
+                        created_at        {timestamp_type},
+                        CONSTRAINT fk_document_sections_document
+                            FOREIGN KEY (document_id) REFERENCES documents (id) ON DELETE CASCADE
+                    )
+                """))
+            logger.info("Migration: created table document_sections")
+        except Exception as exc:
+            logger.warning("Migration skipped document_sections: %s", exc)
+
+    # Indexes are ensured even when the tables already exist, so an interrupted
+    # earlier migration can be repaired on the next startup.
+    _ensure_index(
+        "document_sections",
+        "ix_document_sections_document_id",
+        "document_id",
+    )
+    _ensure_index(
+        "document_sections",
+        "ix_document_sections_user_id",
+        "user_id",
+    )
+    _ensure_index(
+        "document_sections",
+        "ix_document_sections_parent_section_id",
+        "parent_section_id",
+    )
+    _ensure_index(
+        "document_sections",
+        "ix_document_sections_document_ordinal",
+        "document_id, ordinal",
+    )
+
+    if "document_chunks" not in existing_tables:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"""
+                    CREATE TABLE document_chunks (
+                        id                VARCHAR(160)  PRIMARY KEY,
+                        document_id       CHAR(36)      NOT NULL,
+                        user_id           CHAR(36)      NOT NULL,
+                        section_id        VARCHAR(64),
+                        parent_section_id VARCHAR(64),
+                        chunk_index       INTEGER       NOT NULL DEFAULT 0,
+                        content           {text_type}   NOT NULL,
+                        chunk_type        VARCHAR(32)   NOT NULL DEFAULT 'text',
+                        content_type      VARCHAR(32),
+                        page_start        INTEGER,
+                        page_end          INTEGER,
+                        token_count       INTEGER,
+                        block_ids_json    {text_type},
+                        table_ids_json    {text_type},
+                        metadata_json     {text_type},
+                        index_version     VARCHAR(32),
+                        created_at        {timestamp_type},
+                        CONSTRAINT fk_document_chunks_document
+                            FOREIGN KEY (document_id) REFERENCES documents (id) ON DELETE CASCADE,
+                        CONSTRAINT fk_document_chunks_section
+                            FOREIGN KEY (section_id) REFERENCES document_sections (id) ON DELETE CASCADE
+                    )
+                """))
+            logger.info("Migration: created table document_chunks")
+        except Exception as exc:
+            logger.warning("Migration skipped document_chunks: %s", exc)
+
+    _ensure_index(
+        "document_chunks",
+        "ix_document_chunks_document_id",
+        "document_id",
+    )
+    _ensure_index(
+        "document_chunks",
+        "ix_document_chunks_user_id",
+        "user_id",
+    )
+    _ensure_index(
+        "document_chunks",
+        "ix_document_chunks_section_id",
+        "section_id",
+    )
+    _ensure_index(
+        "document_chunks",
+        "ix_document_chunks_document_index",
+        "document_id, chunk_index",
+    )
 
 
 def advisory_lock(lock_id: int, timeout_seconds: int = 30):

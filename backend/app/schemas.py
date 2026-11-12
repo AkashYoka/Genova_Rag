@@ -584,21 +584,11 @@ class QuizStateUpdateRequest(BaseModel):
     completed: Optional[bool] = None
 
 
-class GraphContextInfo(BaseModel):
-    """Compact summary of the graph evidence used to ground an answer."""
-
-    entities: List[str] = []
-    relationship_count: int = 0
-    source_count: int = 0
-    truncated: bool = False
-
-
 class ChatResponse(BaseModel):
     answer: str
     sources: List[SourceChunk] = []
     document_id: Optional[str] = None
     quiz: Optional[QuizPayload] = None
-    graph: Optional[GraphContextInfo] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -634,7 +624,6 @@ class ChatMessageResponse(BaseModel):
     llm_provider: Optional[str] = None
     response_time_ms: Optional[int] = None
     quiz: Optional[QuizPayload] = None
-    graph: Optional[GraphContextInfo] = None
 
     class Config:
         from_attributes = True
@@ -1119,3 +1108,90 @@ class PromptTestResponse(BaseModel):
 
 # Rebuild models for forward references
 TokenResponse.model_rebuild()
+
+
+# ── Hierarchical document navigation ────────────────────────────────────────
+
+
+class SectionTreeNode(BaseModel):
+    section_id: str
+    document_id: Optional[str] = None
+    parent_section_id: Optional[str] = None
+    title: str
+    level: int = 1
+    ordinal: int = 0
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    summary: str = ""
+    block_ids: List[str] = []
+    tables: List[Dict[str, Any]] = []
+    chunk_count: int = 0
+    index_version: Optional[str] = None
+    children: List["SectionTreeNode"] = []
+
+
+class DocumentHierarchyResponse(BaseModel):
+    document_id: str
+    filename: Optional[str] = None
+    chunk_strategy: Optional[str] = None
+    index_version: Optional[str] = None
+    section_count: int = 0
+    chunk_count: int = 0
+    report: Optional[Dict[str, Any]] = None
+    sections: List[SectionTreeNode] = []
+
+
+class SectionChunksResponse(BaseModel):
+    document_id: str
+    section_id: str
+    title: str
+    chunk_count: int = 0
+    chunks: List[Dict[str, Any]] = []
+
+
+class SectionTablesResponse(BaseModel):
+    document_id: str
+    section_id: str
+    title: str
+    tables: List[Dict[str, Any]] = []
+
+
+class RelatedSectionsResponse(BaseModel):
+    document_id: str
+    section_id: str
+    parent: Optional[SectionTreeNode] = None
+    previous: Optional[SectionTreeNode] = None
+    next: Optional[SectionTreeNode] = None
+    children: List[SectionTreeNode] = []
+    siblings: List[SectionTreeNode] = []
+
+
+class DocumentIndexStatusResponse(BaseModel):
+    document_id: str
+    status: str
+    processing_stage: Optional[str] = None
+    processing_progress: Optional[int] = None
+    error_message: Optional[str] = None
+    chunk_strategy: Optional[str] = None
+    index_version: Optional[str] = None
+    section_count: int = 0
+    chunk_count: int = 0
+    report: Optional[Dict[str, Any]] = None
+
+
+class ReindexRequest(BaseModel):
+    strategy: Optional[str] = Field(
+        default=None,
+        description="semantic_llm | deterministic | legacy",
+    )
+
+
+class ReindexResponse(BaseModel):
+    document_id: str
+    status: str
+    task_id: Optional[str] = None
+    chunk_strategy: str
+    message: str
+
+
+SectionTreeNode.model_rebuild()

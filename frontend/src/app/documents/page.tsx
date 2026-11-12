@@ -24,6 +24,7 @@ import {
   ArrowRight,
   HardDrive,
   FileCode,
+  Network,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
@@ -573,6 +574,22 @@ function DocumentLibraryPageContent() {
     } finally {
       setEmptyingTrash(false);
     }
+  };
+
+  // ── Open hierarchical document explorer ───────────────────────────────────
+  const handleOpenExplorer = (doc: DocInfo) => {
+    if (doc.status !== "ready") {
+      toast.error("Document is still processing");
+      return;
+    }
+    const params = new URLSearchParams({
+      docId: doc.id,
+      name: doc.original_name,
+    });
+    if (doc.page_count > 0) params.set("pages", String(doc.page_count));
+    startTransition(() => {
+      router.push(`/documents/explore?${params.toString()}`);
+    });
   };
 
   // ── Open in workspace: new chat session with this PDF attached ────────────
@@ -1135,6 +1152,18 @@ function DocumentLibraryPageContent() {
                           <div className="flex flex-wrap items-center justify-end gap-1">
                             {activeTab === "active" ? (
                               <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleOpenExplorer(doc)}
+                                  disabled={doc.status !== "ready"}
+                                  className="h-8 gap-1.5 text-xs text-[var(--gd-text)] hover:bg-[var(--gd-raised)] cursor-pointer px-2"
+                                  title={`Explore hierarchy for ${doc.original_name}`}
+                                >
+                                  <Network className="h-3.5 w-3.5" />
+                                  <span className="hidden md:inline">Explore</span>
+                                </Button>
+
                                 <Button
                                   variant="ghost"
                                   size="sm"

@@ -1,4 +1,5 @@
 """Reusable document ingestion pipeline."""
+import json
 import logging
 import os
 import tempfile
@@ -128,6 +129,13 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         doc.processing_progress = 20
         db.commit()
 
+        # Per-document strategy selected by a reindex request, falling back to
+        # the global default for first-time ingestion.
+        requested_strategy = (
+            getattr(doc, "chunk_strategy", None)
+            or getattr(settings, "CHUNK_STRATEGY", "semantic_llm")
+            or "semantic_llm"
+        ).lower()
         try:
             chunk_kwargs = {}
             if doc.chunk_size is not None:
@@ -139,9 +147,35 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             db.commit()
             chunk_kwargs["document_id"] = document_id
             chunk_kwargs["document_name"] = original_name
+            chunk_kwargs["strategy"] = requested_strategy
+
+            def _on_chunk_progress(stage: str, pct: int) -> None:
+                _update_progress(
+                    document_id,
+                    max(20, min(int(pct), 55)),
+                    stage or "chunking",
+                )
+
+            chunk_kwargs["progress"] = _on_chunk_progress
             chunks = chunk_document(filepath, **chunk_kwargs)
         except TypeError:
             chunks = chunk_document(filepath)
+
+        # Hierarchy/report metadata is attached to the chunk list by the
+        # semantic pipeline. Plain lists (legacy path or tests) carry none.
+        chunk_hierarchy = getattr(chunks, "hierarchy", None) or []
+        chunk_report = getattr(chunks, "report", None) or {}
+        chunk_strategy = (
+            getattr(chunks, "strategy", None) or requested_strategy
+        ).lower()
+        chunk_index_version = getattr(chunks, "index_version", None)
+        if not chunk_index_version:
+            from app.rag.chunking.semantic.version import resolve_index_version
+
+            chunk_index_version = resolve_index_version(
+                chunk_strategy,
+                used_fallback=not bool(chunk_hierarchy),
+            )
 
         # ── Proximity caption pass (PDF only) ────────────────────────────────
         # Write bounding-box-derived captions into image chunks BEFORE store_chunks()
@@ -182,33 +216,6 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             db.commit()
             return
 
-        doc.processing_progress = 55
-        doc.processing_stage = "graph"
-        db.commit()
-
-        # ── Knowledge-graph indexing (incremental, per document) ──────────
-        # The graph service owns its own session and records an explicit
-        # indexing status. A graph failure is logged and marked on the status
-        # row, never silently swallowed or allowed to fail the upload.
-        try:
-            from app.graph.service import index_document as index_document_graph
-
-            graph_result = index_document_graph(document_id, user_id, chunks)
-            if not graph_result.get("ok") and graph_result.get("status") != "disabled":
-                logger.warning(
-                    "Knowledge-graph indexing failed for document %s: %s",
-                    document_id,
-                    graph_result.get("error") or graph_result.get("status"),
-                )
-        except Exception as e:
-            logger.warning(
-                "Could not run knowledge-graph indexing for document %s: %s",
-                document_id,
-                e,
-            )
-
-        doc.processing_progress = 70
-        doc.processing_stage = "embedding"
         db.commit()
 
         def _on_embed_progress(stored: int, total: int) -> None:
@@ -253,6 +260,44 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
                 document_id,
                 exc,
             )
+
+        # ── Hierarchical navigation index ──────────────────────────────────
+        # Chroma/BM25 remain the retrieval stores. These rows power the
+        # expandable document tree and preserve source block ids for audit.
+        if chunk_hierarchy:
+            try:
+                from app.rag.chunking.semantic.hierarchy_store import persist_hierarchy
+
+                hierarchy_counts = persist_hierarchy(
+                    document_id=document_id,
+                    user_id=user_id,
+                    sections=chunk_hierarchy,
+                    chunks=list(chunks),
+                    index_version=chunk_index_version or "",
+                    db=db,
+                )
+                logger.info(
+                    "HIERARCHY_FLOW %s",
+                    {
+                        "event": "hierarchy_persisted",
+                        "document_id": document_id,
+                        "sections": hierarchy_counts.get("sections", 0),
+                        "chunks": hierarchy_counts.get("chunks", 0),
+                        "index_version": chunk_index_version,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Could not persist hierarchy for document %s: %s",
+                    document_id,
+                    exc,
+                )
+
+        doc.chunk_strategy = chunk_strategy
+        doc.index_version = chunk_index_version
+        if chunk_report:
+            doc.chunking_report = json.dumps(chunk_report, ensure_ascii=False)
+        db.commit()
 
         persist_document_keywords(doc, chunks, db)
 
@@ -305,7 +350,6 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         if ext == "pdf":
             try:
                 from app.rag.ingestion.url_extractor import extract_urls_from_pdf
-                import json
 
                 urls = extract_urls_from_pdf(filepath)
                 doc.extracted_urls = json.dumps(urls) if urls else None

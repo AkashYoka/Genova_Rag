@@ -13,7 +13,6 @@ from ddgs import DDGS
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from app.graph.retrieval import get_entity_context
 from app.rag.retrieval.retriever import retrieve
 
 logger = logging.getLogger(__name__)
@@ -205,24 +204,7 @@ class PDFSearchTool(BaseTool):
                     wrap_untrusted_retrieved_text(excerpt, label="DOCUMENT")
                 )
 
-            # Also try to get GraphRAG context
-            graph_context = get_entity_context(
-                query=query,
-                user_id=str(self.user_id),
-                document_ids=[self.document_id] if self.document_id else None,
-            )
-
-            main_context = "\n\n".join(context_parts)
-            if graph_context:
-                return (
-                    f"{main_context}\n\n"
-                    + wrap_untrusted_retrieved_text(
-                        f"Additional Relationships found:\n{graph_context}",
-                        label="GRAPH",
-                    )
-                )
-
-            return main_context
+            return "\n\n".join(context_parts)
         except Exception as e:
             logger.error(f"PDFSearchTool error: {e}")
             return f"Error searching documents: {str(e)}"

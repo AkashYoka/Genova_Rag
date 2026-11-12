@@ -146,53 +146,36 @@ def test_web_search_tool_uses_shared_search_function(monkeypatch):
     assert result == "searched: retrieval augmented generation"
 
 
-def test_pdf_search_tool_formats_chunks_and_graph_context(monkeypatch):
+def test_pdf_search_tool_formats_chunks(monkeypatch):
     chunks = [
         {"filename": "alpha.pdf", "page": 1, "text": "Alpha revenue grew by 12%."},
         {"filename": "beta.pdf", "page": 4, "text": "Beta margin narrowed."},
     ]
     retrieve_calls = []
-    graph_calls = []
 
     def fake_retrieve(query, user_id, document_id=None, document_ids=None, top_k=None):
         retrieve_calls.append((query, user_id, document_id))
         return chunks
 
-    def fake_get_entity_context(query, user_id, document_ids=None):
-        graph_calls.append((query, user_id, document_ids))
-        return "Alpha -> acquired -> Beta"
-
     monkeypatch.setattr(tools, "retrieve", fake_retrieve)
-    monkeypatch.setattr(tools, "get_entity_context", fake_get_entity_context)
 
     tool = PDFSearchTool(user_id="user-1", document_id="doc-1")
     result = tool.run({"query": "What happened to Alpha?"})
 
     assert retrieve_calls == [("What happened to Alpha?", "user-1", "doc-1")]
-    assert graph_calls == [("What happened to Alpha?", "user-1", ["doc-1"])]
     assert tool.last_sources == chunks
     assert "Excerpt 1 (alpha.pdf, Page 1):\nAlpha revenue grew by 12%." in result
     assert "Excerpt 2 (beta.pdf, Page 4):\nBeta margin narrowed." in result
-    assert "Additional Relationships found:\nAlpha -> acquired -> Beta" in result
 
 
-def test_pdf_search_tool_skips_graph_lookup_when_no_chunks(monkeypatch):
-    graph_called = False
-
-    def fake_get_entity_context(*_args, **_kwargs):
-        nonlocal graph_called
-        graph_called = True
-        return "unused"
-
+def test_pdf_search_tool_returns_no_results_message_when_no_chunks(monkeypatch):
     monkeypatch.setattr(tools, "retrieve", lambda **_kwargs: [])
-    monkeypatch.setattr(tools, "get_entity_context", fake_get_entity_context)
 
     tool = PDFSearchTool(user_id="user-1")
     result = tool.run({"query": "missing"})
 
     assert result == "No relevant information found in the documents."
     assert tool.last_sources == []
-    assert graph_called is False
 
 
 def test_pdf_search_tool_returns_error_message_on_retriever_failure(monkeypatch):

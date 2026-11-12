@@ -123,6 +123,7 @@ def test_project_name_memory_without_and_with_document(
     client, auth_headers, ready_document, monkeypatch
 ):
     """Scenarios 1 and 4: PersistenceTest recalled even with a PDF attached."""
+    document_id = str(ready_document.id)
     _force_ollama_direct(monkeypatch)
     retrieve_calls = {"n": 0}
 
@@ -131,9 +132,6 @@ def test_project_name_memory_without_and_with_document(
         return []
 
     monkeypatch.setattr("app.rag.llm.agent.retrieve", boom_retrieve)
-    monkeypatch.setattr(
-        "app.rag.llm.agent._collect_graph_evidence", lambda *a, **k: None
-    )
 
     def memory_aware_generate(question, user_id, document_id=None, chat_history=None, **kwargs):
         # Route through the real agent entry so intent logic runs.
@@ -233,7 +231,7 @@ def test_project_name_memory_without_and_with_document(
         auth_headers,
         "What is my project name?",
         session_id,
-        document_id=ready_document.id,
+        document_id=document_id,
     )
     assert r4.status_code == 200
     assert "PersistenceTest" in r4.json()["answer"]
@@ -244,6 +242,7 @@ def test_document_question_still_uses_rag_with_attach(
     client, auth_headers, ready_document, monkeypatch
 ):
     """Scenario 5: invoice question with PDF attached must retrieve."""
+    document_id = str(ready_document.id)
     _force_ollama_direct(monkeypatch)
     retrieve_calls = {"n": 0}
 
@@ -276,9 +275,6 @@ def test_document_question_still_uses_rag_with_attach(
             )
 
     monkeypatch.setattr("app.rag.llm.agent.retrieve", fake_retrieve)
-    monkeypatch.setattr(
-        "app.rag.llm.agent._collect_graph_evidence", lambda *a, **k: None
-    )
     monkeypatch.setattr("app.rag.llm.agent.get_llm_client", lambda **k: _FakeClient())
 
     def via_agent(question, user_id, document_id=None, chat_history=None, **kwargs):
@@ -304,7 +300,7 @@ def test_document_question_still_uses_rag_with_attach(
         auth_headers,
         "What is the IGST amount on that invoice?",
         session_id,
-        document_id=ready_document.id,
+        document_id=document_id,
     )
     assert r.status_code == 200
     assert retrieve_calls["n"] >= 1
@@ -316,14 +312,12 @@ def test_capability_not_hijacked_by_attachment(
     client, auth_headers, ready_document, monkeypatch
 ):
     """Scenarios 6–7: Hello / What can you do ignore attached PDF."""
+    document_id = str(ready_document.id)
     _force_ollama_direct(monkeypatch)
     retrieve_calls = {"n": 0}
     monkeypatch.setattr(
         "app.rag.llm.agent.retrieve",
         lambda *a, **k: retrieve_calls.__setitem__("n", retrieve_calls["n"] + 1) or [],
-    )
-    monkeypatch.setattr(
-        "app.rag.llm.agent._collect_graph_evidence", lambda *a, **k: None
     )
 
     class _FakeChoice:
@@ -364,7 +358,7 @@ def test_capability_not_hijacked_by_attachment(
             auth_headers,
             q,
             session_id,
-            document_id=ready_document.id,
+            document_id=document_id,
         )
         assert r.status_code == 200
         body = r.json()["answer"].lower()
@@ -383,9 +377,6 @@ def test_session_isolation_and_stream_memory(client, auth_headers, monkeypatch):
         return []
 
     monkeypatch.setattr("app.rag.llm.agent.retrieve", soft_retrieve)
-    monkeypatch.setattr(
-        "app.rag.llm.agent._collect_graph_evidence", lambda *a, **k: None
-    )
 
     class _FakeChoice:
         def __init__(self, text):

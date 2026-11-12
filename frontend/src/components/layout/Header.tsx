@@ -22,7 +22,6 @@ import {
   Sun,
   Moon,
   Settings,
-  Network,
   Shield,
 } from "lucide-react";
 import { isAdminUser } from "@/lib/admin";
@@ -41,8 +40,6 @@ import GoogleDriveSettings from "@/components/settings/GoogleDriveSettings";
 interface HeaderProps {
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
-  graphOpen?: boolean;
-  onToggleGraph?: () => void;
   /** Pass DocumentSidebar JSX so the mobile sheet can render it */
   mobileSheetContent?: React.ReactNode;
 }
@@ -54,8 +51,6 @@ const getServerSnapshot = () => false;
 export default function Header({
   sidebarOpen = false,
   onToggleSidebar,
-  graphOpen = false,
-  onToggleGraph,
   mobileSheetContent,
 }: HeaderProps) {
   const { user, logout } = useAuth();
@@ -165,25 +160,6 @@ export default function Header({
         </div>
 
         <div className="flex items-center gap-1">
-          {onToggleGraph ? (
-            <Button
-              variant={graphOpen ? "secondary" : "ghost"}
-              size="icon"
-              className={
-                graphOpen
-                  ? "h-8 w-8 bg-[var(--gd-active)] text-[var(--gd-text)]"
-                  : toolBtn
-              }
-              onClick={onToggleGraph}
-              title={graphOpen ? "Close knowledge graph" : "Open knowledge graph"}
-              aria-label={
-                graphOpen ? "Close knowledge graph" : "Open knowledge graph"
-              }
-              aria-pressed={graphOpen}
-            >
-              <Network className="h-4 w-4" />
-            </Button>
-          ) : null}
           <Button
             variant="ghost"
             size="icon"

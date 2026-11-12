@@ -43,11 +43,6 @@ export const INGEST_PIPELINE: PipelineStep[] = [
     detail: "Split document into searchable chunks",
   },
   {
-    id: "graph",
-    label: "Knowledge graph",
-    detail: "Extract entities and relationships",
-  },
-  {
     id: "embed",
     label: "Embedding",
     detail: "Generate vector embeddings",
@@ -71,8 +66,7 @@ function activeStepIndex(
     return INGEST_PIPELINE.length;
   }
   if (status === "failed") {
-    if (s === "embedding" || (pct != null && pct >= 70)) return 4;
-    if (s === "graph" || (pct != null && pct >= 55)) return 3;
+    if (s === "embedding" || (pct != null && pct >= 55)) return 3;
     if (s === "chunking" || (pct != null && pct >= 30)) return 2;
     if (s === "extracting" || (pct != null && pct >= 10)) return 1;
     return 0;
@@ -83,15 +77,13 @@ function activeStepIndex(
 
   if (s === "extracting") return 1;
   if (s === "chunking") return 2;
-  if (s === "graph") return 3;
   if (s === "embedding") {
-    if (pct != null && pct >= 90) return 5;
-    return 4;
+    if (pct != null && pct >= 90) return 4;
+    return 3;
   }
 
   if (pct != null) {
-    if (pct >= 92) return 5;
-    if (pct >= 70) return 4;
+    if (pct >= 92) return 4;
     if (pct >= 55) return 3;
     if (pct >= 30) return 2;
     if (pct >= 10) return 1;

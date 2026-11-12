@@ -52,10 +52,8 @@ langchain-text-splitters
 langsmith
 rank-bm25
 
-# Vector / graph
+# Vector store
 chromadb
-networkx>=3.3
-spacy>=3.7
 
 # Production
 slowapi

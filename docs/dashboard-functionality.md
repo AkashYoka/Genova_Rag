@@ -68,7 +68,7 @@ The dashboard combines functional areas in a single desk layout: document librar
 
 - `/admin`, `/login`, `/register`, `/verify-email`, `/auth/*` pages except where their APIs are called from the dashboard
 - Background ingestion workers (Celery) except where triggered by dashboard upload
-- GraphRAG, quiz generation, batch upload, URL upload, email service, audit logging, observability/metrics, cleanup scheduler — present in the repository but not invoked by the dashboard page code inspected
+- Quiz generation, batch upload, URL upload, email service, audit logging, observability/metrics, cleanup scheduler — present in the repository but not invoked by the dashboard page code inspected
 
 ## Authentication and Authorization
 
@@ -1173,7 +1173,6 @@ DashboardPage (page.tsx, client)
 | `frontend/src/components/chat/QuizCard.tsx` | Inline quiz UI for quiz-intent questions | Inside ChatPanel |
 | `frontend/src/components/notes/NotesPanel.tsx` | Shared notes editor, export to PDF/TXT/MD, drag-in messages | Inspector notes tab |
 | `frontend/src/components/notes/NotesEditor.tsx` | CKEditor 5 rich-text editor | Inside NotesPanel |
-| `frontend/src/components/graph/KnowledgeGraph.tsx` | Knowledge graph visualization (xyflow) | Lazy-loaded panel (imported; not core to verified flow) |
 | `frontend/src/components/dashboard/DashboardPanel.tsx` | Decorative panel shell (FadeIn + SpotlightCard) | Defined; not imported by page.tsx |
 | `frontend/src/components/dashboard/DashboardStatusBar.tsx` | Active-document status chips (status, pages, chunks, date) | Defined; not imported by page.tsx |
 | `frontend/src/hooks/useDashboardDrop.ts` | Window dragenter/dragover/drop tracking; accepted extensions pdf/docx/txt/md | Powers DashboardDropOverlay |
@@ -1201,6 +1200,5 @@ DashboardPage (page.tsx, client)
   - `DashboardDropOverlay` (`@/components/document/DashboardDropOverlay`) — full-page drag-over overlay
   - `NotesPanel` (`@/components/notes/NotesPanel`, lazy via `next/dynamic`, `ssr: false`) — shared notes
   - `PDFViewer` (`@/components/document/PDFViewer`, lazy via `next/dynamic`, `ssr: false`) — PDF.js viewer
-  - `KnowledgeGraph` (`@/components/graph/KnowledgeGraph`, lazy via `next/dynamic`, `ssr: false`) — knowledge graph panel (referenced in imports; graph wiring not part of core dashboard flow)
 - **Parent layout:** `frontend/src/app/layout.tsx` (root layout) wraps the page with `ThemeProvider` → `MuiProvider` → `AuthProvider` → `I18nProvider` → `TooltipProvider`.
 - **Page stylesheet:** `frontend/src/app/dashboard/dashboard.css` — design tokens (`--gd-ground`, `--gd-surface`, `--gd-border`, `--gd-primary`, status colors), layout grid (docs 240px + sessions 280px + inspector 360px + chat 1fr), dark theme, status pill colors.

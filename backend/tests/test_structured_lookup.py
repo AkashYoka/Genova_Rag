@@ -213,7 +213,7 @@ def test_agent_injects_same_verified_block_regardless_of_provider(provider):
 
     with patch.object(agent_mod, "retrieve", return_value=chunks), patch.object(
         agent_mod, "_try_special_turn_answer", return_value=None
-    ), patch.object(agent_mod, "_collect_graph_evidence", return_value=None), patch.object(
+    ), patch.object(
         agent_mod, "_build_attached_summarize_context", return_value=None
     ), patch.object(
         agent_mod, "_resolve_runtime_prompts", return_value=FakeResolved()

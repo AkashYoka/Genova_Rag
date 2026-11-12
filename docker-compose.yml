@@ -27,7 +27,6 @@ x-backend-environment: &backend-environment
   FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
   UPLOAD_DIR: /app/data/uploads
   CHROMA_PERSIST_DIR: ${CHROMA_PERSIST_DIR:-/app/data/chroma_db_bedrock_titan_v2}
-  GRAPH_PERSIST_DIR: ${GRAPH_PERSIST_DIR:-/app/data/graphs}
   LOG_FILE: /app/data/logs/app.log
   REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme-genova-redis}
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://:${REDIS_PASSWORD:-changeme-genova-redis}@redis:6379/0}

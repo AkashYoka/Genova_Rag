@@ -36,7 +36,6 @@ from app.schemas import (
     ChatHistoryResponse,
     FeedbackRequest,
     SourceChunk,
-    GraphContextInfo,
     ChatSessionCreate,
     ChatSessionUpdate,
     ChatSessionResponse,
@@ -204,29 +203,6 @@ def _parse_message_sources_json(
     return sources, usage, llm_provider, response_time_ms, quiz, attachments
 
 
-def _parse_graph_from_sources_json(raw: Optional[str]) -> Optional[dict]:
-    """Return the graph metadata stored with a message, if any."""
-    if not raw:
-        return None
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return None
-    if isinstance(parsed, dict):
-        graph = parsed.get("graph")
-        return graph if isinstance(graph, dict) else None
-    return None
-
-
-def _coerce_graph_payload(graph: Optional[dict]) -> Optional[GraphContextInfo]:
-    if not graph or not isinstance(graph, dict):
-        return None
-    try:
-        return GraphContextInfo(**graph)
-    except Exception:
-        return None
-
-
 def _coerce_quiz_payload(quiz: Optional[dict]) -> Optional[QuizPayload]:
     if not quiz or not isinstance(quiz, dict):
         return None
@@ -254,7 +230,6 @@ def _message_response_from_row(msg: ChatMessage) -> ChatMessageResponse:
         llm_provider=llm_provider,
         response_time_ms=response_time_ms,
         quiz=_coerce_quiz_payload(quiz),
-        graph=_coerce_graph_payload(_parse_graph_from_sources_json(msg.sources_json)),
     )
 
 
@@ -266,7 +241,6 @@ def _enriched_sources_payload(
     llm_provider: Optional[str] = None,
     response_time_ms: Optional[int] = None,
     attachments: Optional[list] = None,
-    graph: Optional[dict] = None,
 ):
     """Build sources_json value: plain list when no metadata, else enriched dict."""
     if (
@@ -275,7 +249,6 @@ def _enriched_sources_payload(
         and not llm_provider
         and response_time_ms is None
         and not attachments
-        and not graph
     ):
         return sources
     enriched_usage = usage
@@ -308,8 +281,6 @@ def _enriched_sources_payload(
         payload["quiz"] = quiz
     if attachments:
         payload["attachments"] = attachments
-    if graph:
-        payload["graph"] = graph
     return payload
 
 
@@ -510,7 +481,6 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             full_answer = ""
             sources: list = []
             quiz_payload = None
-            graph_payload = None
             stream_completed = False
             stream_failed = False
             for chunk in generate_answer_stream(
@@ -537,8 +507,6 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                             sources = event_payload.get("data") or []
                         elif event_type == "quiz":
                             quiz_payload = event_payload.get("data")
-                        elif event_type == "graph":
-                            graph_payload = event_payload.get("data")
                         if event_type == "done":
                             if not stream_failed:
                                 stream_completed = True
@@ -562,7 +530,6 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                     quiz=quiz_payload,
                     usage=last_usage,
                     llm_provider=llm_provider,
-                    graph=graph_payload,
                 )
                 assistant_message_id = _save_message(
                     db,
@@ -885,7 +852,10 @@ def ask_question(
 ):
     """Ask a question with RAG retrieval and return the complete answer."""
     started_at = time.perf_counter()
-    
+    # Capture early — nested SessionLocal commits (e.g. prompt resolution) can
+    # expire/detach the request-scoped User on shared SQLite test connections.
+    user_id = str(user.id)
+
     # Bind query parameters to request context variables and state
     if request is not None:
         request.state.query = payload.question
@@ -901,7 +871,7 @@ def ask_question(
 
         # Validate document exists if specified
         if payload.document_id:
-            doc = _get_active_owned_document(db, user.id, payload.document_id)
+            doc = _get_active_owned_document(db, user_id, payload.document_id)
             if not doc:
                 _raise_source_unavailable()
 
@@ -922,7 +892,7 @@ def ask_question(
         # Validate documents if multiple specified
         elif payload.document_ids:
             docs = _require_active_owned_documents(
-                db, user.id, [str(d) for d in payload.document_ids]
+                db, user_id, [str(d) for d in payload.document_ids]
             )
 
             not_ready = [doc.original_name for doc in docs if doc.status != "ready"]
@@ -936,24 +906,24 @@ def ask_question(
             db.commit()
 
         # Resolve owned session (never accept foreign session IDs)
-        session = _resolve_owned_session(db, user.id, payload.session_id)
+        session = _resolve_owned_session(db, user_id, payload.session_id)
         session_id = session.id
 
         # DB-backed history for this session only (before current turn)
-        chat_history = _load_prompt_chat_history(db, user.id, session_id)
+        chat_history = _load_prompt_chat_history(db, user_id, session_id)
 
         attach_meta = None
         if payload.document_ids:
             attach_docs = (
                 db.query(Document)
-                .filter(Document.id.in_(payload.document_ids), Document.user_id == user.id)
+                .filter(Document.id.in_(payload.document_ids), Document.user_id == user_id)
                 .all()
             )
             attach_meta = _attachments_from_docs(attach_docs)
         elif payload.document_id:
             one = (
                 db.query(Document)
-                .filter(Document.id == payload.document_id, Document.user_id == user.id)
+                .filter(Document.id == payload.document_id, Document.user_id == user_id)
                 .first()
             )
             if one:
@@ -967,7 +937,7 @@ def ask_question(
         try:
             _save_message(
                 db,
-                user.id,
+                user_id,
                 msg_doc_id,
                 "user",
                 payload.question,
@@ -998,7 +968,7 @@ def ask_question(
         cached_payload = None
         if not quiz_intent_request:
             cached_payload = get_cached_payload(
-                user_id=user.id,
+                user_id=user_id,
                 document_id=cache_doc_key,
                 question=cache_question,
                 session_id=str(session_id),
@@ -1012,7 +982,7 @@ def ask_question(
             if answer.strip():
                 _save_message(
                     db,
-                    user.id,
+                    user_id,
                     msg_doc_id,
                     "assistant",
                     answer,
@@ -1034,7 +1004,7 @@ def ask_question(
 
         result = generate_answer(
             question=payload.question,
-            user_id=user.id,
+            user_id=user_id,
             document_id=payload.document_id,
             document_ids=payload.document_ids,
             top_k=payload.top_k,
@@ -1055,7 +1025,7 @@ def ask_question(
         quiz_data = result.get("quiz")
         if not quiz_data and not quiz_intent_request and (result.get("answer") or "").strip():
             set_cached_response(
-                user_id=user.id,
+                user_id=user_id,
                 document_id=cache_doc_key,
                 question=cache_question,
                 answer=result["answer"],
@@ -1068,11 +1038,10 @@ def ask_question(
             quiz=quiz_data,
             usage=result.get("usage"),
             llm_provider=payload.llm_provider,
-            graph=result.get("graph"),
         )
         assistant_message_id = _save_message(
             db,
-            user.id,
+            user_id,
             msg_doc_id,
             "assistant",
             result.get("answer") or "",
@@ -1083,7 +1052,7 @@ def ask_question(
         if assistant_message_id:
             _record_assistant_usage(
                 db,
-                user_id=user.id,
+                user_id=user_id,
                 usage=result.get("usage"),
                 session_id=session_id,
                 message_id=assistant_message_id,
@@ -1104,7 +1073,6 @@ def ask_question(
             sources=safe_sources,
             document_id=payload.document_id,
             quiz=_coerce_quiz_payload(quiz_data),
-            graph=_coerce_graph_payload(result.get("graph")),
         )
     finally:
         record_query_response_time(time.perf_counter() - started_at)
@@ -1126,6 +1094,8 @@ def ask_question_stream(
     db: Session = Depends(get_db),
 ):
     """Ask a question and stream the answer using Server-Sent Events."""
+    user_id = str(user.id)
+
     # Bind query parameters to request context variables and state
     if request is not None:
         request.state.query = payload.question
@@ -1140,7 +1110,7 @@ def ask_question_stream(
 
     # Validate document
     if payload.document_id:
-        doc = _get_active_owned_document(db, user.id, payload.document_id)
+        doc = _get_active_owned_document(db, user_id, payload.document_id)
         if not doc:
             _raise_source_unavailable()
 
@@ -1161,7 +1131,7 @@ def ask_question_stream(
     # Validate documents if multiple specified
     elif payload.document_ids:
         docs = _require_active_owned_documents(
-            db, user.id, [str(d) for d in payload.document_ids]
+            db, user_id, [str(d) for d in payload.document_ids]
         )
 
         not_ready = [doc.original_name for doc in docs if doc.status != "ready"]
@@ -1176,11 +1146,11 @@ def ask_question_stream(
 
     started_at = time.perf_counter()
 
-    session = _resolve_owned_session(db, user.id, payload.session_id)
+    session = _resolve_owned_session(db, user_id, payload.session_id)
     session_id = session.id
 
     # History before current user turn
-    chat_history = _load_prompt_chat_history(db, user.id, session_id)
+    chat_history = _load_prompt_chat_history(db, user_id, session_id)
 
     cache_doc_key = str(payload.document_id or "")
     if payload.document_ids:
@@ -1190,14 +1160,14 @@ def ask_question_stream(
     if payload.document_ids:
         attach_docs = (
             db.query(Document)
-            .filter(Document.id.in_(payload.document_ids), Document.user_id == user.id)
+            .filter(Document.id.in_(payload.document_ids), Document.user_id == user_id)
             .all()
         )
         attach_meta = _attachments_from_docs(attach_docs)
     elif payload.document_id:
         one = (
             db.query(Document)
-            .filter(Document.id == payload.document_id, Document.user_id == user.id)
+            .filter(Document.id == payload.document_id, Document.user_id == user_id)
             .first()
         )
         if one:
@@ -1211,7 +1181,7 @@ def ask_question_stream(
     try:
         _save_message(
             db,
-            user.id,
+            user_id,
             msg_doc_id,
             "user",
             payload.question,
@@ -1231,7 +1201,7 @@ def ask_question_stream(
         stream_cache_question = f"[{payload.llm_provider}] {payload.question}"
     if not stream_quiz_intent:
         cached_payload = get_cached_payload(
-            user_id=user.id,
+            user_id=user_id,
             document_id=cache_doc_key,
             question=stream_cache_question,
             session_id=str(session_id),
@@ -1244,7 +1214,7 @@ def ask_question_stream(
             if cached_answer.strip():
                 cached_message_id = _save_message(
                     db,
-                    user.id,
+                    user_id,
                     msg_doc_id,
                     "assistant",
                     cached_answer,
@@ -1284,7 +1254,6 @@ def ask_question_stream(
         full_answer = ""
         sources = []
         quiz_payload = None
-        graph_payload = None
         last_usage = None
         stream_completed = False
         stream_failed = False
@@ -1293,7 +1262,7 @@ def ask_question_stream(
         try:
             for chunk in generate_answer_stream(
                 question=payload.question,
-                user_id=user.id,
+                user_id=user_id,
                 document_id=None if payload.document_ids else payload.document_id,
                 document_ids=payload.document_ids,
                 top_k=payload.top_k,
@@ -1324,8 +1293,6 @@ def ask_question_stream(
                             sources = data.get("data", [])
                         elif event_type == "quiz":
                             quiz_payload = data.get("data")
-                        elif event_type == "graph":
-                            graph_payload = data.get("data")
                 except Exception:
                     pass
                 yield chunk
@@ -1345,7 +1312,7 @@ def ask_question_stream(
             # Skip quiz intents entirely (success or failure) so retries stay live.
             if full_answer.strip() and not quiz_payload and not stream_quiz_intent:
                 set_cached_response(
-                    user_id=user.id,
+                    user_id=user_id,
                     document_id=cache_doc_key,
                     question=stream_cache_question,
                     answer=full_answer,
@@ -1363,7 +1330,6 @@ def ask_question_stream(
                 usage=last_usage,
                 llm_provider=payload.llm_provider,
                 response_time_ms=elapsed_ms,
-                graph=graph_payload,
             )
 
             assistant_message_id = None
@@ -1372,7 +1338,7 @@ def ask_question_stream(
                     with get_db_session() as save_db:
                         assistant_message_id = _save_message(
                             save_db,
-                            user.id,
+                            user_id,
                             msg_doc_id,
                             "assistant",
                             full_answer,
@@ -1384,7 +1350,7 @@ def ask_question_stream(
                             assistant_persisted = True
                             _record_assistant_usage(
                                 save_db,
-                                user_id=user.id,
+                                user_id=user_id,
                                 usage=last_usage,
                                 session_id=session_id,
                                 message_id=assistant_message_id,
@@ -1403,7 +1369,7 @@ def ask_question_stream(
             # Log streaming response RAG completion
             chunks_count = len(sources)
             from app.observability import chunks_retrieved_var, query_text_var, user_id_var
-            user_id_var.set(user.id)
+            user_id_var.set(user_id)
             query_text_var.set(payload.question)
             chunks_retrieved_var.set(chunks_count)
             logger.info(f"Streaming RAG chat query completed, retrieved {chunks_count} chunks")

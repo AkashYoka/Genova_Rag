@@ -986,15 +986,61 @@ def chunk_document(
     chunk_overlap: int = None,
     document_id: str = None,
     document_name: str = None,
+    progress=None,
+    strategy: str = None,
 ) -> List[Dict[str, Any]]:
     """Load a document, extract text per page, and split into semantic chunks.
 
-    PDFs on disk go through the layout-aware pipeline first (classification,
-    OCR fallback, reading order, tables, heading hierarchy). The legacy path
-    remains the fallback for older callers, fake paths in tests, and any
-    unexpected layout failure.
+    PDFs on disk first go through the LLM-assisted hierarchical semantic
+    pipeline (section analysis over layout blocks, deterministic fallback).
+    The layout-aware pipeline remains the fallback, and the legacy path remains
+    for older callers, fake paths in tests, and any unexpected failure.
+
+    ``progress`` is an optional ``(stage, percent)`` callback used by Celery
+    ingestion; it is only forwarded to the semantic pipeline. ``strategy``
+    overrides the global ``CHUNK_STRATEGY`` for a per-document reindex.
     """
     ext = filepath.rsplit(".", 1)[-1].lower()
+
+    if ext == "pdf":
+        try:
+            from app.rag.chunking.semantic.service import (
+                semantic_chunk_document,
+                should_use_semantic_chunking,
+            )
+
+            if should_use_semantic_chunking(filepath, strategy=strategy):
+                semantic_chunks = semantic_chunk_document(
+                    filepath,
+                    document_id=document_id,
+                    document_name=document_name,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                    progress=progress,
+                    strategy=strategy,
+                )
+                if semantic_chunks:
+                    logger.info(
+                        "Semantic chunking produced %d chunks for %s (strategy=%s, version=%s)",
+                        len(semantic_chunks),
+                        filepath,
+                        getattr(semantic_chunks, "strategy", "semantic_llm"),
+                        getattr(semantic_chunks, "index_version", ""),
+                    )
+                    return semantic_chunks
+                logger.warning(
+                    "Semantic chunking produced no chunks for %s; "
+                    "falling back to layout pipeline",
+                    filepath,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Semantic chunking failed for %s (%s); "
+                "falling back to layout pipeline",
+                filepath,
+                exc,
+                exc_info=True,
+            )
 
     if ext == "pdf":
         if getattr(settings, "PDF_LAYOUT_AWARE_ENABLED", True) and os.path.exists(filepath):

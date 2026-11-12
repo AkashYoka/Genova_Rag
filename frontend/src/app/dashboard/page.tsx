@@ -62,20 +62,6 @@ const PDFViewer = dynamic(() => import("@/components/document/PDFViewer"), {
   loading: () => <PDFViewerSkeleton />,
 });
 
-// Lazy-load the graph panel — it pulls in @xyflow/react which is sizeable
-const KnowledgeGraph = dynamic(
-  () => import("@/components/graph/KnowledgeGraph"),
-  { ssr: false },
-);
-
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogClose,
-} from "@/components/ui/dialog";
-
 import {
   Sheet,
   SheetContent,
@@ -171,7 +157,6 @@ function DashboardPageContent() {
     quote?: string;
   } | null>(null);
   const [viewerOpen, setViewerOpen] = useState(true);
-  const [graphOpen, setGraphOpen] = useState(false);
   const sessionsOpen = useSyncExternalStore(
     subscribeSessionsOpen,
     readSessionsOpen,
@@ -379,16 +364,7 @@ function DashboardPageContent() {
     }
   }, [notesFocusToken]);
 
-  // Close the graph only when the selected document actually changes. Comparing
-  // normalized ids keeps the null (no document) case stable; otherwise
-  // `undefined !== null` fired every render and immediately closed the dialog.
-  const prevDocIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const activeDocId = activeDoc?.id ?? null;
-    if (activeDocId !== prevDocIdRef.current) {
-      prevDocIdRef.current = activeDocId;
-      setGraphOpen(false);
-    }
     associateDocument(activeDoc?.id ?? null, activeDoc?.original_name ?? null);
   }, [activeDoc?.id, activeDoc?.original_name, associateDocument]);
 
@@ -424,10 +400,7 @@ function DashboardPageContent() {
         dropZoneProps={dropZoneProps}
       />
 
-      <Header
-        graphOpen={graphOpen}
-        onToggleGraph={() => setGraphOpen(!graphOpen)}
-      />
+      <Header />
 
       {connectionError ? (
         <div className="genova-desk-alert" role="alert">
@@ -697,21 +670,6 @@ function DashboardPageContent() {
         )}
       </div>
 
-      <Dialog open={graphOpen} onOpenChange={setGraphOpen}>
-        <DialogContent
-          className="flex h-[88vh] w-[calc(100vw-1rem)] max-w-none flex-col gap-0 overflow-hidden p-0 outline-none sm:h-[90vh] sm:max-w-[min(1600px,calc(100vw-3rem))]"
-          showCloseButton={false}
-        >
-          <DialogHeader className="sr-only">
-            <DialogTitle>Knowledge graph</DialogTitle>
-          </DialogHeader>
-          {graphOpen ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <KnowledgeGraph onClose={() => setGraphOpen(false)} />
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

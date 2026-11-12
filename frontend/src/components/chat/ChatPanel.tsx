@@ -20,7 +20,6 @@ import {
   type LlmUsage,
   type SourceBoundingBox,
   type SourceChunk,
-  type GraphContextInfo,
 } from "@/store/chat-store";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -54,7 +53,6 @@ import {
   FileText,
   Check,
   X,
-  Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -418,7 +416,6 @@ export default function ChatPanel({
           content: string;
           sources?: SourceChunk[];
           feedback?: "up" | "down" | null;
-          graph?: GraphContextInfo | null;
         }>;
       }>(`/api/v1/chat/history/${documentId}`)
       .then((data) => {
@@ -431,7 +428,6 @@ export default function ChatPanel({
             content: m.content,
             sources: m.sources || [],
             feedback: m.feedback ?? null,
-            graph: m.graph ?? null,
           })),
         );
       })
@@ -613,20 +609,6 @@ export default function ChatPanel({
                     : m,
                 ),
               );
-            } else if (event.type === "graph") {
-              if (!assistantCreated) {
-                assistantCreated = ensureAssistantPlaceholder(
-                  assistantId,
-                  assistantCreated,
-                );
-              }
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantId
-                    ? { ...m, graph: event.data as GraphContextInfo }
-                    : m,
-                ),
-              );
             } else if (event.type === "quiz") {
               flushTokensNow();
               if (!assistantCreated) {
@@ -734,20 +716,6 @@ export default function ChatPanel({
               prev.map((m) =>
                 m.id === assistantId
                   ? { ...m, sources: event.data as SourceChunk[] }
-                  : m,
-              ),
-            );
-          } else if (event.type === "graph") {
-            if (!assistantCreated) {
-              assistantCreated = ensureAssistantPlaceholder(
-                assistantId,
-                assistantCreated,
-              );
-            }
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? { ...m, graph: event.data as GraphContextInfo }
                   : m,
               ),
             );
@@ -1162,28 +1130,6 @@ export default function ChatPanel({
                         )
                       }
                     />
-                  </div>
-                )}
-                {msg.role === "assistant" && msg.graph && (
-                  <div className="gc-inline flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--gd-muted)]">
-                    <span className="inline-flex items-center gap-1 rounded-md border border-[var(--gd-border)] bg-[var(--gd-raised)] px-1.5 py-0.5 font-medium text-[var(--gd-text)]">
-                      <Network className="h-3 w-3" />
-                      Knowledge graph
-                    </span>
-                    <span>
-                      {msg.graph.relationship_count} relationship
-                      {msg.graph.relationship_count === 1 ? "" : "s"}
-                    </span>
-                    <span>
-                      · {msg.graph.source_count} source
-                      {msg.graph.source_count === 1 ? "" : "s"}
-                    </span>
-                    {msg.graph.entities.length > 0 && (
-                      <span className="truncate" title={msg.graph.entities.join(", ")}>
-                        · {msg.graph.entities.slice(0, 3).join(", ")}
-                        {msg.graph.entities.length > 3 ? "…" : ""}
-                      </span>
-                    )}
                   </div>
                 )}
                 {msg.role === "assistant" && (msg.sources?.length ?? 0) > 0 && (

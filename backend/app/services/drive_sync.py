@@ -315,16 +315,6 @@ def _soft_delete_document(db: Session, document: Document) -> None:
     document.deleted_at = datetime.now(timezone.utc)
     db.commit()
     try:
-        from app.graph.service import remove_document as remove_document_graph
-
-        remove_document_graph(str(document.id), str(document.user_id), db=db)
-    except Exception as exc:
-        logger.warning(
-            "Graph cleanup failed for Drive-removed document %s: %s",
-            document.id,
-            exc,
-        )
-    try:
         from app.rag.vectordb.vectorstore import delete_document_chunks
 
         delete_document_chunks(str(document.id), str(document.user_id))
@@ -348,13 +338,6 @@ def _reingest_document(
         delete_document_chunks(str(document.id), str(document.user_id))
     except Exception as exc:
         logger.warning("Could not clear chunks before re-ingest %s: %s", document.id, exc)
-
-    try:
-        from app.graph.service import remove_document as remove_document_graph
-
-        remove_document_graph(str(document.id), str(document.user_id), db=db)
-    except Exception as exc:
-        logger.warning("Could not clear graph before re-ingest %s: %s", document.id, exc)
 
     document.status = "pending"
     document.error_message = None

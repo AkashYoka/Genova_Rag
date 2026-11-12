@@ -138,6 +138,30 @@ class Settings(BaseSettings):
     TOP_K_RETRIEVAL: int = 20 # Fetch more candidates for reranking
     TOP_K_RERANK: int = 8 # Final number of chunks to return after reranking
 
+    # ── Hierarchical semantic chunking ───────────────────
+    # The chunk-generation strategy is versioned so reindexing can supersede
+    # old vectors without deleting the original uploaded PDF.
+    #   semantic_llm  → LLM structure analysis with deterministic fallback
+    #   deterministic → heading/paragraph based hierarchy, no LLM call
+    #   legacy        → previous layout/recursive splitter (compatibility)
+    CHUNK_STRATEGY: str = "semantic_llm"
+    SEMANTIC_CHUNKING_ENABLED: bool = True
+    SEMANTIC_CHUNKING_PROVIDER: str = "bedrock"  # bedrock (Nova 2 Lite) | ollama
+    # Blank → BEDROCK_MODEL_ID (us.amazon.nova-2-lite-v1:0).
+    SEMANTIC_CHUNKING_MODEL_ID: str = ""
+    SEMANTIC_CHUNKING_MAX_INPUT_TOKENS: int = 6000
+    SEMANTIC_CHUNKING_MAX_OUTPUT_TOKENS: int = 4096
+    # Titan Text Embeddings V2 accepts 8192 tokens; stay conservative so a
+    # chunk plus metadata is always safely embeddable.
+    SEMANTIC_CHUNKING_MAX_CHUNK_TOKENS: int = 1800
+    SEMANTIC_CHUNKING_MIN_CHUNK_TOKENS: int = 80
+    SEMANTIC_CHUNKING_RETRIES: int = 2
+    SEMANTIC_CHUNKING_TIMEOUT_SECONDS: int = 120
+    SEMANTIC_CHUNKING_MAX_BLOCKS_PER_CALL: int = 120
+    SEMANTIC_CHUNKING_BLOCK_PREVIEW_CHARS: int = 220
+    SEMANTIC_CHUNKING_VERSION: str = "semantic-llm-v1"
+    SEMANTIC_FALLBACK_VERSION: str = "semantic-fallback-v1"
+
     # ── Layout-aware PDF / OCR ───────────────────────────
     # Native text is kept when its extraction quality is good; scanned or
     # corrupt pages are OCR'd page-by-page. Diagnostics contain no secrets
@@ -178,39 +202,6 @@ class Settings(BaseSettings):
     # Per-query RAG debug payload (redacted by default).
     RAG_DEBUG_ENABLED: bool = False
     RAG_DEBUG_REDACT: bool = True
-
-    # ── Knowledge Graph (GraphRAG) ───────────────────────
-    GRAPH_PERSIST_DIR: str = "./data/graphs"
-    GRAPH_ENTITY_LABELS: set = {
-        "PERSON",
-        "ORG",
-        "GPE",
-        "LOC",
-        "PRODUCT",
-        "EVENT",
-        "WORK_OF_ART",
-        "LAW",
-        "NORP",
-        "FAC",
-    }
-    GRAPH_MAX_RELATIONSHIPS: int = 12
-
-    # ── Workspace GraphRAG (entity/relationship graph in the relational DB) ──
-    GRAPH_INDEXING_ENABLED: bool = True
-    GRAPH_RETRIEVAL_ENABLED: bool = True
-    GRAPH_EXTRACTION_MODEL: str = ""  # blank → reuse the configured chat model
-    GRAPH_EXTRACTION_MAX_CHUNKS: int = 40  # per document; keeps one upload bounded
-    GRAPH_EXTRACTION_BATCH_CHUNKS: int = 4  # chunks per LLM extraction call
-    GRAPH_EXTRACTION_TIMEOUT_S: int = 120
-    GRAPH_MIN_CONFIDENCE: float = 0.35
-    GRAPH_MAX_ENTITIES_PER_DOC: int = 80
-    GRAPH_MAX_RELATIONSHIPS_PER_DOC: int = 120
-    GRAPH_ENTITY_RESOLUTION_THRESHOLD: float = 0.9  # fuzzy candidates below
-    GRAPH_TRAVERSAL_DEPTH: int = 2
-    GRAPH_MAX_QUERY_ENTITIES: int = 8
-    GRAPH_MAX_NEIGHBORHOOD_NODES: int = 60
-    GRAPH_MAX_GRAPH_RELATIONSHIPS: int = 30
-    GRAPH_MAX_EVIDENCE_SOURCES: int = 3
 
     # ── Embeddings ───────────────────────────────────────
     # Localhost default: Ollama nomic-embed-text (768-d).

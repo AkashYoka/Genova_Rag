@@ -1,4 +1,4 @@
-"""RAGAS evaluation pipeline for vector search versus GraphRAG."""
+"""RAGAS evaluation pipeline for vector search retrieval."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,6 @@ from typing import Any, Callable, Iterable, Optional
 
 from app.config import get_settings
 from app.rag.embeddings.embeddings import embed_query
-from app.rag.retrieval.graph_retriever import get_entity_context
 from app.rag.vectordb.vectorstore import query_chunks
 
 settings = get_settings()
@@ -89,35 +88,6 @@ def retrieve_vector_contexts(
     return _chunk_texts(chunks)
 
 
-def retrieve_graphrag_contexts(
-    question: str,
-    user_id: str,
-    document_id: Optional[str] = None,
-    top_k: Optional[int] = None,
-) -> list[str]:
-    """Retrieve vector contexts and append GraphRAG relationship context."""
-    contexts = retrieve_vector_contexts(
-        question=question,
-        user_id=user_id,
-        document_id=document_id,
-        top_k=top_k,
-    )
-    graph_context = get_entity_context(
-        query=question,
-        user_id=user_id,
-        document_id=document_id,
-    )
-    return append_graph_context(contexts, graph_context)
-
-
-def append_graph_context(contexts: list[str], graph_context: str) -> list[str]:
-    """Return contexts plus graph context when GraphRAG found relationships."""
-    clean_graph_context = graph_context.strip()
-    if not clean_graph_context:
-        return contexts
-    return [*contexts, clean_graph_context]
-
-
 def generate_grounded_answer(question: str, contexts: list[str]) -> str:
     """Generate an answer using only retrieved contexts."""
     if not contexts:
@@ -165,16 +135,11 @@ def collect_records(
     document_id: Optional[str] = None,
     answer_generator: AnswerGenerator = generate_grounded_answer,
 ) -> dict[str, list[EvaluationRecord]]:
-    """Build vector and GraphRAG samples ready for RAGAS."""
-    grouped: dict[str, list[EvaluationRecord]] = {"vector": [], "graphrag": []}
+    """Build vector retrieval samples ready for RAGAS."""
+    grouped: dict[str, list[EvaluationRecord]] = {"vector": []}
 
     for item in questions:
         vector_contexts = retrieve_vector_contexts(
-            question=item.question,
-            user_id=user_id,
-            document_id=document_id,
-        )
-        graphrag_contexts = retrieve_graphrag_contexts(
             question=item.question,
             user_id=user_id,
             document_id=document_id,
@@ -188,16 +153,6 @@ def collect_records(
                 reference=item.reference,
                 response=answer_generator(item.question, vector_contexts),
                 contexts=vector_contexts,
-            )
-        )
-        grouped["graphrag"].append(
-            EvaluationRecord(
-                id=item.id,
-                mode="graphrag",
-                question=item.question,
-                reference=item.reference,
-                response=answer_generator(item.question, graphrag_contexts),
-                contexts=graphrag_contexts,
             )
         )
 
@@ -243,18 +198,10 @@ def evaluate_records(records: list[EvaluationRecord]) -> dict[str, float]:
 
 
 def compare_pipelines(grouped_records: dict[str, list[EvaluationRecord]]) -> dict[str, Any]:
-    """Evaluate both retrieval modes and include metric deltas."""
+    """Evaluate retrieval modes and return scores."""
     vector_scores = evaluate_records(grouped_records["vector"])
-    graphrag_scores = evaluate_records(grouped_records["graphrag"])
-    metrics = sorted(set(vector_scores) | set(graphrag_scores))
-
     return {
         "vector": vector_scores,
-        "graphrag": graphrag_scores,
-        "delta": {
-            metric: round(graphrag_scores.get(metric, 0.0) - vector_scores.get(metric, 0.0), 4)
-            for metric in metrics
-        },
     }
 
 

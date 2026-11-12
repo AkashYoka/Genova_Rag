@@ -205,11 +205,11 @@ def test_rename_document_returns_404_for_other_users_document(client, auth_heade
     assert other_document.original_name == "other.txt"
 
 
-def test_ingest_document_builds_and_saves_graph(db_session, monkeypatch, tmp_path, user):
+def test_ingest_document_stores_chunks(db_session, monkeypatch, tmp_path, user):
     document = Document(
         user_id=user.id,
-        filename="graph.txt",
-        original_name="graph.txt",
+        filename="ingest_test.txt",
+        original_name="ingest_test.txt",
         file_size=128,
         status="pending",
     )
@@ -219,7 +219,6 @@ def test_ingest_document_builds_and_saves_graph(db_session, monkeypatch, tmp_pat
     user_id = user.id
     document_id = document.id
     chunks = [{"text": "OpenAI works with Microsoft.", "page": 1, "chunk_index": 0}]
-    saved = {}
 
     monkeypatch.setattr("app.services.document_ingestion.get_page_count", lambda filepath: 1)
     monkeypatch.setattr("app.services.document_ingestion.chunk_document", lambda filepath: chunks)
@@ -230,19 +229,7 @@ def test_ingest_document_builds_and_saves_graph(db_session, monkeypatch, tmp_pat
     fake_summary.generate_document_summary = lambda filepath, max_sentences=2: "Summary"
     monkeypatch.setitem(__import__("sys").modules, "app.rag.utils.summarizer", fake_summary)
 
-    def fake_index_document(document_id, user_id, received_chunks, **_kwargs):
-        saved.update(
-            {
-                "chunks": received_chunks,
-                "user_id": user_id,
-                "document_id": document_id,
-            }
-        )
-        return {"ok": True, "status": "ready"}
-
-    monkeypatch.setattr("app.graph.service.index_document", fake_index_document)
-
-    source = tmp_path / "graph.txt"
+    source = tmp_path / "ingest_test.txt"
     source.write_text("OpenAI works with Microsoft.", encoding="utf-8")
     ingest_document(
         document_id=document_id,
@@ -251,26 +238,13 @@ def test_ingest_document_builds_and_saves_graph(db_session, monkeypatch, tmp_pat
         user_id=user_id,
     )
 
-    assert saved == {
-        "chunks": chunks,
-        "user_id": user_id,
-        "document_id": document_id,
-    }
     refreshed = db_session.get(Document, document_id)
     assert refreshed.status == "ready"
     assert refreshed.chunk_count == 1
 
 
 def test_delete_document_soft_deletes_and_hides_document(client, auth_headers, ready_document, db_session, monkeypatch):
-    deletion_calls = []
     doc_id = ready_document.id
-
-    monkeypatch.setattr(
-        "app.graph.service.remove_document",
-        lambda document_id, user_id, **kwargs: deletion_calls.append(
-            {"document_id": document_id, "user_id": user_id}
-        ),
-    )
 
     response = client.delete(
         f"/api/v1/documents/{doc_id}",
@@ -278,9 +252,6 @@ def test_delete_document_soft_deletes_and_hides_document(client, auth_headers, r
     )
 
     assert response.status_code == 200
-    assert deletion_calls == [
-        {"document_id": doc_id, "user_id": ready_document.user_id}
-    ]
 
     db_session.refresh(ready_document)
     assert ready_document.is_deleted is True
