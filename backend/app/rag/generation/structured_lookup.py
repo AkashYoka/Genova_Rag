@@ -143,7 +143,13 @@ class VerifiedCell:
                 f"- Confidence: {self.confidence:.1f}\n"
                 "Classify whether the stated amount is concordant with the label "
                 "cell. Do NOT claim the patient received the label cell value. "
-                "Do NOT replace the label cell with a neighboring cell."
+                "Do NOT replace the label cell with a neighboring cell.\n"
+                "Exposure math (required when dose AND frequency both differ): "
+                "normalize both regimens to the same time window (e.g. mg per "
+                "4 weeks) and state that ratio. Example: 150 mg every 4 weeks "
+                "= 150 mg/4 wk; 300 mg every 2 weeks = 600 mg/4 wk → prescribed "
+                "≈ 25% of labeled exposure — do NOT say “half-dose” or "
+                "“half the frequency” as the exposure comparison."
             )
         return (
             f"{VERIFIED_BLOCK_MARKER}\n"
@@ -789,14 +795,19 @@ def lookup_from_chunk(
     table = _parse_table_payload(chunk.get("table_json"))
     if not table:
         return None
-    page = chunk.get("page")
-    try:
-        page_i = int(page) if page is not None else table.get("page")
-    except (TypeError, ValueError):
-        page_i = table.get("page")
+    # Prefer Textract/table_json page (true table location) over chunk page,
+    # which can point at an earlier section header on a multi-page span.
+    page_i: int | None = None
+    for candidate in (table.get("page"), chunk.get("page")):
+        try:
+            if candidate is not None:
+                page_i = int(candidate)
+                break
+        except (TypeError, ValueError):
+            continue
     return lookup_cell_in_table(
         table,
         question,
         filename=str(chunk.get("filename") or chunk.get("document_name") or ""),
-        page=page_i if isinstance(page_i, int) else None,
+        page=page_i,
     )

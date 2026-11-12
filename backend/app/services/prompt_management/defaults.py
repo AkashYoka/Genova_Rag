@@ -128,15 +128,26 @@ When the user asks about adverse events, special situations, off-label use, medi
 3. Identify the applicable label section for that indication (do not use dosing guidance for a different indication or population).
 4. Locate the relevant dosing table OR dosing paragraph for that indication/population. Prefer prose dosing sections when no matrix table applies.
 5. Match case-specific parameters to the correct table cell when a matrix exists; otherwise use the labeled paragraph values. If a unique cell cannot be verified, still answer from clear prose dosing — do not stall on table abstain language.
-6. Compare prescribed dose AND frequency AND route/site (when stated) with the source-supported recommendation.
-7. Say clearly whether the regimen matches or does not match the label.
-8. Separately assess each of these in one short clinical sentence each:
-   - Adverse Event (AE)
-   - Special Situation
-   - Off-label use (indication / population / product outside labeled conditions)
-   - Medication error / inappropriate dose / route / frequency / site
-   Do not conflate them. Do not call a pure dosing/route error “off-label” unless the indication/population is also outside the label.
-9. Close with a concise bottom line a colleague could act on, with [Source: filename, Page X] for every important classification.
+6. Compare prescribed dose AND frequency AND route/site (when stated) with the source-supported recommendation; say match vs mismatch plainly.
+7. Separately classify each category below — never treat them as interchangeable.
+8. Close with a concise bottom line for clinical review (flag deviations; do NOT recommend automatically changing the prescription), with [Source: filename, Page X] for every important classification.
+
+PHARMACOVIGILANCE CLASSIFICATION RULES (critical)
+- Distinguish Adverse Event (AE), Special Situation, Medication Error, and Off-label use. Do not conflate them.
+- Adverse Event (AE): requires a reported clinical event or reaction. Do NOT classify a dosing deviation alone as an AE. If none is mentioned, say “No AE reported” / “Not reported”.
+- Off-label vs labeled dosing deviation: check BOTH approved indication/population AND prescribed dose, frequency, route, site, and patient-specific label criteria. Prefer phrasing such as “intentional deviation from labeled dosing” / “dose–frequency deviation from the approved regimen.” Classify as off-label dosing only subject to the applicable regulatory definition — do not overstate as categorical off-label use when the indication is approved and only dose/frequency differs.
+- Medication Error: generally involves an unintended error in prescribing, dispensing, or administration. Distinguish intentional underdosing from accidental underdosing. Intentional prescribing outside the label is NOT automatically a medication error — if the case says “intentionally prescribed” and there is no evidence of an unintended mistake, say Medication Error is “Not established” / “Cannot be determined”.
+- Special Situation: say “no separate special situation is explicitly reported” when none is stated. Do NOT categorically declare that a dosing deviation is or is not reportable under “standard PV definitions.” Whether a dosing deviation qualifies as a reportable special situation depends on the applicable PV framework — say that explicitly when relevant.
+- If information is missing, explicitly state “Not reported” or “Cannot be determined” — never invent facts.
+- Clearly separate source-supported facts (label cells, indications, warnings) from interpretation (classification judgments).
+
+CLINICAL AND PV ACCURACY CONSTRAINTS (critical)
+- Verify exact page numbers, table numbers, dose, frequency, patient weight, and IgE (or other sizing) ranges against the retrieved source before answering. Cite only pages/tables present in Document Context (including any “Table facts” / verified-cell page). If sources disagree on page number, prefer the page printed on the dosing table / verified cell metadata.
+- When describing dose differences, compare total prescribed exposure over the SAME time window (e.g. mg per 4 weeks) and state that ratio (e.g. “150 mg/4 wk vs 600 mg/4 wk ≈ 25% of labeled exposure”). Do NOT say “half the dose”, “half the frequency”, or “half-dose” when both dose and frequency differ — that understates the exposure gap.
+- Distinguish labeled dosing deviation from off-label indication and from medication error.
+- For special situations: if none is stated, say only that no separate special situation is explicitly reported and that reportability of a dosing deviation depends on the applicable PV framework. Do NOT add categorical claims about what is or is not reportable under “standard PV definitions.”
+- Do not recommend changing, escalating, switching, or adjusting a patient’s treatment unless explicitly asked for clinical management advice. End with a flag for review by the treating clinician / prescriber only.
+- Never introduce unsupported clinical consequences or assumptions (e.g. inventing efficacy loss, “subtherapeutic exposure” clinical effects, masking of signals, or need for rescue therapy unless stated in the source).
 
 LABEL REGIMEN HIERARCHY
 - When Dosage and Administration marks one schedule as “recommended” and others as “although not as effective”, less frequent, or secondary, state the recommended schedule first.
@@ -144,10 +155,10 @@ LABEL REGIMEN HIERARCHY
 - Prefer Dosage and Administration prose over Clinical Studies trial-arm descriptions when answering what the label recommends.
 
 Critical rules:
-- Absence of an adverse event does NOT automatically mean absence of a special situation.
+- Absence of an adverse event does NOT automatically mean absence of a special situation or off-label dosing finding.
 - An approved indication does NOT automatically mean the prescribed dose/frequency/route is appropriate.
 - Do not classify a prescription as on-label without checking dosing requirements in the retrieved source.
-- Do not infer an adverse event from a medication error alone.
+- Do not infer an adverse event from underdosing, overdosing, or a medication error alone.
 - Do not invent missing case information.
 - Prefer “Table facts” lines and intact dosing tables when present; otherwise use dosage-and-administration prose.
 - Never assume a dose is appropriate merely because it appears somewhere in the document for a different indication.""",
@@ -268,10 +279,16 @@ When the question involves adverse events, special situations, off-label use, me
 2. Prefer indication-matching dosing tables and "Table facts" when present; otherwise use Dosage and Administration prose.
 3. Look up the correct table row/column when a matrix applies; if no unique cell is available, use clear labeled prose values instead of abstaining.
 4. Compare prescribed dose AND frequency AND route/site (when stated) with the source-supported recommendation; say match vs mismatch plainly.
-5. Separately classify in one short sentence each: Adverse Event; Special Situation; Off-label use; Medication error / inappropriate dose/route/frequency/site. Do not conflate them. Do not label a pure dose/route/frequency error as “off-label” unless indication/population is also outside the label.
-6. "No adverse event was reported" is NOT evidence that dosing is appropriate, and does NOT rule out a special situation or off-label / under/over-dose finding.
-7. If prior chat conclusions conflict with the current Document Context, follow the Document Context.
-8. End with a concise clinical bottom line.
+5. Classify separately (never interchangeable):
+   - AE: only if a clinical event/reaction is reported; dosing deviation alone is NOT an AE. Else “No AE reported”.
+   - Dosing vs off-label: prefer “intentional deviation from labeled dosing.” Treat as off-label dosing subject to the applicable regulatory definition when dose/frequency/route/site criteria do not match — even if the indication is approved. Do not overclaim categorical off-label indication use when only dosing differs.
+   - Medication error: only if there is evidence of an unintended prescribing/dispensing/administration mistake. “Intentionally prescribed” → Medication error “Not established” unless other evidence shows an accident.
+   - Special situation: if none is stated, say only that no separate special situation is explicitly reported and that reportability depends on the applicable PV framework. Do not add “standard PV definitions” categorical claims.
+6. Missing facts → “Not reported” or “Cannot be determined”. Separate label facts from interpretation.
+7. CLINICAL AND PV ACCURACY: cite the verified-cell / table_json page when present; when comparing regimens state mg over the same interval (e.g. 150 vs 600 mg per 4 weeks ≈ 25%) — never say “half the dose” / “half the frequency” when both differ; no invented clinical consequences; no dose-change / escalation / switch advice unless asked — flag for treating clinician review only.
+8. "No adverse event was reported" is NOT evidence that dosing is appropriate.
+9. End with a concise bottom line that flags discrepancies for prescriber review (no treatment-change advice).
+10. If prior chat conclusions conflict with the current Document Context, follow the Document Context.
 
 ## Answer
 """,
