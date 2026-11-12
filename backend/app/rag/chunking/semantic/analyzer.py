@@ -34,6 +34,14 @@ Rules:
 - A section's block ids must be contiguous and must not overlap another section.
 - The heading block that introduces a section must be the first block of that section.
 - A table belongs to the section whose text it supports; keep the table block with that section.
+- Prefer FEWER, larger sections over many tiny heading-only sections.
+- Never promote Table of Contents / CONTENTS listing entries into separate top-level sections.
+  Keep the entire CONTENTS listing under one section titled "Table of Contents".
+- Ignore dotted leaders and trailing page numbers from TOC lines when choosing titles.
+- Real body sections begin after CONTENTS (e.g. "FULL PRESCRIBING INFORMATION", "WARNING:",
+  or numbered headings like "1 INDICATIONS AND USAGE" that introduce body text).
+- Keep dosing / schedule tables with their Dosage and Administration parent section; do not
+  orphan a table under an unrelated later section title.
 - Use level 1 for top-level chapters/major parts, level 2 for subsections, level 3+ for deeper nesting.
 - Parent sections must list only their own introductory blocks, never blocks that belong to a child section.
 - If the document has no clear headings, infer a small number of topic sections from the content flow.
@@ -101,11 +109,37 @@ def deterministic_sections(
     """Heading-driven hierarchy used when the LLM is unavailable or invalid."""
     specs: List[SectionSpec] = []
     current: Optional[SectionSpec] = None
+    in_toc = False
 
     for block in blocks:
         if block.is_heading:
+            title = block.text.strip() or f"Section {len(specs) + 1}"
+            if _is_toc_banner_title(title):
+                in_toc = True
+                current = SectionSpec(
+                    title="Table of Contents",
+                    level=1,
+                    block_ids=[block.block_id],
+                    source="fallback",
+                )
+                specs.append(current)
+                continue
+            if in_toc and _looks_like_toc_section_title(title):
+                # Keep TOC listing lines inside the single Contents section.
+                if current is None:
+                    current = SectionSpec(
+                        title="Table of Contents",
+                        level=1,
+                        block_ids=[],
+                        source="fallback",
+                    )
+                    specs.append(current)
+                current.block_ids.append(block.block_id)
+                continue
+            if in_toc:
+                in_toc = False
             current = SectionSpec(
-                title=block.text.strip() or f"Section {len(specs) + 1}",
+                title=title,
                 level=max(1, min(6, int(block.level or 1))),
                 block_ids=[block.block_id],
                 source="fallback",
@@ -131,7 +165,7 @@ def deterministic_sections(
                 source="fallback",
             )
         )
-    return specs
+    return compact_section_specs(specs, blocks)
 
 
 # ── JSON parsing ────────────────────────────────────────────────────────────
@@ -313,6 +347,8 @@ def validate_and_repair(
     for spec in kept:
         spec.block_ids.sort(key=lambda bid: order_by_id.get(bid, 0))
 
+    kept = compact_section_specs(kept, blocks)
+
     stats = {
         "duplicate_block_ids": duplicates[:50],
         "duplicate_count": len(duplicates),
@@ -320,8 +356,145 @@ def validate_and_repair(
         "missing_block_count": len(missing),
         "repaired_block_count": len(missing),
         "source_coverage": (len(seen) / len(blocks)) if blocks else 0.0,
+        "section_count_after_compact": len(kept),
     }
     return kept, stats
+
+
+_TOC_BANNER_RE = re.compile(r"(?i)^(?:table\s+of\s+)?contents\*?\s*$")
+_TOC_NUMBERED_TITLE_RE = re.compile(r"^\d+(?:\.\d+){0,3}\s+\S")
+
+
+def _spec_non_heading_chars(spec: SectionSpec, by_id: Dict[str, SourceBlock]) -> int:
+    total = 0
+    for block_id in spec.block_ids:
+        block = by_id.get(block_id)
+        if block is None or block.is_heading:
+            continue
+        total += len(block.text or "")
+    return total
+
+
+def _is_toc_banner_title(title: str) -> bool:
+    return bool(_TOC_BANNER_RE.match((title or "").strip()))
+
+
+def _looks_like_toc_section_title(title: str) -> bool:
+    """Heuristic for CONTENTS listing entries promoted into fake sections."""
+    t = (title or "").strip()
+    if not t:
+        return False
+    if _is_toc_banner_title(t):
+        return True
+    try:
+        from app.rag.ingestion.pdf_layout.structure import looks_like_toc_entry
+
+        if looks_like_toc_entry(t):
+            return True
+    except Exception:
+        pass
+    # Numbered short ALL-CAPS / Title Case entries typical of label TOCs.
+    if _TOC_NUMBERED_TITLE_RE.match(t) and len(t) <= 90:
+        return True
+    return False
+
+
+def compact_section_specs(
+    specs: Sequence[SectionSpec],
+    blocks: Sequence[SourceBlock],
+    *,
+    min_body_chars: int = 160,
+) -> List[SectionSpec]:
+    """Collapse TOC listing stubs and merge tiny heading-only sections.
+
+    Research-backed defaults for structured manuals / drug labels:
+    - one CONTENTS section, not one section per TOC line
+    - prefer fewer larger sections; merge stubs under the next real body section
+    """
+    if not specs:
+        return []
+    by_id = {block.block_id: block for block in blocks}
+    compacted: List[SectionSpec] = []
+    index = 0
+    while index < len(specs):
+        spec = specs[index]
+        title = spec.title or ""
+        if _is_toc_banner_title(title) or (
+            _looks_like_toc_section_title(title)
+            and _spec_non_heading_chars(spec, by_id) < min_body_chars
+            and index + 1 < len(specs)
+            and _looks_like_toc_section_title(specs[index + 1].title or "")
+        ):
+            merged_ids = list(spec.block_ids)
+            cursor = index + 1
+            while cursor < len(specs):
+                nxt = specs[cursor]
+                nxt_title = nxt.title or ""
+                nxt_body = _spec_non_heading_chars(nxt, by_id)
+                # Substantial body text means real content — even if the title
+                # looks numbered like a TOC entry ("1 INDICATIONS AND USAGE").
+                if nxt_body >= min_body_chars:
+                    break
+                if _is_toc_banner_title(nxt_title) or _looks_like_toc_section_title(nxt_title) or (
+                    _TOC_NUMBERED_TITLE_RE.match(nxt_title.strip())
+                ):
+                    merged_ids.extend(nxt.block_ids)
+                    cursor += 1
+                    continue
+                break
+            compacted.append(
+                SectionSpec(
+                    title="Table of Contents",
+                    level=1,
+                    block_ids=merged_ids,
+                    summary=spec.summary or "Document contents listing",
+                    ref=spec.ref,
+                    parent_ref=None,
+                    source=spec.source or "compact",
+                )
+            )
+            index = cursor
+            continue
+        compacted.append(spec)
+        index += 1
+
+    # Second pass: absorb heading-only stubs into the following section.
+    if len(compacted) < 2:
+        return compacted
+    merged: List[SectionSpec] = []
+    skip: set[int] = set()
+    for i, spec in enumerate(compacted):
+        if i in skip:
+            continue
+        body = _spec_non_heading_chars(spec, by_id)
+        if (
+            body < min_body_chars
+            and i + 1 < len(compacted)
+            and not any(
+                (by_id[bid].is_table if bid in by_id else False) for bid in spec.block_ids
+            )
+            and not _is_toc_banner_title(spec.title or "")
+        ):
+            nxt = compacted[i + 1]
+            # Prefer merging stub heading into the next real section.
+            nxt.block_ids = list(spec.block_ids) + list(nxt.block_ids)
+            skip.add(i)
+            continue
+        merged.append(spec)
+    for spec in merged:
+        spec.block_ids.sort(key=lambda bid: by_id[bid].order if bid in by_id else 0)
+
+    # CONTENTS must never parent real body chapters (common LLM mistake).
+    toc_refs = {
+        spec.ref
+        for spec in merged
+        if spec.ref and _is_toc_banner_title(spec.title or "")
+    }
+    if toc_refs:
+        for spec in merged:
+            if spec.parent_ref in toc_refs:
+                spec.parent_ref = None
+    return merged
 
 
 # ── Windowing ───────────────────────────────────────────────────────────────

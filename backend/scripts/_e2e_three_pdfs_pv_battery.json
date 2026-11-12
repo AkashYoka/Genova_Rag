@@ -1,0 +1,743 @@
+{
+  "xolair": {
+    "document_id": "43ae024f-3c0d-40f5-aa49-83e9f3682641",
+    "session_id": "c78f6975-eed4-441d-8b7e-fef9b5d15503",
+    "n": 18,
+    "results": [
+      {
+        "i": 1,
+        "elapsed_s": 20.19,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\nLooking at this patient, the prescribed Xolair dose of 150 mg every 4 weeks is **not concordant with the label** for their body weight and IgE level. This represents a **medication error** in dosing.\n\n### Detailed Analysis\n\n**Patient Summary**\n- **Indication:** Allergic asthma\n- **Body weight:** 78 kg (>70–90 kg range)\n- **Pretreatment IgE:** 350 IU/mL (>300–400 IU/mL range)\n- **Prescribed regimen:** Xolair 150 mg subcutaneously every 4 weeks\n- **Reported adverse event:** None\n\n**Label Review**\n- The label provides a dosing table for asthma patients based on **body weight** and **pretreatment serum IgE** [Source: xolair_prescribing.pdf, Page 3].\n- For a patient with:\n  - **IgE >300–400 IU/mL**, and\n  - **Body weight >70–90 kg**,\n  \n  The recommended dose is **300 mg every 2 weeks** [Source: xolair_prescribing.pdf, Page 3].\n\n**Comparison**\n- **Prescribed dose:** 150 mg every 4 weeks  \n- **Label-recommended dose:** 300 mg every 2 weeks  \n\nThere is a clear mismatch in both **dose amount** and **frequency**.\n\n### Classification\n\n1. **Adverse Event:**  \n   - No adverse event was reported, but the under-dosing may have **reduced efficacy** and potentially delayed co",
+        "question": "A 35-year-old patient with allergic asthma, body weight 78 kg and pretreatment IgE 350 IU/mL was intentionally prescribed Xolair 150 mg every 4 weeks. No adverse event was reported. Identify any adverse event, special situation, or off-label usage.",
+        "error": null
+      },
+      {
+        "i": 2,
+        "elapsed_s": 6.73,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Takeaway:** For a 12‑year‑old or older patient with asthma, pretreatment serum IgE of **350 IU/mL** and body weight of **78 kg**, the label recommends **XOLAIR 300 mg subcutaneously every 2 weeks** [Source: xolair_prescribing.pdf, Page 3].\n\n**Supporting label reasoning**\n\nLooking at Table 1 in the prescribing information for patients ≥12 years with asthma, we match the patient’s parameters:\n- **Serum IgE range:** >300–400 IU/mL (the patient’s 350 IU/mL falls here)\n- **Body weight range:** >70–90 kg (the patient’s 78 kg falls here)\n\nThe table cell for **>300–400 IU/mL** and **>70–90 kg** shows a dose of **300 mg** with a dosing frequency of **Every 2 weeks** [Source: xolair_prescribing.pdf, Page 3]. This is the recommended regimen according to the label.\n\n**Clinical bottom line:** The appropriate XOLAIR dose for this patient is **300 mg subcutaneously every 2 weeks**, which matches the label’s dosing table recommendation.",
+        "question": "According to Table 1 for patients 12 years and older with asthma, what XOLAIR dose and frequency apply for pretreatment IgE 350 IU/mL and body weight 78 kg?",
+        "error": null
+      },
+      {
+        "i": 3,
+        "elapsed_s": 7.2,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "Looking at this patient—a 12-year-old or older with asthma, serum IgE of 300 IU/mL, and a weight of 70 kg—the label recommends a **dose of 225 mg every 4 weeks**.\n\nFrom the dosing table for patients 12 years and older with asthma (Table 1 in the prescribing information), we match the patient’s IgE level (>200-300 IU/mL) and weight category (>60-70 kg). The table clearly shows:\n\n- **Pretreatment Serum IgE (IU/mL):** >200-300  \n- **Dosing Freq.:** Every 4 weeks  \n- **>60-70 kg:** **225 mg**\n\nThis is the exact recommended regimen for this patient profile [Source: xolair_prescribing.pdf, Page 3]. \n\n**Bottom line:** The label supports prescribing XOLAIR 225 mg subcutaneously every 4 weeks for this patient.",
+        "question": "Asthma patient >=12 years, IgE 300 IU/mL, weight 70 kg. What is the label dose and frequency from the dosing table?",
+        "error": null
+      },
+      {
+        "i": 4,
+        "elapsed_s": 6.85,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "Looking at this patient—adult with asthma, IgE > 400 IU/mL, weight 90 kg—the label recommends a **300 mg dose every 2 weeks**.\n\nFrom the label: Table 1 shows the recommended dosing for patients ≥12 years with asthma based on serum IgE and body weight [Source: xolair_prescribing.pdf, Page 5]. For IgE >300-400 IU/mL and weight >70-90 kg, the dose is **300 mg every 2 weeks**.\n\nThis matches the label's recommended regimen for this specific patient profile. No adverse events, special situations, or off-label concerns are indicated based solely on the dosing information provided. The regimen is appropriate per the prescribing information.",
+        "question": "Asthma patient >=12 years, IgE 400 IU/mL, weight 90 kg. What dose/frequency does the label table support?",
+        "error": null
+      },
+      {
+        "i": 5,
+        "elapsed_s": 7.65,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\nLooking at this patient, the prescribed dose of **600 mg every 2 weeks** is **not concordant** with the labeled recommendation for a 50‑kg patient with allergic asthma and an IgE level of **350 IU/mL**. This constitutes a **medication error** due to an **inappropriate dose**.\n\n### Label Review\n- **Indication**: Allergic asthma (moderate to severe persistent) [Source: xolair_prescribing.pdf, Page 5].\n- **Population**: Pediatric/adult patients ≥6 years; weight‑based dosing applies [Source: xolair_prescribing.pdf, Page 5].\n- **Sizing factors**: \n  - Body weight: **50 kg** falls in the **>30‑40 kg** column.\n  - Serum IgE: **350 IU/mL** falls in the **>300‑400 IU/mL** row.\n- **Labeled dose** (Table 1, asthma dosing for patients ≥12 years):  \n  - **>300‑400 IU/mL** IgE and **>30‑40 kg** weight → **225 mg every 2 weeks** [Source: xolair_prescribing.pdf, Page 5].\n- **Prescribed regimen**: **600 mg every 2 weeks**.\n\n### Classification\n- **Adverse Event**: No adverse event was reported, but this does not validate the dosing.\n- **Special Situation**: None identified; the patient meets the standard criteria for XOLAIR use (positive aeroallergen test, inadequate control wi",
+        "question": "A 40-year-old with allergic asthma, 50 kg, IgE 350 IU/mL received 600 mg every 2 weeks intentionally. No AE. Classify AE / special situation / off-label / medication error.",
+        "error": null
+      },
+      {
+        "i": 6,
+        "elapsed_s": 7.39,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\nLooking at this patient with adult asthma, an 80 kg weight, and an IgE level of 250 IU/mL who was prescribed **75 mg every 4 weeks**, the regimen **does not match** the labeled recommendation. The dose is lower than what the label advises for this specific IgE and weight range.\n\n### Label Review and Comparison\n- **Indication**: Adult asthma (≥12 years) [Source: xolair_prescribing.pdf, Page 5]\n- **Relevant dosing table**: Table 1 for patients 12 years and older with asthma [Source: xolair_prescribing.pdf, Page 5]\n- **Patient parameters**:\n  - **Serum IgE**: >200–300 IU/mL → row **>200-300**\n  - **Weight**: >70–90 kg → column **>70-90 kg**\n- **Labeled dose for this cell**: **225 mg every 4 weeks** [Source: xolair_prescribing.pdf, Page 5]\n- **Prescribed dose**: **75 mg every 4 weeks**\n\n### Classification\n- **Adverse Event**: No adverse event was reported, but this does not validate the dose; the concern is dosing appropriateness, not safety in this instance.\n- **Special Situation**: None identified. The patient’s parameters (adult, asthma, weight, IgE) fall squarely within the labeled population.\n- **Off-label use**: No. The indication (asthma) and population (ad",
+        "question": "Adult asthma, 80 kg, IgE 250 IU/mL prescribed 75 mg every 4 weeks. No AE. Classify.",
+        "error": null
+      },
+      {
+        "i": 7,
+        "elapsed_s": 7.71,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\nLooking at this patient with adult asthma, an IgE level of 350 IU/mL, and a weight of 80 kg, the label recommends **300 mg every 2 weeks**, but they are intentionally receiving **300 mg every 4 weeks**. No adverse events have been reported.\n\n### Label Review\n- **Indication**: Adult asthma  \n- **Population**: >70‑90 kg, IgE >300‑400 IU/mL  \n- **Label Recommendation**: 300 mg **every 2 weeks** [Source: xolair_prescribing.pdf, Page 3, Table 1]  \n- **Prescribed Regimen**: 300 mg **every 4 weeks** (intentional deviation)\n\n### Classification\n- **Adverse Event**: **None reported** – no safety concerns identified in this scenario.  \n- **Special Situation**: **None** – the patient meets all label criteria (age, weight, IgE, asthma control).  \n- **Off-label Use**: **No** – the indication (asthma) and product (XOLAIR) are both within the labeled uses.  \n- **Medication Error / Inappropriate Dose/Route/Frequency**: **Yes** – the frequency (every 4 weeks vs. every 2 weeks) does **not** match the label recommendation. This is a **dose frequency error**.\n\n### Bottom Line\nThe patient is being dosed at the correct **dose amount (300 mg)** but at an **inappropriate frequency (ev",
+        "question": "Adult asthma, IgE 350 IU/mL, weight 80 kg: label is 300 mg every 2 weeks but they got 300 mg every 4 weeks intentionally. No AE. Classify.",
+        "error": null
+      },
+      {
+        "i": 8,
+        "elapsed_s": 8.28,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical takeaway:** This COPD patient is receiving Xolair **off-label** because Xolair is not approved for COPD, and the dosing appears appropriate for the indicated populations (IgE‑mediated asthma, CRSwNP, food allergy, or CSU) based on the label.\n\n**Label review and rationale**\n\n- **Indication:** The patient has COPD, but Xolair is **not indicated** for COPD. It is approved for:\n  - Moderate‑to‑severe persistent asthma with perennial aeroallergen sensitivity [Source: xolair_prescribing.pdf, Page 1]\n  - Chronic rhinosinusitis with nasal polyps (CRSwNP) [Source: xolair_prescribing.pdf, Page 1]\n  - IgE‑mediated food allergy [Source: xolair_prescribing.pdf, Page 1]\n  - Chronic spontaneous urticaria (CSU) [Source: xolair_prescribing.pdf, Page 1]\n\n- **Dosing match:** For a patient with IgE = 200 IU/mL and weight = 70 kg, the label recommends **300 mg every 4 weeks** for asthma, CRSwNP, and food allergy (see Table 1 on Page 3). The prescribed dose and frequency **match** the label for these approved indications [Source: xolair_prescribing.pdf, Page 3].\n\n- **Adverse events:** No adverse events were reported, which does not affect the off‑label classification but does not rule out pot",
+        "question": "COPD patient (not asthma), IgE 200 IU/mL, weight 70 kg, Xolair 300 mg every 4 weeks. No AE. Off-label / special situation / AE?",
+        "error": null
+      },
+      {
+        "i": 9,
+        "elapsed_s": 8.23,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nLooking at this patient—8-year-old with asthma, 30 kg, IgE 300 IU/mL—the prescribed dose of **300 mg every 4 weeks** matches the label recommendation for pediatric asthma. No adverse events were reported, and there are no special situations or off-label concerns.\n\n### Label Review\n\n- **Indication**: Asthma (moderate to severe persistent) in pediatric patients 6 to <12 years old [Source: xolair_prescribing.pdf, Page 4].\n- **Population**: Pediatric, weight 30 kg, IgE >200-300 IU/mL.\n- **Prescribed regimen**: 300 mg subcutaneously every 4 weeks.\n\nFrom the label’s dosing table for pediatric asthma (Table 2, Page 4):\n\n| Pretreatment Serum IgE (IU/mL) | Dosing Freq. | 30-60 kg |\n|-------------------------------|--------------|----------|\n| >200-300                      | Every 4 weeks| **300**   |\n\nThe prescribed dose **exactly matches** the labeled dose of 300 mg every 4 weeks for this weight and IgE range.\n\n### Classification\n\n- **Adverse Event**: None reported; no signal of anaphylaxis or other safety concerns in this case.\n- **Special Situation**: None identified. The patient meets all standard criteria (age, weight, IgE level) for labeled use.\n- **Off-label us",
+        "question": "8-year-old asthma, 30 kg, IgE 300 IU/mL received the pediatric table dose. No AE. Any off-label or special situation?",
+        "error": null
+      },
+      {
+        "i": 10,
+        "elapsed_s": 8.45,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical takeaway:** The prescribed 300 mg every 2 weeks is **not** the appropriate regimen for this patient based on the label.\n\n**Label reasoning:**  \n- **Indication:** Asthma  \n- **Population:** Pediatric patient, 6 to <12 years old, weight 30 kg, IgE >200-300 IU/mL  \n- **Prescribed regimen:** 300 mg every 2 weeks  \n\nFrom the label’s dosing table for pediatric asthma (Table 2, page 3), the recommended dose for a child weighing 30–40 kg with IgE >200–300 IU/mL is **225 mg every 4 weeks**, not 300 mg every 2 weeks. The label specifically states that the 300 mg dose in this weight/IgE range is only appropriate for patients **≥12 years old** (Table 1, page 3).\n\n**Classification:**  \n- **Medication error / inappropriate dose/frequency:** Yes. The dose and frequency exceed the labeled recommendation for this age/weight/IgE group.  \n- **Adverse event:** No adverse event was reported, but this does not validate the inappropriate dosing.  \n- **Special situation:** None identified.  \n- **Off-label use:** No, the indication (asthma) is on-label; however, the dosing regimen is not.\n\n**Bottom line:** This patient received an **overdose** compared with the label’s pediatric dosing recommend",
+        "question": "An 8-year-old with asthma, 30 kg, IgE 300 IU/mL was given an adult Table 1 regimen of 300 mg every 2 weeks. No AE. Is that appropriate?",
+        "error": null
+      },
+      {
+        "i": 11,
+        "elapsed_s": 6.77,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "**Takeaway:** Looking at this patient with chronic spontaneous urticaria (CSU), weighing 80 kg and with an IgE level of 350 IU/mL, using the asthma IgE/weight table for dosing would be **incorrect** per the label.\n\n**Why:**  \n- The patient’s indication is **chronic spontaneous urticaria (CSU)**, not asthma.  \n- For CSU, the label states that dosing of XOLAIR **is not dependent on serum IgE level or body weight** [Source: xolair_prescribing.pdf, Page 4].  \n- The appropriate dosing for CSU is a fixed regimen of **75 mg, 150 mg, or 300 mg by subcutaneous injection every 4 weeks**, chosen based on clinical judgment rather than IgE or weight [Source: xolair_prescribing.pdf, Page 39].  \n\n**Classification:**  \n- **Off-label use:** Using the asthma dosing table for a CSU patient is off-label because the indication (CSU) does not match the asthma indication for which that table is intended.  \n- **Medication error:** Selecting a dose based on asthma tables rather than the CSU-specific dosing guidance constitutes an inappropriate dose selection.  \n\n**Bottom line:** For CSU, ignore the asthma IgE/weight table. Choose a fixed dose (75 mg, 150 mg, or 300 mg) every 4 weeks based on the patient’s ",
+        "question": "Patient with chronic spontaneous urticaria (CSU), weight 80 kg, IgE 350 IU/mL was dosed using the asthma IgE/weight table. Is that correct per the label?",
+        "error": null
+      },
+      {
+        "i": 12,
+        "elapsed_s": 6.53,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Takeaway:** For a patient ≥12 years old with asthma, serum IgE ≈ 800 IU/mL, and weight ≈ 140 kg, the label **does not provide a recommended dose** – it states “Insufficient Data to Recommend a Dose.”\n\n**Why:**  \nLooking at Table 1 in the XOLAIR prescribing information (page 4), the row for **>800‑900 IU/mL** and the column for **>125‑150 kg** show a blank cell with the note **“Insufficient Data to Recommend a Dose.”** This means the manufacturer has not established a safe and effective dose for this specific combination of IgE level and body weight in adolescents/adults with asthma [Source: xolair_prescribing.pdf, Page 4].\n\n**Bottom line:** For this patient profile, you would need to either **refer to clinical judgment or consider alternative management**, as the product labeling does not support a dose recommendation.",
+        "question": "For asthma Table 1 patients >=12 years, IgE about 800 IU/mL and weight about 140 kg: does the table recommend a dose or show insufficient data?",
+        "error": null
+      },
+      {
+        "i": 13,
+        "elapsed_s": 7.73,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### XOLAIR Use in Pregnancy: Key Points from Prescribing Information\n\nThe XOLAIR prescribing information addresses pregnancy in **Section 8.1 Pregnancy** [Source: xolair_prescribing.pdf, Page 2]. Here's a concise summary:\n\n---\n\n#### **Pregnancy Category and Data**\n- **Pregnancy Category**: XOLAIR is **not assigned a pregnancy category** (e.g., A, B, C, D, X) in the prescribing information. Instead, it states that **\"the safety and efficacy of XOLAIR have not been established in pregnant women\"** [Source: xolair_prescribing.pdf, Page 2].\n- **Animal Studies**: Limited animal reproductive toxicity studies have been conducted. There are **no adequate and well-controlled studies in pregnant women** [Source: xolair_prescribing.pdf, Page 2].\n\n#### **Clinical Considerations**\n- **Human Data**: There are **no controlled clinical trials** evaluating XOLAIR in pregnant women. Therefore, **use during pregnancy should only be considered if the potential benefits justify the potential risks to the fetus** [Source: xolair_prescribing.pdf, Page 2].\n- **Risk-Benefit Assessment**: The decision to use XOLAIR during pregnancy should be made on a **case-by-case basis**, weighing the severity of the mat",
+        "question": "What does the XOLAIR prescribing information say about use in pregnancy? Is pregnancy a special situation?",
+        "error": null
+      },
+      {
+        "i": 14,
+        "elapsed_s": 6.76,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "The label for XOLAIR includes several important warnings and monitoring requirements related to anaphylaxis:\n\n**Key Anaphylaxis Warnings:**\n\n- **Risk of Life-Threatening Anaphylaxis:** XOLAIR carries a boxed warning for the risk of life-threatening anaphylaxis. Patients must be informed about this risk, including the signs and symptoms of anaphylaxis [Source: xolair_prescribing.pdf, Page 43].\n- **Onset Timing:** Anaphylaxis has been reported as early as after the first dose, but also beyond one year after beginning treatment. Approximately 60% to 70% of cases occur within the first three doses [Source: xolair_prescribing.pdf, Page 2].\n- **Increased Risk Factors:** Patients with a history of anaphylaxis to foods, medications, or other causes are at increased risk of anaphylaxis associated with XOLAIR [Source: xolair_prescribing.pdf, Page 2].\n- **Postmarketing Reports:** The frequency of anaphylaxis attributed to XOLAIR use was estimated to be at least 0.2% of patients based on postmarketing reports [Source: xolair_prescribing.pdf, Page 5].\n\n**Monitoring Requirements:**\n\n- **Administration Setting:** XOLAIR should only be initiated in a healthcare setting equipped to manage anaphylax",
+        "question": "Summarize the key anaphylaxis warnings and monitoring requirements for XOLAIR from the label.",
+        "error": null
+      },
+      {
+        "i": 15,
+        "elapsed_s": 6.9,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Takeaway:** Yes, XOLAIR is approved for **IgE-mediated food allergy** and the label provides a clear dosing concept based on serum IgE level and body weight, administered subcutaneously every 2 or 4 weeks.\n\n**Label details:**  \nFrom the prescribing information, XOLAIR is indicated for the reduction of allergic reactions (including anaphylaxis) that may occur with accidental exposure to one or more foods in adult and pediatric patients aged 1 year and older with IgE-mediated food allergy, to be used together with food allergen avoidance [Source: xolair_prescribing.pdf, Page 1].  \n\nThe high‑level dosing concept is:\n\n- **Determine dose by serum total IgE level (IU/mL) measured before starting treatment and by body weight (kg).**  \n- **Dose ranges from 75 mg to 600 mg subcutaneously every 2 or 4 weeks**, with the exact dose and frequency selected from Table 4 in the label, which matches IgE level ranges (e.g., ≥30‑100 IU/mL, >100‑200 IU/mL, etc.) and body‑weight bands (e.g., ≥10‑12 kg, >12‑15 kg, etc.) [Source: xolair_prescribing.pdf, Page 3‑8].  \n\nIn short, the regimen is **weight‑ and IgE‑guided, with dosing intervals of either 2 or 4 weeks** as specified in the table.",
+        "question": "Is XOLAIR approved for IgE-mediated food allergy according to the prescribing information, and what is the high-level dosing concept (not asthma table)?",
+        "error": null
+      },
+      {
+        "i": 16,
+        "elapsed_s": 7.73,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical takeaway:**  \nLooking at this patient with allergic asthma, the prescribed dose of 225 mg every 2 weeks is **not concordant** with the labeled dosing recommendation for their weight and IgE level. This represents a **medication error** in dosing frequency.\n\n**Label review and reasoning:**  \n- **Indication:** Moderate to severe persistent asthma (≥6 years) with perennial aeroallergen sensitization [Source: xolair_prescribing.pdf, Page 5].  \n- **Patient factors:** 30-year-old, weight 65 kg (falls in **>60‑70 kg** category), serum IgE 350 IU/mL (falls in **>300‑400 IU/mL** range).  \n- **Labeled dosing table (Table 1, asthma):** For **>300‑400 IU/mL** and **>60‑70 kg**, the recommended dose is **225 mg every 2 weeks** [Source: xolair_prescribing.pdf, Page 5].  \n\nThe prescribed dose **matches** the labeled dose amount (225 mg) **but mismatches** the labeled frequency. The label calls for **every 2 weeks**, which is exactly what was prescribed, so the frequency is appropriate. However, the **dose amount** of 225 mg is only appropriate **if the patient’s IgE is >300‑400 IU/mL AND weight is >60‑70 kg**—which is true here. Therefore, the dose amount itself is **correct** per the ",
+        "question": "30-year-old allergic asthma, 65 kg, IgE 350 IU/mL prescribed 225 mg every 2 weeks. No AE. Classify AE / special situation / off-label.",
+        "error": null
+      },
+      {
+        "i": 17,
+        "elapsed_s": 7.0,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Takeaway:** The patient is **underdosed** relative to the label recommendation for their asthma.\n\n**Label review:**  \n- **Indication:** Moderate‑to‑severe persistent asthma, positive perennial aeroallergen test, symptoms inadequately controlled with inhaled corticosteroids.  \n- **Patient factors:** Adult, **78 kg**, **IgE 350 IU/mL** (i.e., **>300‑400 IU/mL**).  \n- **Label‑recommended dose (Table 1, adult asthma):** For **IgE >300‑400 IU/mL** and **weight >70‑90 kg**, the recommended dose is **300 mg every 2 weeks** [Source: xolair_prescribing.pdf, Page 3].  \n\n**What was prescribed:** 150 mg every 2 weeks.  \n\n**Comparison:**  \n- **Dose mismatch:** 150 mg is **half** the recommended 300 mg.  \n- **Frequency:** Both the prescribed and recommended regimens are every 2 weeks, so frequency is appropriate.  \n- **Route:** Subcutaneous injection is correct (implied by “got 150 mg”).  \n\n**Classification:**  \n- **Medication error / inappropriate dose:** Yes – the dose is lower than the label‑recommended amount for this patient’s IgE and weight.  \n- **Adverse event:** None reported, but absence of AE does not validate an underdose.  \n- **Special situation / off‑label use:** None – the indica",
+        "question": "Adult asthma 78 kg IgE 350 IU/mL got 150 mg every 2 weeks (not 300). No AE. Underdose or OK?",
+        "error": null
+      },
+      {
+        "i": 18,
+        "elapsed_s": 6.93,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nYes, chronic rhinosinusitis with nasal polyps (CRSwNP) is an **approved indication** for XOLAIR according to the prescribing information.\n\n### Supporting Label Reasoning\n\nFrom the label, under the **Indications and Usage** section, it explicitly states:\n\n> **1.2 Chronic Rhinosinusitis with Nasal Polyps**  \n> XOLAIR is indicated for add-on maintenance treatment of chronic rhinosinusitis with nasal polyps (CRSwNP) in adult patients 18 years of age and older with inadequate response to nasal corticosteroids.  \n> [Source: xolair_prescribing.pdf, Page 4]\n\nAdditionally, the **Dosage and Administration** section includes a dedicated table (Table 3) for recommended dosing of XOLAIR in patients with CRSwNP, further confirming that this is a labeled indication with specific dosing guidelines based on serum IgE levels and body weight [Source: xolair_prescribing.pdf, Page 7].\n\n### Bottom Line\n\nXOLAIR is **approved** for the treatment of CRSwNP in adult patients aged 18 and older who have an inadequate response to nasal corticosteroids. The label provides clear dosing recommendations for this indication.",
+        "question": "According to the label, is chronic rhinosinusitis with nasal polyps (CRSwNP) an approved indication for XOLAIR?",
+        "error": null
+      }
+    ]
+  },
+  "lucentis": {
+    "document_id": "3d1c0a29-fa6d-4410-a7ce-04c0a94de677",
+    "session_id": "21c39bb7-b548-4fa1-ab60-3369b6267dca",
+    "n": 15,
+    "results": [
+      {
+        "i": 1,
+        "elapsed_s": 7.03,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\nLooking at this patient, the prescribed regimen of LUCENTIS 0.5 mg by intravitreal injection every 3 months from the start (no monthly loading) is **not label-concordant** for neovascular AMD. The label recommends an initial loading phase of monthly injections, followed by a maintenance phase that may be extended to every 3 months based on disease activity.\n\n### Label Review and Rationale\nFrom the label:\n- **Indication**: Neovascular (wet) AMD [Source: lucentis_prescribing.pdf, Page 2].\n- **Recommended Dosing Regimen**: \n  - Initial **monthly** injections for three consecutive doses, followed by a dose administered **once every 3 months** for maintenance, guided by disease activity and stability [Source: lucentis_prescribing.pdf, Page 2].\n- **Prescribed Regimen**: LUCENTIS 0.5 mg by intravitreal injection **every 3 months from the start**, with **no monthly loading phase**.\n\n### Classification\n- **Medication error / inappropriate dose frequency**: The regimen lacks the recommended initial monthly loading phase, which is considered essential for optimal disease control in neovascular AMD according to the label. Administering LUCENTIS every 3 months from the sta",
+        "question": "A 72-year-old with neovascular (wet) AMD was intentionally prescribed LUCENTIS 0.5 mg by intravitreal injection every 3 months from the start (no monthly loading). No adverse event was reported. Identify any adverse event, special situation, or off-label / not label-concordant dosing.",
+        "error": null
+      },
+      {
+        "i": 2,
+        "elapsed_s": 10.49,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nFrom the label, the **recommended LUCENTIS regimen for neovascular (wet) AMD** is **0.5 mg administered monthly** as the primary dosing schedule. This is explicitly stated as the recommended schedule in the **Dosage and Administration** section, and it is supported by the clinical study data presented in the label.\n\n### Supporting Label Reasoning\n\n- **Recommended Dose and Frequency**: The label states that for neovascular AMD, the recommended dose is **0.5 mg of ranibizumab administered as a monthly intravitreal injection**. This is presented as the primary regimen, with less frequent dosing schedules noted as alternatives that are “not as effective” [Source: lucentis_prescribing.pdf, Page 2, Dosage and Administration].\n  \n- **Clinical Study Evidence**: The efficacy and safety of LUCENTIS 0.5 mg monthly were demonstrated in multiple controlled studies (AMD-1, AMD-2, AMD-3, and AMD-4). These studies showed that monthly dosing maintained visual acuity and reduced lesion growth more effectively than less frequent dosing schedules [Source: lucentis_prescribing.pdf, Pages 14-15, Clinical Studies].\n\n- **Less Frequent Dosing**: While the label does describe less fre",
+        "question": "According to the prescribing information, what is the recommended LUCENTIS dose and frequency for neovascular (wet) AMD?",
+        "error": null
+      },
+      {
+        "i": 3,
+        "elapsed_s": 8.56,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical Takeaway:**  \nLooking at this patient with wet AMD who received LUCENTIS 0.5 mg intravitreally once a month (~28 days) with no reported adverse events, the regimen appears to be **on-label and appropriate** based on the prescribing information.\n\n**Label Review & Rationale:**  \n- **Indication:** Neovascular (wet) age-related macular degeneration (AMD) [Source: lucentis_prescribing.pdf, Page 15]  \n- **Prescribed Regimen:** LUCENTIS 0.5 mg (0.05 mL of 10 mg/mL) intravitreally once a month (~28 days)  \n- **Label Recommendation:** The label supports monthly dosing of LUCENTIS 0.5 mg for wet AMD. In Studies AMD-1 and AMD-2, patients received monthly LUCENTIS 0.5 mg injections, and the primary efficacy endpoint was maintained vision at 12 months [Source: lucentis_prescribing.pdf, Page 15]. The dosing schedule is explicitly described as a standard monthly regimen in the **Dosage and Administration** section.\n\n**Classification:**  \n- **Adverse Event:** No adverse event was reported, and the regimen itself does not constitute an adverse event.  \n- **Special Situation:** None identified; the patient is being treated within the labeled indication and dosing schedule.  \n- **Off-label",
+        "question": "Patient with wet AMD received LUCENTIS 0.5 mg (0.05 mL of 10 mg/mL) intravitreally once a month (~28 days). No AE. Classify AE / special situation / off-label if any.",
+        "error": null
+      },
+      {
+        "i": 4,
+        "elapsed_s": 6.71,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical Takeaway:**  \nLooking at this patient with diabetic macular edema (DME) who was given LUCENTIS 0.5 mg every month, this regimen **does not match the label** and should be considered a **medication error**. The label recommends a less frequent dosing schedule for DME.\n\n**Label Review & Rationale:**  \n- **Indication:** Diabetic macular edema (DME) [Source: lucentis_prescribing.pdf, Page 22]  \n- **Prescribed regimen:** LUCENTIS 0.5 mg intravitreal injection **monthly**  \n- **Label recommendation for DME:** The label recommends an initial series of three monthly injections followed by retreatment guided by disease activity (e.g., visual acuity decline or fluid on OCT/FA). It does **not** recommend continuous monthly dosing beyond the initial three-month loading phase [Source: lucentis_prescribing.pdf, Page 22].  \n- **Comparison:** The patient received monthly dosing continuously, which exceeds the recommended regimen.\n\n**Classification:**  \n- **Medication error / inappropriate dose/frequency:** Yes – continuous monthly dosing is not supported by the label for DME.  \n- **Adverse Event:** No adverse event was reported, but the dosing error itself carries potential risks (e.g.,",
+        "question": "A patient with diabetic macular edema (DME) was given LUCENTIS 0.5 mg every month intentionally. No AE. Is this label-concordant, a dosing error, or off-label?",
+        "error": null
+      },
+      {
+        "i": 5,
+        "elapsed_s": 6.06,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "Looking at this patient with diabetic macular edema (DME) and diabetic retinopathy (DR), the label recommends the following LUCENTIS dosing schedule:\n\n**For DME and DR:**\n- **Initial dosing:** One intravitreal injection of LUCENTIS 0.5 mg or 0.3 mg, followed by three monthly injections (total of four injections over 4 months) [Source: lucentis_prescribing.pdf, Page 22].\n- **Maintenance dosing:** After the initial four-month period, treatment is guided by pre-specified retreatment criteria. This typically involves additional injections administered based on disease activity and stability [Source: lucentis_prescribing.pdf, Page 22].\n\nThe label emphasizes that the dosing regimen is tailored to individual patient needs and disease activity, with the goal of maintaining or improving vision while minimizing treatment burden [Source: lucentis_prescribing.pdf, Page 22]. \n\nIn summary, the recommended schedule starts with four injections over four months, followed by retreatment based on clinical response.",
+        "question": "What LUCENTIS dose and schedule does the label recommend for diabetic macular edema (DME) and diabetic retinopathy (DR)?",
+        "error": null
+      },
+      {
+        "i": 6,
+        "elapsed_s": 6.74,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nLooking at this patient with **dry AMD (geographic atrophy, no neovascularization)** who was prescribed **LUCENTIS 0.5 mg monthly**, I’d flag this as **off-label use**. The drug is not approved for dry AMD, and the dosing regimen does not align with any labeled indication.\n\n### Supporting Reasoning\n\n**1. Indication mismatch (off-label use)**  \n- LUCENTIS is indicated for **neovascular (wet) AMD**, **diabetic macular edema (DME)**, **diabetic retinopathy (DR)**, **macular edema following retinal vein occlusion (RVO)**, and **myopic choroidal neovascularization (mCNV)** [Source: lucentis_prescribing.pdf, Pages 6–7, 22–24].  \n- **Dry AMD (geographic atrophy)** is **not listed** as an approved indication. Using LUCENTIS in this setting is **off-label**.\n\n**2. Dosing regimen**  \n- The label recommends **0.5 mg monthly** for **neovascular AMD** (Studies AMD-1, AMD-2, AMD-3, AMD-4) [Source: lucentis_prescribing.pdf, Pages 13–15].  \n- However, because the indication is incorrect, the dose/frequency, while matching the neovascular AMD regimen, is irrelevant for this patient. It does not make the use appropriate.\n\n**3. Adverse events / special situations**  \n- No adver",
+        "question": "A patient with dry AMD (geographic atrophy, no neovascularization) was prescribed LUCENTIS 0.5 mg monthly. No AE. Identify adverse event, special situation, or off-label usage.",
+        "error": null
+      },
+      {
+        "i": 7,
+        "elapsed_s": 6.89,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\nLooking at this case, the clinician administered LUCENTIS 0.5 mg intravenously instead of the recommended intravitreal route. No adverse event was reported, but this is a clear medication error.\n\n### Supporting Reasoning\n\n**Case Summary**\n- **Indication**: Not specified in the query, but LUCENTIS is indicated for neovascular AMD, diabetic macular edema, and macular edema following retinal vein occlusion [Source: lucentis_prescribing.pdf, various pages].\n- **Prescribed Regimen**: LUCENTIS 0.5 mg administered as an **intravenous infusion**.\n- **Reported AE**: None.\n\n**Label Review**\n- The label explicitly states that LUCENTIS is to be administered as an **intravitreal injection** [Source: lucentis_prescribing.pdf, Page 6]. There is no indication or dosing guidance for intravenous administration in any of the approved indications.\n- The **Dosage and Administration** section details intravitreal dosing regimens for different indications (e.g., neovascular AMD, diabetic macular edema) but does not mention intravenous use [Source: lucentis_prescribing.pdf, various pages].\n\n**Classification**\n1. **Adverse Event**: No adverse event was reported. However, intravenous a",
+        "question": "A clinician administered LUCENTIS 0.5 mg as an intravenous infusion instead of intravitreal injection. No AE reported. Classify AE / special situation / medication error / off-label.",
+        "error": null
+      },
+      {
+        "i": 8,
+        "elapsed_s": 5.56,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway  \nFor macular edema following retinal vein occlusion (RVO), the **labeled LUCENTIS regimen** is straightforward and well-defined in the prescribing information.\n\n### Labeled Regimen Details  \nFrom the **Dosage and Administration** section of the LUCENTIS prescribing information:  \n\n- **Indication:** Macular edema following retinal vein occlusion (RVO)  \n- **Dose:** LUCENTIS 0.5 mg (0.05 mL of 10 mg/mL solution)  \n- **Route:** Intravitreal injection  \n- **Frequency:** **Once a month (approximately 28 days)**  \n\nThe label explicitly states this as the **recommended** regimen:  \n\n> “LUCENTIS 0.5 mg (0.05 mL of 10 mg/mL solution) is recommended to be administered by intravitreal injection once a month (approximately 28 days).”  \n> [Source: lucentis_prescribing.pdf, Page 2, Section 2.3]\n\nThe prescribing information also notes that although less frequent dosing schedules are possible, they are **not as effective** as the monthly regimen and should only be considered in specific circumstances with close monitoring.\n\n### Bottom Line  \nFor a patient with macular edema following RVO, the **label-recommended LUCENTIS regimen** is **0.5 mg intravitreal injection administe",
+        "question": "What is the labeled LUCENTIS regimen for macular edema following retinal vein occlusion (RVO)?",
+        "error": null
+      },
+      {
+        "i": 9,
+        "elapsed_s": 6.43,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nLooking at this case, the patient with diabetic macular edema (DME) was treated with **0.5 mg ranibizumab** instead of the **0.3 mg** formulation that is recommended for DME. No adverse event was reported, but this is a clear dosing discrepancy.\n\n### Label Review\n\nFrom the **lucentis_prescribing.pdf** label:\n\n- **DME Indication**: The label recommends **0.3 mg ranibizumab** for DME, not 0.5 mg [Source: lucentis_prescribing.pdf, Page 22].\n- **Product Information**: The 0.5 mg prefilled syringe is CLEAR-finger-grip, while the 0.3 mg is ORANGE-finger-grip [Source: lucentis_prescribing.pdf, Page 25].\n\n### Classification\n\n- **Medication Error / Inappropriate Dose**: The patient received **0.5 mg** instead of the **0.3 mg** dose recommended for DME. This is a dosing error.\n- **Adverse Event**: No adverse event was reported, but the absence of an AE does not validate the inappropriate dose.\n- **Special Situation**: None identified.\n- **Off-label Use**: Not applicable; the indication (DME) is on-label, but the dose is incorrect.\n\n### Bottom Line\n\nI’d flag this as a **medication error** due to the use of the incorrect dose strength (0.5 mg instead of 0.3 mg) for DME. ",
+        "question": "A DME patient was treated with the 0.5 mg CLEAR-finger-grip prefilled syringe instead of the 0.3 mg ORANGE-finger-grip syringe. No AE. Flag any dosing discrepancy or special situation.",
+        "error": null
+      },
+      {
+        "i": 10,
+        "elapsed_s": 6.41,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway  \nLooking at the LUCENTIS (ranibizumab) prescribing information, the key warnings about **endophthalmitis, retinal detachment, and retinal vasculitis** are important safety considerations that every ophthalmologist should keep in mind when using this drug.\n\n### Supporting Label Reasoning  \n\n**1. Endophthalmitis and Retinal Detachments**  \n- **Risk**: Intravitreal injections, including LUCENTIS, have been associated with **endophthalmitis** (a serious eye infection) and **retinal detachments**.  \n- **Prevention**: Proper aseptic technique is essential during administration.  \n- **Monitoring**: Patients should be monitored following the injection to allow for early detection and treatment if an infection occurs.  \n- **Source**: [Source: lucentis_prescribing.pdf, Page 1, Section 5.1]  \n\n**2. Retinal Vasculitis with or without Occlusion**  \n- **Risk**: **Retinal vasculitis** (inflammation of the retinal blood vessels) with or without occlusion has been reported in patients treated with LUCENTIS, especially in those with preexisting intraocular inflammation or after treatment with other intravitreal agents.  \n- **Action**: Discontinue LUCENTIS if retinal vasculitis",
+        "question": "What are the key warnings about endophthalmitis, retinal detachment, or retinal vasculitis with LUCENTIS?",
+        "error": null
+      },
+      {
+        "i": 11,
+        "elapsed_s": 6.72,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "The question asks about the use of LUCENTIS during pregnancy and whether pregnancy is considered a special situation for this medication. I need to look through the provided document context to find any information about pregnancy, teratogenicity, or special populations.\n\nLooking through the document context, I don't see any explicit mention of pregnancy or teratogenicity in the sections provided. The document includes:\n\n- Adverse reactions tables (Pages 8, 11, 15)\n- Clinical studies data (Pages 15, 22, 24)\n- Product information (Page 25)\n- Warnings and precautions (Page 6)\n\nNone of these sections mention pregnancy, lactation, or special populations regarding pregnancy. The warnings and precautions section (Page 6) discusses:\n- Endophthalmitis and retinal detachments\n- Increases in intraocular pressure\n- Thromboembolic events\n- Fatal events in patients with diabetic macular edema and diabetic retinopathy\n- Retinal vasculitis\n\nBut there's no specific mention of pregnancy or teratogenic potential.\n\nSince the document context doesn't contain any information about pregnancy or its classification as a special situation, I cannot determine this from the provided materials. The question c",
+        "question": "What does the LUCENTIS label say about use in pregnancy? Is pregnancy a special situation?",
+        "error": null
+      },
+      {
+        "i": 12,
+        "elapsed_s": 6.92,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nYes, myopic choroidal neovascularization (mCNV) is an **approved indication** for LUCENTIS (ranibizumab), and the recommended dose is **0.5 mg** administered as an **intravitreal injection**.\n\n### Supporting Details from the Label\n\n- **Indication Confirmation**: The prescribing information explicitly includes mCNV as an approved condition for LUCENTIS. The section titled “Myopic Choroidal Neovascularization (mCNV)” details the efficacy and safety data supporting this use [Source: lucentis_prescribing.pdf, Page 24].\n  \n- **Dosing Recommendation**: In the mCNV studies (specifically Study AMD-4 and others referenced), patients received **0.5 mg LUCENTIS** intravitreal injections. The label states that visual gains were superior to the active control (photodynamic therapy) and efficacy was comparable between different retreatment criteria groups [Source: lucentis_prescribing.pdf, Page 24].\n\n- **Regimen**: While the exact dosing schedule (e.g., monthly vs. as-needed) can vary based on retreatment criteria, the **dose of 0.5 mg per injection** is consistently used across the mCNV trials and is the labeled dose for this indication.\n\n### Bottom Line\n\nFor a patient wi",
+        "question": "Is myopic choroidal neovascularization (mCNV) an approved indication for LUCENTIS, and what dose is recommended?",
+        "error": null
+      },
+      {
+        "i": 13,
+        "elapsed_s": 9.37,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\nLooking at this patient with neovascular (wet) AMD who received 4 monthly Lucentis injections followed by dosing every 3 months, this regimen **is supported by the label** as a less frequent dosing option after the initial monthly phase. There are no specific safety concerns or off‑label issues with intentionally choosing this schedule, provided the patient meets the retreatment criteria outlined in the label.\n\n---\n\n### Label Support for Less Frequent Dosing\n\nThe prescribing information for Lucentis describes a **recommended dosing schedule** that includes an initial series of monthly injections followed by a less frequent dosing regimen based on disease activity[Source: lucentis_prescribing.pdf, Page 15]. Specifically:\n\n- **Initial Phase:** Three monthly Lucentis 0.5 mg intravitreal injections.\n- **Follow‑up Phase:** After the three monthly doses, patients are assessed monthly. If stability criteria are met, the next Lucentis injection may be delayed to **once every 3 months**[Source: lucentis_prescribing.pdf, Page 15].\n\nThis “less frequent dosing” approach is explicitly permitted and is intended to maintain disease control while reducing the total number of ",
+        "question": "For wet AMD, the label allows less frequent dosing after monthly doses. A patient got 4 monthly doses then every 3 months. Is that described in the label? Any AE/special/off-label concerns if intentionally chosen?",
+        "error": null
+      },
+      {
+        "i": 14,
+        "elapsed_s": 6.54,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nLooking at this patient with open-angle glaucoma who received LUCENTIS 0.5 mg monthly off-label, there are a few key points to consider based on the prescribing information.\n\n### Label Review\n\n- **Indication**: LUCENTIS is indicated for neovascular AMD, diabetic macular edema, diabetic retinopathy, retinal vein occlusion, and myopic choroidal neovascularization [Source: lucentis_prescribing.pdf, various pages].\n- **Off-Label Use**: The patient does not have any of the approved indications (no AMD, DME, RVO, DR, or mCNV). This use is clearly **off-label** [Source: lucentis_prescribing.pdf, various pages].\n- **Special Situation**: The patient has open-angle glaucoma. While glaucoma itself isn’t a contraindication, LUCENTIS can increase intraocular pressure (IOP). The label advises monitoring IOP before and after injection [Source: lucentis_prescribing.pdf, Page 6]. This represents a **special situation** due to the risk of exacerbating glaucoma.\n- **Adverse Event**: No adverse events were reported, but this doesn’t negate the risk. The label notes that increases in IOP have been observed [Source: lucentis_prescribing.pdf, Page 6].\n- **Medication Error**: The do",
+        "question": "Patient with open-angle glaucoma (no AMD/DME/RVO/DR/mCNV) received LUCENTIS 0.5 mg monthly. No AE. Off-label / special situation / AE?",
+        "error": null
+      },
+      {
+        "i": 15,
+        "elapsed_s": 5.89,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Takeaway:** Yes, the LUCENTIS prescribing information does address hypersensitivity reactions and provides clear guidance on monitoring after intravitreal injection.\n\n**Label details:**\n\n- **Hypersensitivity:** The label explicitly states that LUCENTIS is contraindicated in patients with known hypersensitivity to ranibizumab or any excipients in the formulation. It notes that hypersensitivity reactions may manifest as severe intraocular inflammation [Source: lucentis_prescribing.pdf, Page 7]. This is a critical safety point—any signs of allergic response should prompt immediate discontinuation and appropriate management.\n\n- **Injection-related monitoring:** The administration section emphasizes that patients must be monitored **prior to and 30 minutes following** the intravitreal injection for **elevations in intraocular pressure (IOP)** using tonometry. The label also advises monitoring for symptoms suggestive of **endophthalmitis** (infection inside the eye) without delay after injection [Source: lucentis_prescribing.pdf, Page 2]. Proper aseptic technique is mandatory, and patients should be counseled to report any vision changes promptly.\n\n**Bottom line:** The label clearly fl",
+        "question": "Does the LUCENTIS prescribing information discuss hypersensitivity or infusion/injection-related reactions and monitoring after injection?",
+        "error": null
+      }
+    ]
+  },
+  "tecentriq_hybreza": {
+    "document_id": "8e78416a-d3c3-4a55-a9e2-3da0784c601d",
+    "session_id": "d0c289d9-f5df-47fc-b375-5409b38e11e2",
+    "n": 15,
+    "results": [
+      {
+        "i": 1,
+        "elapsed_s": 7.56,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\nLooking at this patient, the key issue is that TECENTRIQ HYBREZA was given intravenously rather than subcutaneously, which is a **medication error**. No adverse event was reported, but the route of administration is clearly outside the labeled instructions.\n\n### Label Review and Rationale\n- **Indication**: Metastatic NSCLC (first‑line or after progression on platinum‑based therapy) [Source: tecentriq_hybreza_prescribing.pdf, Page 6].\n- **Prescribed regimen**: TECENTRIQ HYBREZA 1,875 mg given **intravenously**.\n- **Labeled route**: The product is approved **only for subcutaneous injection in the thigh** over approximately 7 minutes, **not for intravenous use** [Source: tecentriq_hybreza_prescribing.pdf, Page 5].\n- **Dose and frequency**: The dose (1,875 mg) and frequency (every 3 weeks) are consistent with the label, but the **route is incorrect**.\n\n### Classification of Issues\n- **Adverse Event**: None reported, but the intravenous route could have increased the risk of infusion‑related reactions or other safety concerns not evaluated in the subcutaneous‑only trials.\n- **Special Situation**: None identified; the patient’s condition (metastatic NSCLC) is an app",
+        "question": "A 62-year-old with metastatic NSCLC was intentionally given TECENTRIQ HYBREZA 1,875 mg as an intravenous infusion instead of subcutaneous injection. No adverse event was reported. Identify any adverse event, special situation, medication error, or off-label / not label-concordant use.",
+        "error": null
+      },
+      {
+        "i": 2,
+        "elapsed_s": 6.76,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical Takeaway:**  \nFor adult patients, the label recommends a **single 15 mL subcutaneous injection of TECENTRIQ HYBREZA** administered **in the thigh** **every 3 weeks**. This is the standard dosing regimen across all approved indications for TECENTRIQ HYBREZA in adults.\n\n**Supporting Label Details:**  \nFrom the prescribing information, the recommended adult dose is clearly outlined:\n\n- **Dose:** One 15 mL injection (containing 1,875 mg of atezolizumab and 30,000 units of hyaluronidase)  \n- **Route:** Subcutaneous injection  \n- **Injection Site:** Thigh (specifically, healthy skin; alternate between left and right thigh, ensuring at least 2.5 cm from previous site)  \n- **Frequency:** Every 3 weeks  \n\nThe label emphasizes that TECENTRIQ HYBREZA is **only for subcutaneous use in the thigh**, and administration must be performed by a healthcare professional [Source: tecentriq_hybreza_prescribing.pdf, Page 5]. The duration of therapy varies by indication (e.g., up to one year for adjuvant NSCLC or until disease progression for metastatic settings), but the dosing interval remains consistent at every 3 weeks for adults.\n\n**Bottom Line:**  \nFor any adult patient receiving TECENTRI",
+        "question": "According to the prescribing information, what is the recommended TECENTRIQ HYBREZA dose, route, injection site, and frequency for adults?",
+        "error": null
+      },
+      {
+        "i": 3,
+        "elapsed_s": 7.56,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical takeaway:**  \nLooking at this patient with metastatic NSCLC who received TECENTRIQ HYBREZA 15 mL subcutaneously in the thigh every 3 weeks, the regimen **matches the label** and there are **no adverse events, special situations, or off‑label concerns** reported.\n\n**Supporting label reasoning**\n\n- **Indication:** The patient has metastatic NSCLC. TECENTRIQ HYBREZA is indicated for first‑line treatment of adult patients with metastatic NSCLC whose tumors have high PD‑L1 expression (PD‑L1 stained ≥ 50% of tumor cells or tumor‑infiltrating immune cells covering ≥ 10% of the tumor area) with no EGFR or ALK genomic aberrations, or for patients with disease progression after platinum‑containing chemotherapy [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Dose & schedule:** The label recommends **one 15 mL injection (containing 1,875 mg atezolizumab and 30,000 units hyaluronidase) administered subcutaneously in the thigh every 3 weeks** for adult patients, including those with metastatic NSCLC [Source: tecentriq_hybreza_prescribing.pdf, Page 5].\n- **Route & site:** The drug must be given **subcutaneously in the thigh** and administered over approximately 7 minutes by a ",
+        "question": "Adult metastatic NSCLC patient received TECENTRIQ HYBREZA 15 mL (1,875 mg atezolizumab + 30,000 units hyaluronidase) subcutaneously in the thigh over ~7 minutes every 3 weeks by a healthcare professional. No AE. Classify AE / special situation / off-label if any.",
+        "error": null
+      },
+      {
+        "i": 4,
+        "elapsed_s": 8.67,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical takeaway:** This patient received TECENTRIQ HYBREZA at the correct dose (15 mL subcutaneously in the thigh) but at an incorrect frequency—weekly instead of every 3 weeks. This constitutes a **medication error** because the dosing interval deviates from the label‐recommended schedule, even though the dose amount and route are appropriate and no adverse events have occurred yet.\n\n**Label review and reasoning**\n\n- **Indication & population:** The question does not specify the exact indication, but TECENTRIQ HYBREZA is approved for several solid tumors (e.g., NSCLC, melanoma, bladder cancer, colon cancer, etc.) in adults and pediatric patients ≥12 years weighing ≥40 kg [Source: tecentriq_hybreza_prescribing.pdf, Pages 4‑7].\n- **Recommended dosing schedule:** For all approved indications, the label recommends **one 15 mL subcutaneous injection every 3 weeks** [Source: tecentriq_hybreza_prescribing.pdf, Page 5]. This is stated clearly in the “Recommended Dosage and Administration Instructions” section and reflected in Table 1, which lists the duration of therapy for each indication but consistently uses the “every 3 weeks” interval.\n- **Prescribed regimen vs. label:** The pati",
+        "question": "Adult patient on TECENTRIQ HYBREZA received the correct 15 mL SC thigh dose but every week instead of every 3 weeks intentionally. No AE. Classify dosing discrepancy / medication error / off-label.",
+        "error": null
+      },
+      {
+        "i": 5,
+        "elapsed_s": 9.62,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Assessment of Substitution\n\n**Scenario Recap:**  \nA pharmacist substituted intravenous atezolizumab (TECENTRIQ IV) for subcutaneous TECENTRIQ HYBREZA at the same scheduled visit without adjusting for product differences. No adverse events (AE) were reported.\n\n**Key Label Findings from TECENTRIQ HYBREZA Prescribing Information:**\n\n1. **Different Recommended Dosages**  \n   - TECENTRIQ HYBREZA contains a fixed combination of atezolizumab (1,875 mg) and hyaluronidase (30,000 units) in a 15 mL subcutaneous injection, administered **every 3 weeks**.  \n   - Intravenous atezolizumab products have **different dosing schedules and administration routes** (e.g., 840 mg IV every 2 weeks or 1,200 mg IV every 3 weeks, depending on indication).  \n   - The label explicitly states:  \n     > *\"TECENTRIQ HYBREZA has different recommended dosage and administration than intravenous atezolizumab products. Do not substitute TECENTRIQ HYBREZA for or with intravenous atezolizumab products because they have different recommended dosages.\"*  \n     [Source: tecentriq_hybreza_prescribing.pdf, Page 5]  \n\n2. **Switching Guidance**  \n   - The label permits **switching** between TECENTRIQ HYBREZA and ",
+        "question": "A pharmacist substituted intravenous atezolizumab (TECENTRIQ IV) for TECENTRIQ HYBREZA at the same scheduled visit without adjusting for product differences. No AE. Is this allowed per the label?",
+        "error": null
+      },
+      {
+        "i": 6,
+        "elapsed_s": 8.16,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical takeaway:**  \nLooking at this patient, the prescription of TECENTRIQ HYBREZA for early‑stage breast cancer is **off‑label** because breast cancer is not an approved indication for this drug. The dose and schedule (15 mL subcutaneously every 3 weeks) match the **recommended label dosing** for approved indications, but the indication itself is not supported.\n\n**Label reasoning and classification**\n\n| Item | Details | Source |\n|------|---------|--------|\n| **Indication prescribed** | Early‑stage breast cancer | — |\n| **Approved indications for TECENTRIQ HYBREZA** | NSCLC (adjuvant, first‑line metastatic, after progression), small‑cell lung cancer, hepatocellular carcinoma, melanoma (with BRAF V600 mutation), alveolar soft‑part sarcoma, muscle‑invasive bladder cancer, mismatch‑repair‑deficient colon cancer | [Source: tecentriq_hybreza_prescribing.pdf, Page 4] |\n| **Prescribed dose & schedule** | 15 mL SC q3w (contains 1,875 mg atezolizumab + 30,000 U hyaluronidase) | [Source: tecentriq_hybreza_prescribing.pdf, Page 5] |\n| **Label‑recommended dose** | Same 15 mL SC q3w for all approved adult and pediatric (≥12 y, ≥40 kg) patients | [Source: tecentriq_hybreza_prescribing.pdf, ",
+        "question": "A patient with early-stage breast cancer (no labeled Hybreza indication for this) was prescribed TECENTRIQ HYBREZA 15 mL SC q3w. No AE. Off-label / special situation / AE?",
+        "error": null
+      },
+      {
+        "i": 7,
+        "elapsed_s": 8.3,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical takeaway:**  \nLooking at this patient—a 13‑year‑old with alveolar soft part sarcoma (ASPS) weighing 35 kg who received adult TECENTRIQ HYBREZA 15 mL subcutaneously every 3 weeks—the label does **not** establish a pediatric dose for patients weighing less than 40 kg.\n\n**Label reasoning:**  \nFrom the prescribing information, the recommended TECENTRIQ HYBREZA dose is clearly defined for pediatric patients **only** if they are **12 years of age or older and weigh 40 kg or greater**. The label states:\n\n> “The recommended dosage for pediatric patients 12 years of age and older who weigh less than 40 kg has not been established.”  \n> [Source: tecentriq_hybreza_prescribing.pdf, Page 5]\n\nThe dosing table and administration instructions specify a single pediatric dose scenario (≥ 40 kg), and no alternative pediatric dosing is provided for lower weight ranges. Therefore, using the adult 15 mL dose in a 35‑kg child is **off‑label** and unsupported by the label.\n\n**Classification of this case:**  \n- **Off‑label use:** The patient’s weight (35 kg) falls below the minimum 40 kg threshold for which a pediatric dose is established, making the prescribed regimen off‑label.  \n- **Medicatio",
+        "question": "A 13-year-old weighing 35 kg with alveolar soft part sarcoma was given adult TECENTRIQ HYBREZA 15 mL SC q3w. No AE. Is the pediatric dose established for <40 kg?",
+        "error": null
+      },
+      {
+        "i": 8,
+        "elapsed_s": 8.72,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": false,
+          "off_label": true,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway  \nLooking at this patient, the key issue is that TECENTRIQ HYBREZA was given **subcutaneously in the abdomen** instead of the **thigh**, which is a **medication error**. No adverse events were reported, but the injection site is clearly outside the labeled instructions.\n\n### Label Review and Rationale  \n- **Indication**: The indication for TECENTRIQ HYBREZA (e.g., metastatic NSCLC, bladder cancer, etc.) is not specified in the question, but the drug is approved for several solid tumors in adults and pediatric patients ≥12 years weighing ≥40 kg [Source: tecentriq_hybreza_prescribing.pdf, Page 4].  \n- **Prescribed regimen**: TECENTRIQ HYBREZA 15 mL (1,875 mg atezolizumab + 30,000 units hyaluronidase) given **subcutaneously in the abdomen**.  \n- **Labeled route and site**: The label explicitly states that TECENTRIQ HYBREZA is **only for subcutaneous use in the thigh**. The drug must be injected into healthy skin of the thigh, alternating between the left and right thigh, with each injection site at least 2.5 cm from the previous site [Source: tecentriq_hybreza_prescribing.pdf, Page 5].  \n- **Dose and frequency**: The dose (15 mL) and frequency (every 3 weeks) are",
+        "question": "TECENTRIQ HYBREZA was injected subcutaneously into the abdomen instead of the thigh. No AE. Medication error / not label-concordant?",
+        "error": null
+      },
+      {
+        "i": 9,
+        "elapsed_s": 9.32,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway  \nLooking at TECENTRIQ HYBREZA, the label highlights **severe immune-mediated adverse reactions**—particularly **pneumonitis**, **colitis**, and **hepatitis**—that can be life‑threatening. The key is early recognition, prompt work‑up, and timely corticosteroid therapy, with dose holds or discontinuation based on severity.\n\n### Label Reasoning and Management Approach  \n\n**1. Severe Immune-Mediated Adverse Reactions**  \nTECENTRIQ HYBREZA is a PD‑1/PD‑L1 inhibitor that can trigger immune-mediated inflammation in any organ system. The label emphasizes that these reactions can occur **at any time**, even after stopping therapy, and may be **severe or fatal** [Source: tecentriq_hybreza_prescribing.pdf, Page 10].\n\n- **Pneumonitis**:  \n  - **Incidence**: 2 % in NSCLC trials, including Grade 2–3 cases.  \n  - **Management**: Withhold TECENTRIQ HYBREZA for Grade 2; permanently discontinue for Grades 3–4. Use systemic corticosteroids (1–2 mg/kg prednisone or equivalent) until improvement to Grade 1 or less, then taper over ≥ 1 month [Source: tecentriq_hybreza_prescribing.pdf, Page 10].  \n\n- **Colitis**:  \n  - **Presentation**: Diarrhea, abdominal pain, lower GI bleeding. ",
+        "question": "What are the key warnings about severe immune-mediated adverse reactions with TECENTRIQ HYBREZA (e.g., pneumonitis) and general management approach?",
+        "error": null
+      },
+      {
+        "i": 10,
+        "elapsed_s": 6.56,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nYes, **unresectable or metastatic hepatocellular carcinoma (HCC)** is an approved use for **TECENTRIQ HYBREZA**, and the label specifically describes its use **in combination with bevacizumab**.\n\n### Supporting Label Details\n\nFrom the prescribing information:\n\n- **Indication**: TECENTRIQ HYBREZA, in combination with **bevacizumab**, is indicated for the treatment of adult patients with **unresectable or metastatic hepatocellular carcinoma (HCC)** who have **not received prior systemic therapy** [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n  \n- **Dosage and Administration**: For HCC, TECENTRIQ HYBREZA is administered **subcutaneously in the thigh** at a dose of **one 15 mL injection (containing 1,875 mg of atezolizumab and 30,000 units of hyaluronidase)** **every 3 weeks**. Bevacizumab is administered **intravenously at 15 mg/kg every 3 weeks**, on the same day as TECENTRIQ HYBREZA [Source: tecentriq_hybreza_prescribing.pdf, Page 5].\n\n### Bottom Line\n\nFor a patient with unresectable or metastatic HCC who hasn’t received prior systemic therapy, the **label-recommended regimen** is **TECENTRIQ HYBREZA combined with bevacizumab**, dosed as described above",
+        "question": "Is unresectable/metastatic HCC an approved use for TECENTRIQ HYBREZA, and with which combination partner does the label describe use?",
+        "error": null
+      },
+      {
+        "i": 11,
+        "elapsed_s": 9.95,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nThe TECENTRIQ HYBREZA label includes important information about **pregnancy and embryo-fetal toxicity**, which qualifies as a **special situation** that clinicians need to consider when prescribing this medication.\n\n---\n\n### Key Points from the Label\n\n#### 1. **Pregnancy Category & Risk**\n- The label states that **TECENTRIQ HYBREZA is contraindicated in pregnancy** because it can cause **fetal harm** based on animal studies and the mechanism of action of PD-1/PD-L1 inhibitors [Source: tecentriq_hybreza_prescribing.pdf, Page ?].  \n- Animal studies have shown **embryo-fetal toxicity**, including **malformations** and **increased embryo-fetal loss** [Source: tecentriq_hybreza_prescribing.pdf, Page ?].\n\n#### 2. **Contraindication**\n- **Contraindicated in pregnancy**. Women of childbearing potential should be advised to avoid becoming pregnant while taking TECENTRIQ HYBREZA and for **at least 6 months after the last dose** [Source: tecentriq_hybreza_prescribing.pdf, Page ?].\n\n#### 3. **Contraception Requirements**\n- **Effective contraception** must be used during treatment and for **at least 6 months after the last dose** of TECENTRIQ HYBREZA [Source: tecentriq_h",
+        "question": "What does the TECENTRIQ HYBREZA label say about pregnancy / embryo-fetal toxicity? Is this a special situation?",
+        "error": null
+      },
+      {
+        "i": 12,
+        "elapsed_s": 7.18,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical Takeaway:**  \nLooking at this patient with extensive-stage small cell lung cancer (ES-SCLC), the label for TECENTRIQ HYBREZA supports its use in combination with carboplatin and etoposide as a first‑line regimen, and also in combination with lurbinectedin as maintenance therapy after initial treatment with TECENTRIQ HYBREZA or intravenous atezolizumab plus carboplatin and etoposide.\n\n**Label Details:**  \nFrom the prescribing information, TECENTRIQ HYBREZA is indicated for ES-SCLC in two specific scenarios:\n\n1. **First‑line treatment**  \n   - **Regimen:** TECENTRIQ HYBREZA in combination with carboplatin and etoposide.  \n   - **Purpose:** Initial therapy for adult patients with extensive-stage small cell lung cancer.  \n   - **Dosing:** TECENTRIQ HYBREZA is administered subcutaneously in the thigh as one 15 mL injection (containing 1,875 mg atezolizumab and 30,000 units hyaluronidase) every 3 weeks, given prior to chemotherapy when administered on the same day [Source: tecentriq_hybreza_prescribing.pdf, Page 3].\n\n2. **Maintenance treatment**  \n   - **Regimen:** TECENTRIQ HYBREZA in combination with lurbinectedin.  \n   - **Purpose:** Maintenance therapy for adult patients w",
+        "question": "What is the labeled use of TECENTRIQ HYBREZA in extensive-stage small cell lung cancer (ES-SCLC)?",
+        "error": null
+      },
+      {
+        "i": 13,
+        "elapsed_s": 6.03,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": false,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical Takeaway:**  \nLooking at this patient, the label clearly states that TECENTRIQ HYBREZA must be administered by a healthcare professional and is **not** intended for self-injection at home.\n\n**Label Support:**  \nFrom the prescribing information:\n\n- **Page 3, Section 2 DOSAGE AND ADMINISTRATION:**  \n  > “TECENTRIQ HYBREZA must be administered by a healthcare professional.” [Source: tecentriq_hybreza_prescribing.pdf, Page 3]  \n\n- **Page 4, Section 2.2 Important Dosage and Administration Information:**  \n  > “TECENTRIQ HYBREZA is for subcutaneous use in the thigh only. Administer over approximately 7 minutes. Inject in healthy skin and never into areas where the skin is red, bruised, tender, or hard. [...] TECENTRIQ HYBREZA must be administered by a healthcare professional.” [Source: tecentriq_hybreza_prescribing.pdf, Page 4]\n\nThe label explicitly requires administration by a qualified healthcare provider, emphasizing proper technique, site selection, and monitoring for adverse reactions—none of which can be reliably ensured with self-administration.\n\n**Bottom Line:**  \nThis patient should not self-inject TECENTRIQ HYBREZA. The medication must be given by a healthcare profes",
+        "question": "A patient was instructed to self-inject TECENTRIQ HYBREZA at home. No AE. Does the label require administration by a healthcare professional?",
+        "error": null
+      },
+      {
+        "i": 14,
+        "elapsed_s": 7.17,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": false,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "**Clinical Takeaway:**  \nFor Grade 3 pneumonitis on TECENTRIQ HYBREZA, the label **recommends permanent discontinuation**, not dose reduction or simple withholding.\n\n**Label Details:**  \nThe TECENTRIQ HYBREZA prescribing information includes a table of recommended dosage modifications for adverse reactions. For pneumonitis, the guidance is:\n\n- **Grade 2 pneumonitis:** Withhold TECENTRIQ HYBREZA.  \n- **Grades 3 or 4 pneumonitis:** **Permanently discontinue** TECENTRIQ HYBREZA [Source: tecentriq_hybreza_prescribing.pdf, Page 7].\n\n**Key Points:**  \n- **No dose reduction** is recommended for pneumonitis at any grade.  \n- **Grade 3 pneumonitis** triggers **permanent discontinuation**, not just a temporary hold.  \n- This aligns with the general principle that severe immune-mediated pneumonitis carries significant risk and warrants stopping the drug permanently to prevent further toxicity.\n\n**Bottom Line:**  \nFor a patient experiencing Grade 3 pneumonitis on TECENTRIQ HYBREZA, the label advises **permanent discontinuation** of the drug. Dose reduction is not an option per the prescribing information.",
+        "question": "For Grade 3 pneumonitis on TECENTRIQ HYBREZA, what does the label generally recommend regarding dose reduction vs withhold/discontinue?",
+        "error": null
+      },
+      {
+        "i": 15,
+        "elapsed_s": 7.14,
+        "status": 200,
+        "flags": {
+          "insuff_prefix": false,
+          "not_concordant": true,
+          "matches": true,
+          "off_label": false,
+          "bad_banner": false
+        },
+        "ans_head": "### Clinical Takeaway\n\nYes, according to the TECENTRIQ HYBREZA prescribing information, an adult who is currently receiving intravenous atezolizumab can switch to subcutaneous TECENTRIQ HYBREZA at their next scheduled dose.\n\n### Label Support\n\nThe label explicitly states:\n\n> “Adult patients who are treated with intravenous atezolizumab can switch to subcutaneous TECENTRIQ HYBREZA at their next scheduled dose.” [Source: tecentriq_hybreza_prescribing.pdf, Page 5]\n\nThis guidance appears in the **Important Dosage and Administration Information** section, which is designed to help avoid medication errors when transitioning between formulations. The label emphasizes that the two products have different recommended dosages, so confirming the correct product and route (subcutaneous for TECENTRIQ HYBREZA) is essential before administration.\n\n### Bottom Line\n\nFor an adult on intravenous atezolizumab, switching to TECENTRIQ HYBREZA at the next scheduled dose is **consistent with the label** and does not constitute an off‑label or inappropriate regimen, provided the patient meets the indicated population and the dose/frequency (1,875 mg atezolizumab via 15 mL subcutaneous injection every 3 wee",
+        "question": "Can an adult switch from intravenous atezolizumab to TECENTRIQ HYBREZA at the next scheduled dose per the label?",
+        "error": null
+      }
+    ]
+  }
+}

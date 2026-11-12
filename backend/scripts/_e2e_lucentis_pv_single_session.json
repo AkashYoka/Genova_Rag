@@ -1,0 +1,232 @@
+{
+  "document_id": "3d1c0a29-fa6d-4410-a7ce-04c0a94de677",
+  "session_id": "534dabd7-6513-4a7a-96a8-fbfb70647903",
+  "n": 15,
+  "results": [
+    {
+      "i": 1,
+      "elapsed_s": 8.1,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this 72-year-old with neovascular (wet) AMD who was intentionally prescribed LUCENTIS 0.5 mg by intravitreal injection every 3 months from the start (no monthly loading), I would flag this as **not label-concordant dosing**. No adverse event was reported, but the regimen itself does not match the approved dosing schedule.\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **neovascular (wet) AMD**, an approved indication for LUCENTIS [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \n- For neovascular AMD, the label supports two dosing schedules:\n  1. **Three monthly loading doses** followed by **monthly maintenance dosing** [Source: lucentis_prescribing.pdf, Page 2].\n  2. **Three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria [Source: lucentis_prescribing.pdf, Page 2].\n\n**Prescribed Regimen vs. Label**  \n- The patient received **LU",
+      "question": "A 72-year-old with neovascular (wet) AMD was intentionally prescribed LUCENTIS 0.5 mg by intravitreal injection every 3 months from the start (no monthly loading). No adverse event was reported. Identify any adverse event, special situation, or off-label / not label-concordant dosing.",
+      "error": null
+    },
+    {
+      "i": 2,
+      "elapsed_s": 7.84,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this patient with neovascular (wet) AMD, the label for LUCENTIS supports **two dosing schedules**, but **neither matches the prescribed regimen of 0.5 mg every 3 months from the start without a loading phase**. This is **not label-concordant** and should be verified before continuing.\n\n---\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **neovascular (wet) AMD**, an approved indication for LUCENTIS [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \nFrom the prescribing information, the two supported regimens for neovascular AMD are:  \n1. **Three monthly loading doses** followed by **monthly maintenance dosing** [Source: lucentis_prescribing.pdf, Page 2].  \n2. **Three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria [Source: lucentis_prescribing.pdf, Page 2].\n\n**Prescribed Regimen vs. Label**  \n- The patient received **LUCENTIS 0.5 ",
+      "question": "According to the prescribing information, what is the recommended LUCENTIS dose and frequency for neovascular (wet) AMD?",
+      "error": null
+    },
+    {
+      "i": 3,
+      "elapsed_s": 8.45,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this patient with wet AMD who received LUCENTIS 0.5 mg intravitreally once a month (~28 days) with no reported adverse events, I would flag this as **not label-concordant dosing**. The regimen does not match the approved dosing schedule for neovascular AMD.\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **neovascular (wet) AMD**, an approved indication for LUCENTIS [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \n- For neovascular AMD, the label supports two dosing schedules:  \n  1. **Three monthly loading doses** followed by **monthly maintenance dosing** [Source: lucentis_prescribing.pdf, Page 2].  \n  2. **Three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria [Source: lucentis_prescribing.pdf, Page 2].\n\n**Prescribed Regimen vs. Label**  \n- The patient received **LUCENTIS 0.5 mg once a month from the start**, with **no monthly",
+      "question": "Patient with wet AMD received LUCENTIS 0.5 mg (0.05 mL of 10 mg/mL) intravitreally once a month (~28 days). No AE. Classify AE / special situation / off-label if any.",
+      "error": null
+    },
+    {
+      "i": 4,
+      "elapsed_s": 7.83,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this patient with diabetic macular edema (DME) who was intentionally given **LUCENTIS 0.5 mg every month**, I would flag this as **not label-concordant dosing**. No adverse event was reported, but the regimen itself does not match the approved dosing schedule for DME.\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **diabetic macular edema (DME)**, an approved indication for LUCENTIS [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \n- For DME, the label supports **three monthly loading doses** followed by **monthly maintenance dosing** [Source: lucentis_prescribing.pdf, Page 2].  \n- Alternatively, the label supports **three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria [Source: lucentis_prescribing.pdf, Page 2].\n\n**Prescribed Regimen vs. Label**  \n- The patient received **LUCENTIS 0.5 mg every month from the start**, with **no ",
+      "question": "A patient with diabetic macular edema (DME) was given LUCENTIS 0.5 mg every month intentionally. No AE. Is this label-concordant, a dosing error, or off-label?",
+      "error": null
+    },
+    {
+      "i": 5,
+      "elapsed_s": 7.99,
+      "status": 200,
+      "flags": {
+        "not_concordant": false,
+        "matches": true,
+        "off_label": false,
+        "mentions_dose": false,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at the label for LUCENTIS in patients with **diabetic macular edema (DME)** and **diabetic retinopathy (DR)**, the recommended dosing is **three monthly loading doses** followed by **maintenance dosing guided by disease activity**. This is different from simply giving the drug every three months from the start.\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **diabetic macular edema (DME)** and/or **diabetic retinopathy (DR)**, both of which are approved indications for LUCENTIS [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \nFrom the prescribing information, the two supported regimens for DME and DR are:  \n1. **Three monthly loading doses** followed by **monthly maintenance dosing** [Source: lucentis_prescribing.pdf, Page 2].  \n2. **Three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria [Source: lucentis_prescribing.pdf, Page 2].\n",
+      "question": "What LUCENTIS dose and schedule does the label recommend for diabetic macular edema (DME) and diabetic retinopathy (DR)?",
+      "error": null
+    },
+    {
+      "i": 6,
+      "elapsed_s": 7.16,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at this patient with **dry AMD (geographic atrophy, no neovascularization)** who was prescribed **LUCENTIS 0.5 mg monthly**, I would flag this as **off-label use**. No adverse event was reported, but the regimen itself does not match the approved indications for LUCENTIS.\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **dry AMD (geographic atrophy)**, which is **not an approved indication** for LUCENTIS. LUCENTIS is approved for:\n  - **Neovascular (wet) AMD**  \n  - **Diabetic macular edema (DME)**  \n  - **Diabetic retinopathy (DR)**  \n  - **Macular edema following retinal vein occlusion (RVO)**  \n  - **Myopic choroidal neovascularization (mCNV)**  \n[Source: lucentis_prescribing.pdf, Page 2]\n\n**Approved Dosing Regimen**  \n- For **neovascular AMD**, the label supports two dosing schedules:\n  1. **Three monthly loading doses** followed by **monthly maintenance dosing**  \n  2. **Three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria  \n[Source: lucentis_prescri",
+      "question": "A patient with dry AMD (geographic atrophy, no neovascularization) was prescribed LUCENTIS 0.5 mg monthly. No AE. Identify adverse event, special situation, or off-label usage.",
+      "error": null
+    },
+    {
+      "i": 7,
+      "elapsed_s": 7.73,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at this patient who received **LUCENTIS 0.5 mg as an intravenous infusion instead of the intended intravitreal injection**, I would flag this as a **medication error**. No adverse event was reported, but the route of administration is fundamentally incorrect and not supported by the product labeling.\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient received LUCENTIS, which is indicated for **neovascular (wet) AMD, diabetic macular edema (DME), diabetic retinopathy (DR), macular edema following retinal vein occlusion (RVO), and myopic choroidal neovascularization (mCNV)** [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \n- LUCENTIS is approved **only for intravitreal injection**, not intravenous administration [Source: lucentis_prescribing.pdf, Page 2]. The prescribing information explicitly describes dosing and administration for intravitreal use only.\n\n**Prescribed Regimen vs. Label**  \n- The patient received **LUCENTIS 0.5 mg intravenously**, which **does not match** the approved route of administ",
+      "question": "A clinician administered LUCENTIS 0.5 mg as an intravenous infusion instead of intravitreal injection. No AE reported. Classify AE / special situation / medication error / off-label.",
+      "error": null
+    },
+    {
+      "i": 8,
+      "elapsed_s": 6.39,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": false,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at the label for LUCENTIS in patients with **macular edema following retinal vein occlusion (RVO)**, the recommended regimen is **LUCENTIS 0.5 mg (0.05 mL of 10 mg/mL solution) administered by intravitreal injection once a month (approximately 28 days)** [Source: lucentis_prescribing.pdf, Page 2].\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **macular edema following retinal vein occlusion (RVO)**, which is an approved indication for LUCENTIS [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \n- For RVO, the label explicitly states:  \n  > _“LUCENTIS 0.5 mg (0.05 mL of 10 mg/mL solution) is recommended to be administered by intravitreal injection once a month (approximately 28 days).”_  \n  [Source: lucentis_prescribing.pdf, Page 2].\n\n**Key Points from the Label**  \n- The regimen is **monthly**, with no mention of an initial loading phase or alternative dosing intervals for RVO.  \n- Clinical studies (RVO-1 and RVO-2) support this monthly dosing schedule, showing efficacy and safety over 6 months",
+      "question": "What is the labeled LUCENTIS regimen for macular edema following retinal vein occlusion (RVO)?",
+      "error": null
+    },
+    {
+      "i": 9,
+      "elapsed_s": 7.54,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this patient with **diabetic macular edema (DME)** who was treated with **LUCENTIS 0.5 mg** (using the CLEAR-finger-grip prefilled syringe) instead of the **0.3 mg ORANGE-finger-grip syringe**, I would flag this as a **medication error**. No adverse event was reported, but the dose itself is not label-concordant for DME.\n\n---\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **diabetic macular edema (DME)**, an approved indication for LUCENTIS [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \n- For DME, the label supports **three monthly loading doses** followed by **monthly maintenance dosing** **or** **three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria [Source: lucentis_prescribing.pdf, Page 2].  \n- The **approved dose** for DME is **0.3 mg** (not 0.5 mg) [Source: lucentis_prescribing.pdf, Page 2].\n\n**Prescribed Regimen vs. La",
+      "question": "A DME patient was treated with the 0.5 mg CLEAR-finger-grip prefilled syringe instead of the 0.3 mg ORANGE-finger-grip syringe. No AE. Flag any dosing discrepancy or special situation.",
+      "error": null
+    },
+    {
+      "i": 10,
+      "elapsed_s": 8.04,
+      "status": 200,
+      "flags": {
+        "not_concordant": false,
+        "matches": false,
+        "off_label": false,
+        "mentions_dose": false,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at the warnings for LUCENTIS, the key safety concerns are **endophthalmitis, retinal detachment, and retinal vasculitis**. These are serious ocular complications that clinicians need to monitor for closely after each injection.\n\n### Supporting Label Reasoning\n\n**Endophthalmitis and Retinal Detachment**  \n- **Endophthalmitis** is a severe infection of the eye that can occur after intravitreal injections, including LUCENTIS. The label emphasizes the importance of using proper aseptic technique and monitoring patients after the injection [Source: lucentis_prescribing.pdf, Page 2].  \n- **Retinal detachment** is another serious complication that can follow intravitreal injections. Patients should be monitored for signs of detachment, such as sudden vision changes [Source: lucentis_prescribing.pdf, Page 2].\n\n**Retinal Vasculitis**  \n- **Retinal vasculitis** with or without occlusion has been reported in patients treated with LUCENTIS, especially in those with pre-existing intraocular inflammation or after treatment with other intravitreal agents. The label ad",
+      "question": "What are the key warnings about endophthalmitis, retinal detachment, or retinal vasculitis with LUCENTIS?",
+      "error": null
+    },
+    {
+      "i": 11,
+      "elapsed_s": 8.61,
+      "status": 200,
+      "flags": {
+        "not_concordant": false,
+        "matches": true,
+        "off_label": false,
+        "mentions_dose": false,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at the LUCENTIS label, **pregnancy is listed as a special situation** where caution is advised. The label does not provide specific dosing recommendations for pregnant patients but emphasizes the need for careful risk-benefit assessment.\n\n### Supporting Label Reasoning\n\n**Pregnancy Category and General Warnings**  \n- The label states that **there are no adequate and well-controlled studies in pregnant women**, and therefore, LUCENTIS should be used during pregnancy only if the potential benefit justifies the potential risk to the fetus [Source: lucentis_prescribing.pdf, Page 2].  \n- This classification places pregnancy in a **special situation** category, requiring clinicians to weigh the benefits of treatment against potential fetal risks.\n\n**Animal Reproductive Toxicity Data**  \n- Animal studies have shown **reproductive toxicity**, including **embryo-fetal toxicity** and **teratogenic effects** at doses higher than those used in humans. Specifically:  \n  - **Embryo-fetal toxicity** (increased resorptions and decreased fetal weight) was observed in ra",
+      "question": "What does the LUCENTIS label say about use in pregnancy? Is pregnancy a special situation?",
+      "error": null
+    },
+    {
+      "i": 12,
+      "elapsed_s": 7.49,
+      "status": 200,
+      "flags": {
+        "not_concordant": false,
+        "matches": true,
+        "off_label": false,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at the label for LUCENTIS, **myopic choroidal neovascularization (mCNV) is indeed an approved indication**. The recommended dose is **LUCENTIS 0.5 mg (0.05 mL of 10 mg/mL solution)** administered by **intravitreal injection**, with the exact frequency guided by disease activity and stability criteria.\n\n---\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **myopic choroidal neovascularization (mCNV)**, which is an approved indication for LUCENTIS [Source: lucentis_prescribing.pdf, Page 24].\n\n**Approved Dosing Regimen**  \n- For mCNV, the label supports **LUCENTIS 0.5 mg** administered by **intravitreal injection**. The exact frequency is **guided by disease activity and stability criteria**, not a fixed schedule [Source: lucentis_prescribing.pdf, Page 24].  \n- In the pivotal mCNV study, patients received injections guided by prespecified re-treatment criteria based on vision stability or disease activity [Source: lucentis_",
+      "question": "Is myopic choroidal neovascularization (mCNV) an approved indication for LUCENTIS, and what dose is recommended?",
+      "error": null
+    },
+    {
+      "i": 13,
+      "elapsed_s": 9.69,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": false,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this patient with **neovascular (wet) AMD** who received **four monthly LUCENTIS 0.5 mg injections followed by dosing every 3 months**, I would say this regimen **matches the label** for wet AMD. No adverse event was reported, and there are no special situation or off‑label concerns with this intentional choice.\n\n---\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **neovascular (wet) AMD**, an approved indication for LUCENTIS [Source: lucentis_prescribing.pdf, Page 2].\n\n**Approved Dosing Regimen**  \nFrom the prescribing information, the label supports **two dosing schedules** for wet AMD:  \n1. **Three monthly loading doses** followed by **monthly maintenance dosing** [Source: lucentis_prescribing.pdf, Page 2].  \n2. **Three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria [Source: lucentis_prescribing.pdf, Page 2].\n\n**Prescribed Regimen vs. Label**  \n- The",
+      "question": "For wet AMD, the label allows less frequent dosing after monthly doses. A patient got 4 monthly doses then every 3 months. Is that described in the label? Any AE/special/off-label concerns if intentionally chosen?",
+      "error": null
+    },
+    {
+      "i": 14,
+      "elapsed_s": 8.74,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at this patient with open-angle glaucoma who received LUCENTIS 0.5 mg monthly, I would flag this as **off-label use**. No adverse event was reported, but the regimen itself does not match the approved indications for LUCENTIS.\n\n### Supporting Label Reasoning\n\n**Indication and Population**  \n- The patient has **open-angle glaucoma**, which is **not an approved indication** for LUCENTIS. LUCENTIS is approved for:\n  - **Neovascular (wet) AMD**  \n  - **Diabetic macular edema (DME)**  \n  - **Diabetic retinopathy (DR)**  \n  - **Macular edema following retinal vein occlusion (RVO)**  \n  - **Myopic choroidal neovascularization (mCNV)**  \n[Source: lucentis_prescribing.pdf, Page 2]\n\n**Approved Dosing Regimen**  \n- For **neovascular AMD**, the label supports two dosing schedules:\n  1. **Three monthly loading doses** followed by **monthly maintenance dosing**  \n  2. **Three monthly loading doses** followed by **dosing every 3 months** guided by disease activity and stability criteria  \n[Source: lucentis_prescribing.pdf, Page 2]\n\n- For **DME**, **DR**, **RVO**, and ",
+      "question": "Patient with open-angle glaucoma (no AMD/DME/RVO/DR/mCNV) received LUCENTIS 0.5 mg monthly. No AE. Off-label / special situation / AE?",
+      "error": null
+    },
+    {
+      "i": 15,
+      "elapsed_s": 9.8,
+      "status": 200,
+      "flags": {
+        "not_concordant": false,
+        "matches": false,
+        "off_label": false,
+        "mentions_dose": false,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at the LUCENTIS prescribing information, **yes**—it does discuss hypersensitivity reactions and provides clear guidance on monitoring after intravitreal injection. The label emphasizes the importance of recognizing and managing these events promptly.\n\n---\n\n### Supporting Label Reasoning\n\n**Hypersensitivity Reactions**  \n- LUCENTIS is contraindicated in patients with known hypersensitivity to ranibizumab or any excipients in the formulation [Source: lucentis_prescribing.pdf, Page 1].  \n- Hypersensitivity reactions may manifest as **severe intraocular inflammation** and should be monitored for, especially in patients with a history of allergic reactions to biologics [Source: lucentis_prescribing.pdf, Page 1].\n\n**Injection-Related Reactions and Monitoring**  \n- **Endophthalmitis and retinal detachments** are serious complications associated with intravitreal injections, including LUCENTIS. Proper aseptic technique is mandatory, and patients should be monitored after each injection to permit early treatment if infection occurs [Source: lucentis_prescribing.",
+      "question": "Does the LUCENTIS prescribing information discuss hypersensitivity or infusion/injection-related reactions and monitoring after injection?",
+      "error": null
+    }
+  ]
+}

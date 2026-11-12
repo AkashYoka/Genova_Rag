@@ -10,6 +10,13 @@ from app.rag.chunking.semantic.types import SectionNode, SectionSpec, SourceBloc
 
 _WS_RE = re.compile(r"\s+")
 _MAX_TITLE = 500
+_TOC_TITLE_RE = re.compile(
+    r"(?i)^(?:table\s+of\s+)?contents\*?\s*$|prescribing\s+information:\s*contents"
+)
+
+
+def _is_toc_title(value: str) -> bool:
+    return bool(_TOC_TITLE_RE.search(_WS_RE.sub(" ", str(value or "")).strip()))
 
 
 def _clean_title(value: str, fallback: str) -> str:
@@ -93,17 +100,25 @@ def build_hierarchy(
         if ref and ref in ref_to_index:
             candidate = ref_to_index[ref]
             if candidate < index and specs[candidate].level < level:
-                parent_index = candidate
+                # Never nest body chapters under a CONTENTS listing.
+                if not _is_toc_title(specs[candidate].title):
+                    parent_index = candidate
 
         while stack and specs[stack[-1]].level >= level:
             stack.pop()
+        # Skip TOC ancestors left on the stack from weaker LLM nesting.
+        while stack and _is_toc_title(specs[stack[-1]].title):
+            stack.pop()
         if parent_index is None and stack:
             parent_index = stack[-1]
+        if parent_index is not None and _is_toc_title(specs[parent_index].title):
+            parent_index = None
 
         parent = nodes[parent_index] if parent_index is not None else None
-        path = (list(parent.path) if parent else []) + [
-            _clean_title(spec.title, f"Section {index + 1}")
-        ]
+        title = _clean_title(spec.title, f"Section {index + 1}")
+        if _is_toc_title(title):
+            title = "Table of Contents"
+        path = (list(parent.path) if parent else []) + [title]
         section_blocks = [
             by_id[block_id]
             for block_id in spec.block_ids
@@ -128,6 +143,9 @@ def build_hierarchy(
         nodes.append(node)
         if parent is not None:
             parent.children.append(node)
+        # CONTENTS is a leaf listing — do not keep it open as a parent.
+        if _is_toc_title(node.title):
+            continue
         stack.append(index)
 
     return nodes

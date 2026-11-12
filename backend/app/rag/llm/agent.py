@@ -17,6 +17,7 @@ Common example question (all six files):
 """
 import logging
 import json
+import re
 from typing import List, Dict, Any, Optional, Generator, Tuple
 
 from langchain_classic.agents import create_react_agent, AgentExecutor
@@ -268,6 +269,22 @@ def _format_chat_history(
     )
 
 
+def _history_for_rag_prompt(
+    question: str,
+    chat_history: Optional[List[Dict[str, str]]],
+    *,
+    has_attach: bool,
+) -> str:
+    """Format prior turns only when they should influence this grounded ask."""
+    if not chat_history:
+        return ""
+    from app.services.conversation_memory import should_inject_prompt_history
+
+    if not should_inject_prompt_history(question, has_attach=has_attach):
+        return ""
+    return _format_chat_history(chat_history)
+
+
 def _build_chat_llm():
     """
     What: Build a LangChain chat model for the ReAct agent (HF path).
@@ -318,6 +335,7 @@ def get_agent_executor(
     document_ids: Optional[List[str]] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    question: Optional[str] = None,
 ):
     """
     What: Wire PDF / math / web tools into a LangChain ReAct ``AgentExecutor``.
@@ -339,7 +357,7 @@ def get_agent_executor(
     # Setup Agent — prefer DB agent template + domain overlay
     try:
         resolved = _resolve_runtime_prompts(
-            question="agent_setup",
+            question=question or "agent_setup",
             user_id=user_id,
             document_id=document_id,
             document_ids=document_ids,
@@ -374,7 +392,12 @@ def get_agent_executor(
         max_iterations=5,
     )
 
-    formatted_history = _format_chat_history(chat_history) if chat_history else ""
+    has_attach = bool(document_id or _unique_document_ids(document_ids))
+    formatted_history = _history_for_rag_prompt(
+        question or "",
+        chat_history,
+        has_attach=has_attach,
+    )
 
     return executor, pdf_tool, formatted_history
 
@@ -588,6 +611,34 @@ def _multi_doc_prompt_prefix(document_ids: Optional[List[str]], chunks: List[Dic
     )
 
 
+def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 12) -> str:
+    """Compact structured table appendix so answer stage sees headers/rows, not text only."""
+    raw = chunk.get("table_json")
+    if not raw:
+        return ""
+    try:
+        import json as _json
+
+        table = _json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return ""
+    if not isinstance(table, dict):
+        return ""
+    headers = [str(h or "") for h in (table.get("headers") or [])]
+    rows = [list(r) for r in (table.get("rows") or [])][:max_rows]
+    if not headers and not rows:
+        return ""
+    lines = ["Structured table_json:"]
+    if headers:
+        lines.append("headers: " + " | ".join(headers))
+    for idx, row in enumerate(rows):
+        cells = [str(c or "") for c in row]
+        lines.append(f"row[{idx}]: " + " | ".join(cells))
+    if len(table.get("rows") or []) > max_rows:
+        lines.append(f"... ({len(table['rows']) - max_rows} more rows)")
+    return "\n".join(lines)
+
+
 def _format_context(chunks: List[Dict[str, Any]]) -> str:
     """Build the evidence block for ``RAG_PROMPT_TEMPLATE`` ``{context}``.
 
@@ -596,7 +647,8 @@ def _format_context(chunks: List[Dict[str, Any]]) -> str:
       joined with "\\n\\n"
 
     When available, section / subsection / chunk_type are included so the model
-    can prefer the correct table or section for the stated topic.
+    can prefer the correct table or section for the stated topic. Table chunks
+    also append a compact ``table_json`` appendix (headers + bounded rows).
 
     Exact example (ILLUSTRATIVE chunk text; format is exact)
     -------------------------------------------------------
@@ -628,8 +680,157 @@ def _format_context(chunks: List[Dict[str, Any]]) -> str:
         header = f"[{i}] Source: {filename}, Page {page}"
         if meta_bits:
             header = f"{header} | " + " | ".join(meta_bits)
-        parts.append(f"{header}\n{text}")
+        body = text
+        appendix = _table_json_appendix(chunk)
+        if appendix:
+            body = f"{text}\n\n{appendix}" if text else appendix
+        parts.append(f"{header}\n{body}")
     return "\n\n".join(parts)
+
+
+def _apply_table_interpretation(
+    question: str,
+    chunks: List[Dict[str, Any]],
+    context: str,
+    sources: List[Dict[str, Any]],
+) -> Tuple[str, List[Dict[str, Any]]]:
+    """Prepend verified / insufficient table evidence; annotate sources."""
+    try:
+        from app.rag.generation.table_interpretation import interpret_table_question
+
+        interpretation = interpret_table_question(question, chunks)
+    except Exception as exc:
+        logger.warning("Table interpretation failed: %s", exc)
+        return context, sources
+
+    if not interpretation.is_structured_lookup:
+        return context, sources
+
+    prefix = interpretation.prompt_prefix or ""
+    if prefix:
+        # Place authoritative evidence at both ends — models often overweight
+        # the start and the end of long contexts.
+        context = prefix + context + "\n\n" + prefix.rstrip() + "\n"
+
+    update = interpretation.sources_update or {}
+    if update and sources:
+        enriched = []
+        for src in sources:
+            item = dict(src)
+            item.update(update)
+            enriched.append(item)
+        sources = enriched
+    elif update:
+        sources = [{**update, "text": "", "filename": "", "page": 0}]
+    return context, sources
+
+
+_LEADING_DOSE_RE = re.compile(
+    r"(?is)^(?:.{0,280}?)(?:\*\*)?(\d{2,4}(?:\.\d+)?)\s*mg(?:\*\*)?"
+)
+
+
+def _verified_meta_from_sources(sources: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    for src in sources or []:
+        meta = src.get("verified_cell")
+        if isinstance(meta, dict) and meta.get("value") is not None:
+            return meta
+    return None
+
+
+def _reconcile_answer_with_verified_cell(
+    answer: str,
+    sources: List[Dict[str, Any]],
+) -> str:
+    """If the model contradicts a verified cell, pin the authoritative value.
+
+    Domain-agnostic: for pure lookups, the leading amount must match the cell.
+    For compare-mode (stated administered amount vs label cell), only ensure the
+    label cell appears — do not rewrite the takeaway to the label amount.
+    """
+    meta = _verified_meta_from_sources(sources)
+    if not meta:
+        # Soft insufficient: do not prepend abstain boilerplate — prose RAG may
+        # still answer correctly from dosage paragraphs.
+        if any(
+            s.get("insufficient_table_evidence") and not s.get("soft_insufficient")
+            for s in (sources or [])
+        ):
+            if not re.search(
+                r"(?i)insufficient|cannot determine|unable to verify|not enough evidence",
+                answer or "",
+            ):
+                return (
+                    "Insufficient table evidence to verify a unique row–column "
+                    "intersection. Do not invent a cell value.\n\n"
+                    + (answer or "")
+                )
+        return answer
+
+    raw_val = str(meta.get("value") or "").strip()
+    if not raw_val:
+        return answer
+    compare_mode = bool(
+        meta.get("compare_mode")
+        or (meta.get("evidence") or {}).get("prescribed_value") is not None
+    )
+    m_val = re.search(r"(\d+(?:\.\d+)?)", raw_val)
+    if not m_val:
+        # Non-numeric verified token — require verbatim presence.
+        if raw_val.lower() in (answer or "").lower():
+            return answer
+        return (
+            f"**Verified table value: {raw_val}** "
+            f"(Page {meta.get('page')}; "
+            f"row {meta.get('row_headers')}; column {meta.get('col_headers')}).\n\n"
+            + (answer or "")
+        )
+
+    verified_num = m_val.group(1)
+    if compare_mode:
+        # Stated amount may lead the answer; require the label cell somewhere.
+        if verified_num in (answer or ""):
+            return answer
+        prescribed = meta.get("prescribed_value")
+        p_unit = meta.get("prescribed_unit") or ""
+        p_s = (
+            f"{prescribed}{(' ' + p_unit) if p_unit else ''}".strip()
+            if prescribed is not None
+            else "the stated amount"
+        )
+        return (
+            f"**Verified label table value: {raw_val}** "
+            f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
+            f"column {meta.get('col_headers')}). "
+            f"Compare the stated amount ({p_s}) against this label cell; "
+            "do not treat the label cell as the administered amount.\n\n"
+            + (answer or "")
+        )
+
+    lead = _LEADING_DOSE_RE.search(answer or "")
+    if lead and lead.group(1) == verified_num:
+        return answer
+    # Also accept if verified value appears early without a conflicting lead dose.
+    head = (answer or "")[:320]
+    if verified_num in head and not lead:
+        return answer
+    if lead and lead.group(1) != verified_num:
+        correction = (
+            f"**Authoritative verified table value: {raw_val}** "
+            f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
+            f"column {meta.get('col_headers')}). "
+            f"The takeaway value must be {raw_val}, not {lead.group(1)} mg "
+            "from a neighboring cell or another table.\n\n"
+        )
+        return correction + (answer or "")
+    if verified_num not in (answer or ""):
+        return (
+            f"**Authoritative verified table value: {raw_val}** "
+            f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
+            f"column {meta.get('col_headers')}).\n\n"
+            + (answer or "")
+        )
+    return answer
 
 
 def _coerce_source_page(page: Any) -> int:
@@ -1031,6 +1232,9 @@ def _generate_answer_direct(
         context = (
             _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
         )
+        context, sources = _apply_table_interpretation(
+            question, chunks, context, sources
+        )
 
     resolved = _resolve_runtime_prompts(
         question=question,
@@ -1044,7 +1248,9 @@ def _generate_answer_direct(
         session_id=session_id,
     )
     user_prompt = resolved.format_task(context=context, question=question)
-    history = _format_chat_history(chat_history) if chat_history else ""
+    history = _history_for_rag_prompt(
+        question, chat_history, has_attach=has_attach
+    )
     if history:
         user_prompt = f"{history}\n\n{user_prompt}"
 
@@ -1077,6 +1283,7 @@ def _generate_answer_direct(
         answer = (response.choices[0].message.content or "").strip()
     if not answer:
         answer = MALFORMED_OUTPUT_MESSAGE
+    answer = _reconcile_answer_with_verified_cell(answer, sources)
     try:
         from app.rag.retrieval.rag_debug import record_answer
 
@@ -1228,6 +1435,9 @@ def _generate_answer_stream_direct(
         context = (
             _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
         )
+        context, sources = _apply_table_interpretation(
+            question, chunks, context, sources
+        )
 
     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
     resolved = _resolve_runtime_prompts(
@@ -1242,7 +1452,9 @@ def _generate_answer_stream_direct(
         session_id=session_id,
     )
     user_prompt = resolved.format_task(context=context, question=question)
-    history = _format_chat_history(chat_history) if chat_history else ""
+    history = _history_for_rag_prompt(
+        question, chat_history, has_attach=has_attach
+    )
     if history:
         user_prompt = f"{history}\n\n{user_prompt}"
 
@@ -1394,6 +1606,7 @@ def generate_answer(
             document_ids=document_ids,
             top_k=top_k,
             chat_history=chat_history,
+            question=question,
         )
         result = executor.invoke({"input": question, "chat_history": formatted_history})
 
@@ -1542,6 +1755,7 @@ def generate_answer_stream(
             document_ids=document_ids,
             top_k=top_k,
             chat_history=chat_history,
+            question=question,
         )
 
         sources_sent = False

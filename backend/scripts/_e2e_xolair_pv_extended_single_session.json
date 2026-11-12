@@ -1,0 +1,313 @@
+{
+  "document_id": "43ae024f-3c0d-40f5-aa49-83e9f3682641",
+  "session_id": "80574492-9e1b-4648-881c-44dbe85a2222",
+  "n": 18,
+  "results": [
+    {
+      "i": 1,
+      "elapsed_s": 13.65,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—a 35‑year‑old with allergic asthma, weight 78 kg, and pretreatment IgE 350 IU/mL—who was prescribed Xolair 150 mg every 4 weeks, the regimen **does not match the approved dosing** for this indication and body weight. No adverse event was reported, but the dose is below what the label recommends.\n\n### Label Review\n- **Indication**: Allergic asthma (moderate‑to‑severe persistent) [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **>70–90 kg** (78 kg falls here).\n  - Pretreatment IgE: **>300–400 IU/mL** (350 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **300 mg every 2 weeks**, not 150 mg every 4 weeks.\n\n### Classification\n\n1. **Adverse Event**  \n   - None reported in the scenario. The label does not imply an increased risk solely from under‑dosing, but under‑trea",
+      "question": "A 35-year-old patient with allergic asthma, body weight 78 kg and pretreatment IgE 350 IU/mL was intentionally prescribed Xolair 150 mg every 4 weeks. No adverse event was reported. Identify any adverse event, special situation, or off-label usage.",
+      "error": null
+    },
+    {
+      "i": 2,
+      "elapsed_s": 13.45,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": true,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—a 35‑year‑old with allergic asthma, weight 78 kg, and pretreatment IgE 350 IU/mL—the **approved XOLAIR dose is 300 mg every 2 weeks**, not 150 mg every 4 weeks as prescribed.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **>70–90 kg** (78 kg falls here).\n  - Pretreatment IgE: **>300–400 IU/mL** (350 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **300 mg every 2 weeks**.\n\n### Classification\n1. **Adverse Event**  \n   - None reported in the scenario. The label does not imply an increased risk solely from under‑dosing, but under‑treatment may reduce disease control.\n\n2. **Special Situation**  \n   - N",
+      "question": "According to Table 1 for patients 12 years and older with asthma, what XOLAIR dose and frequency apply for pretreatment IgE 350 IU/mL and body weight 78 kg?",
+      "error": null
+    },
+    {
+      "i": 3,
+      "elapsed_s": 10.43,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": true,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—a 35‑year‑old with allergic asthma, weight 70 kg, and pretreatment IgE 300 IU/mL—the **approved XOLAIR dose is 225 mg every 4 weeks**, not 150 mg every 4 weeks as prescribed.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **>60–70 kg** (70 kg falls here).\n  - Pretreatment IgE: **>200–300 IU/mL** (300 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **225 mg every 4 weeks**.\n\n### Classification\n1. **Adverse Event**  \n   - None reported in the scenario. The label does not imply an increased risk solely from under‑dosing, but under‑treatment may reduce disease control.\n\n2. **Special Situation**  \n   - N",
+      "question": "Asthma patient >=12 years, IgE 300 IU/mL, weight 70 kg. What is the label dose and frequency from the dosing table?",
+      "error": null
+    },
+    {
+      "i": 4,
+      "elapsed_s": 8.45,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—a 35‑year‑old with allergic asthma, weight 90 kg, and pretreatment IgE 400 IU/mL—the **approved XOLAIR dose is 300 mg every 2 weeks**, not 150 mg every 4 weeks as prescribed.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **>70–90 kg** (90 kg falls here).\n  - Pretreatment IgE: **>300–400 IU/mL** (400 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **300 mg every 2 weeks**.\n\n### Classification\n1. **Adverse Event**  \n   - None reported in the scenario. The label does not imply an increased risk solely from under‑dosing, but under‑treatment may reduce disease control.\n\n2. **Special Situation**  \n   - N",
+      "question": "Asthma patient >=12 years, IgE 400 IU/mL, weight 90 kg. What dose/frequency does the label table support?",
+      "error": null
+    },
+    {
+      "i": 5,
+      "elapsed_s": 7.55,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": true,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—a 40‑year‑old with allergic asthma, weight 50 kg, and pretreatment IgE 350 IU/mL—who was intentionally prescribed **XOLAIR 600 mg every 2 weeks**, the regimen **does not match the approved dosing** for this indication and body weight. No adverse event was reported, but the dose is above what the label recommends.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **30–60 kg** (50 kg falls here).\n  - Pretreatment IgE: **>300–400 IU/mL** (350 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **225 mg every 2 weeks**, not 600 mg every 2 weeks.\n\n### Classification\n\n1. **Adverse Event**  \n   - None reported in",
+      "question": "A 40-year-old with allergic asthma, 50 kg, IgE 350 IU/mL received 600 mg every 2 weeks intentionally. No AE. Classify AE / special situation / off-label / medication error.",
+      "error": null
+    },
+    {
+      "i": 6,
+      "elapsed_s": 8.56,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—an adult with asthma, weight 80 kg, and pretreatment IgE 250 IU/mL—who was prescribed **XOLAIR 75 mg every 4 weeks**, the regimen **does not match the approved dosing** for this indication and body weight. No adverse event was reported, but the dose is below what the label recommends.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **>70–90 kg** (80 kg falls here).\n  - Pretreatment IgE: **>200–300 IU/mL** (250 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **225 mg every 4 weeks**, not 75 mg every 4 weeks.\n\n### Classification\n\n1. **Adverse Event**  \n   - None reported in the scenario. The label does",
+      "question": "Adult asthma, 80 kg, IgE 250 IU/mL prescribed 75 mg every 4 weeks. No AE. Classify.",
+      "error": null
+    },
+    {
+      "i": 7,
+      "elapsed_s": 9.08,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—an adult with asthma, weight 80 kg, and pretreatment IgE 350 IU/mL—who was intentionally prescribed **XOLAIR 300 mg every 4 weeks**, the regimen **does not match the approved dosing** for this indication and body weight. No adverse event was reported, but the frequency is below what the label recommends.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **>70–90 kg** (80 kg falls here).\n  - Pretreatment IgE: **>300–400 IU/mL** (350 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **300 mg every 2 weeks**, not 300 mg every 4 weeks.\n\n### Classification\n\n1. **Adverse Event**  \n   - None reported in the sce",
+      "question": "Adult asthma, IgE 350 IU/mL, weight 80 kg: label is 300 mg every 2 weeks but they got 300 mg every 4 weeks intentionally. No AE. Classify.",
+      "error": null
+    },
+    {
+      "i": 8,
+      "elapsed_s": 8.3,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": true,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": true,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—a COPD patient (not asthma) with IgE 200 IU/mL and weight 70 kg who was prescribed **Xolair 300 mg every 4 weeks**—the regimen is **off‑label** because Xolair is not approved for COPD. No adverse event was reported, and there are no special situation or dosing‑error concerns, but the indication itself is outside the labeled uses.\n\n### Label Review\n- **Indication**: Xolair is approved for **moderate‑to‑severe persistent asthma**, **chronic rhinosinusitis with nasal polyps (CRSwNP)**, **IgE‑mediated food allergy**, and **chronic spontaneous urticaria (CSU)** [Source: xolair_prescribing.pdf, Page 1]. It is **not indicated for COPD**.\n- **Relevant dosing table**: For asthma, Table 1 shows the dose for a patient >60–70 kg with IgE >100–200 IU/mL is **300 mg every 4 weeks** [Source: xolair_prescribing.pdf, Page 3]. This matches the prescribed dose and frequency **if the patient had asthma**, but the patient’s diagnosis is COPD, which is outside t",
+      "question": "COPD patient (not asthma), IgE 200 IU/mL, weight 70 kg, Xolair 300 mg every 4 weeks. No AE. Off-label / special situation / AE?",
+      "error": null
+    },
+    {
+      "i": 9,
+      "elapsed_s": 9.29,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": true,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—an 8‑year‑old with asthma, weight 30 kg, and pretreatment IgE 300 IU/mL—who received the pediatric table dose, the regimen **matches the approved dosing** for this indication and body weight. No adverse event was reported, and there are no special situation or off‑label concerns.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 2 for pediatric patients 6 to <12 years with asthma [Source: xolair_prescribing.pdf, Page 4].\n- **Patient parameters**:\n  - Body weight: **30–60 kg** (30 kg falls here).\n  - Pretreatment IgE: **>200–300 IU/mL** (300 IU/mL falls here).\n\nFrom Table 2, the **approved dose** for this cell is **300 mg every 4 weeks**.\n\n### Classification\n1. **Adverse Event**  \n   - None reported in the scenario. The label does not imply an increased",
+      "question": "8-year-old asthma, 30 kg, IgE 300 IU/mL received the pediatric table dose. No AE. Any off-label or special situation?",
+      "error": null
+    },
+    {
+      "i": 10,
+      "elapsed_s": 8.85,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": true,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—an 8‑year‑old with asthma, weight 30 kg, and pretreatment IgE 300 IU/mL—who was given **XOLAIR 300 mg every 2 weeks** using the adult dosing table, the regimen **does not match the approved pediatric dosing** for this indication and body weight. No adverse event was reported, but the frequency is above what the label recommends for pediatric patients.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 2 for pediatric patients 6 to <12 years with asthma [Source: xolair_prescribing.pdf, Page 4].\n- **Patient parameters**:\n  - Body weight: **30–60 kg** (30 kg falls here).\n  - Pretreatment IgE: **>200–300 IU/mL** (300 IU/mL falls here).\n\nFrom Table 2, the **approved dose** for this cell is **300 mg every 4 weeks**, not 300 mg every 2 weeks.\n\n### Classificati",
+      "question": "An 8-year-old with asthma, 30 kg, IgE 300 IU/mL was given an adult Table 1 regimen of 300 mg every 2 weeks. No AE. Is that appropriate?",
+      "error": null
+    },
+    {
+      "i": 11,
+      "elapsed_s": 10.56,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": true,
+        "insufficient": false,
+        "anaphylaxis": true,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—an adult with chronic spontaneous urticaria (CSU), weight 80 kg, and IgE 350 IU/mL—who was dosed using the asthma IgE/weight table, the regimen **does not match the approved dosing** for CSU. The asthma table is inappropriate for CSU, and the dose/frequency used is off-label.\n\n### Label Review\n- **Indication**: Chronic spontaneous urticaria (CSU) [Source: xolair_prescribing.pdf, Page 4].\n- **Relevant dosing guidance**: For CSU, dosing is **not dependent on serum IgE level or body weight** [Source: xolair_prescribing.pdf, Page 4]. The approved doses are **75 mg, 150 mg, or 300 mg every 4 weeks**, selected based on clinical judgment, not IgE or weight [Source: xolair_prescribing.pdf, Page 39].\n- **Patient parameters**:\n  - Weight: 80 kg (irrelevant for CSU dosing).\n  - IgE: 350 IU/mL (irrelevant for CSU dosing).\n\nThe asthma table (Table 1) is **not applicable** to CSU. Using it introduces a **medication error**—the dose/frequency selected fro",
+      "question": "Patient with chronic spontaneous urticaria (CSU), weight 80 kg, IgE 350 IU/mL was dosed using the asthma IgE/weight table. Is that correct per the label?",
+      "error": null
+    },
+    {
+      "i": 12,
+      "elapsed_s": 9.89,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": true,
+        "off_label": false,
+        "insufficient": true,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": false
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—an adult with asthma, weight about 140 kg, and pretreatment IgE around 800 IU/mL—the **label shows insufficient data** to recommend a dose for this exact combination in Table 1. The table does not provide a cell for >125‑150 kg in the >800‑900 IU/mL row, and it explicitly marks “Insufficient Data to Recommend a Dose” for that intersection.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 4].\n- **Patient parameters**:\n  - Body weight: **>125‑150 kg** (≈140 kg falls here).\n  - Pretreatment IgE: **>800‑900 IU/mL** (≈800 IU/mL falls here).\n\nFrom Table 1, the cell for **>800‑900 IU/mL** and **>125‑150 kg** is blank, and the note at the bottom of the table states **“Insufficien",
+      "question": "For asthma Table 1 patients >=12 years, IgE about 800 IU/mL and weight about 140 kg: does the table recommend a dose or show insufficient data?",
+      "error": null
+    },
+    {
+      "i": 13,
+      "elapsed_s": 12.27,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": true,
+        "off_label": true,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at the XOLAIR prescribing information, **pregnancy is not identified as a special situation** that requires altered dosing or special precautions beyond the standard safety considerations. The label does not provide specific dosing adjustments for pregnant patients, but it does include pregnancy in the \"Use in Specific Populations\" section, noting that there are limited data.\n\n### Label Review\n- **Pregnancy Category**: The prescribing information does not assign a traditional FDA pregnancy category (A, B, C, D, X) but states:  \n  > \"There are no adequate and well-controlled studies in pregnant women. XOLAIR should be used during pregnancy only if the potential benefit justifies the potential risk to the fetus.\"  \n  [Source: xolair_prescribing.pdf, Page 2, Section 8.1 Pregnancy]\n\n- **Animal Studies**:  \n  > \"Reproduction studies have been performed in rats and rabbits at doses up to 13 times the maximum recommended human dose (MRHD) of 375 mg every 2 weeks ",
+      "question": "What does the XOLAIR prescribing information say about use in pregnancy? Is pregnancy a special situation?",
+      "error": null
+    },
+    {
+      "i": 14,
+      "elapsed_s": 13.51,
+      "status": 200,
+      "flags": {
+        "not_concordant": false,
+        "matches_label": true,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": true,
+        "bad_banner": false,
+        "mentions_mg": false
+      },
+      "ans_head": "### Clinical Takeaway\nWhen prescribing **XOLAIR (omalizumab)**, it’s essential to understand and communicate the **anaphylaxis risks** and **monitoring requirements** clearly to both patients and caregivers. Here’s what stands out from the label:\n\n---\n\n### **Anaphylaxis Warnings**\n\n1. **Life-Threatening Risk**  \n   - **Anaphylaxis** has been reported **up to 4 days after administration** and can be **life-threatening**.  \n   - Signs and symptoms include **bronchospasm, hypotension, syncope, urticaria, and angioedema of the throat or tongue**.  \n   - In clinical trials, **3 of 3,507 (0.1%)** patients experienced anaphylaxis. Postmarketing reports estimate the frequency to be **at least 0.2%** of patients.  \n   - **60–70% of cases** occur **within the first three doses**, but cases have been reported **beyond one year** of treatment.  \n   - Patients with a **history of anaphylaxis to foods, medications, or other causes** are at **increased risk** (OR 8.1, 95% CI 2.7–24.3).  \n\n   [Source:",
+      "question": "Summarize the key anaphylaxis warnings and monitoring requirements for XOLAIR from the label.",
+      "error": null
+    },
+    {
+      "i": 15,
+      "elapsed_s": 13.68,
+      "status": 200,
+      "flags": {
+        "not_concordant": false,
+        "matches_label": true,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": true,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway  \nLooking at the XOLAIR prescribing information, **yes, XOLAIR is approved for IgE‑mediated food allergy** in patients 1 year and older. The dosing is **not based on the asthma IgE/weight table**; instead, it uses a separate table that considers serum IgE level and body weight, with doses ranging from **75 mg to 600 mg every 2 or 4 weeks**.\n\n### Label Review  \n- **Indication**: XOLAIR is indicated for the reduction of allergic reactions (including anaphylaxis) that may occur with accidental exposure to one or more foods in **adult and pediatric patients aged 1 year and older with IgE‑mediated food allergy** [Source: xolair_prescribing.pdf, Page 1].  \n- **Dosing concept**:  \n  - **Dose determination**: Based on **serum total IgE level (IU/mL) measured before treatment start** and **body weight (kg)** [Source: xolair_prescribing.pdf, Page 3].  \n  - **Dosing table**: ",
+      "question": "Is XOLAIR approved for IgE-mediated food allergy according to the prescribing information, and what is the high-level dosing concept (not asthma table)?",
+      "error": null
+    },
+    {
+      "i": 16,
+      "elapsed_s": 13.46,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—a 30‑year‑old with allergic asthma, weight 65 kg, and pretreatment IgE 350 IU/mL—who was prescribed **XOLAIR 225 mg every 2 weeks**, the regimen **does not match the approved dosing** for this indication and body weight. No adverse event was reported, but the frequency is below what the label recommends.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **>60‑70 kg** (65 kg falls here).\n  - Pretreatment IgE: **>300‑400 IU/mL** (350 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **225 mg every 4 weeks**, not 225 mg every 2 weeks.\n\n### Classification\n1. **Adverse Event**  \n   - None reported in the scen",
+      "question": "30-year-old allergic asthma, 65 kg, IgE 350 IU/mL prescribed 225 mg every 2 weeks. No AE. Classify AE / special situation / off-label.",
+      "error": null
+    },
+    {
+      "i": 17,
+      "elapsed_s": 10.7,
+      "status": 200,
+      "flags": {
+        "not_concordant": true,
+        "matches_label": false,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nLooking at this patient—an adult with asthma, weight 78 kg, and pretreatment IgE 350 IU/mL—who was intentionally prescribed **XOLAIR 150 mg every 2 weeks**, the regimen **does not match the approved dosing** for this indication and body weight. No adverse event was reported, but the dose and frequency are below what the label recommends.\n\n### Label Review\n- **Indication**: Moderate‑to‑severe persistent asthma with positive perennial aeroallergen test and inadequate control on inhaled corticosteroids [Source: xolair_prescribing.pdf, Page 1].\n- **Relevant dosing table**: Table 1 for adult patients ≥12 years with asthma [Source: xolair_prescribing.pdf, Page 3].\n- **Patient parameters**:\n  - Body weight: **>70–90 kg** (78 kg falls here).\n  - Pretreatment IgE: **>300–400 IU/mL** (350 IU/mL falls here).\n\nFrom Table 1, the **approved dose** for this cell is **300 mg every 2 weeks**, not 150 mg every 2 weeks.\n\n### Classification\n\n1. **Adverse Event**  \n   - None reported ",
+      "question": "Adult asthma 78 kg IgE 350 IU/mL got 150 mg every 2 weeks (not 300). No AE. Underdose or OK?",
+      "error": null
+    },
+    {
+      "i": 18,
+      "elapsed_s": 8.14,
+      "status": 200,
+      "flags": {
+        "not_concordant": false,
+        "matches_label": true,
+        "off_label": false,
+        "insufficient": false,
+        "anaphylaxis": false,
+        "bad_banner": false,
+        "mentions_mg": true
+      },
+      "ans_head": "### Clinical Takeaway\nYes, **XOLAIR is approved for chronic rhinosinusitis with nasal polyps (CRSwNP)** in adults 18 years and older who have an inadequate response to nasal corticosteroids. This is explicitly stated in the indications section of the prescribing information.\n\n### Label Review\n- **Indication**:  \n  > \"XOLAIR is indicated for add-on maintenance treatment of chronic rhinosinusitis with nasal polyps (CRSwNP) in adult patients 18 years of age and older with inadequate response to nasal corticosteroids.\"  \n  [Source: xolair_prescribing.pdf, Page 4]\n\n- **Dosing Guidance**:  \n  The label provides a specific dosing table (Table 3) for CRSwNP based on **pretreatment serum IgE levels** and **body weight**, with doses ranging from **75 mg to 600 mg** administered **every 2 or 4 weeks** [Source: xolair_prescribing.pdf, Page 7].\n\n### Bottom Line\n- **CRSwNP is an approved indication** for XOLAIR in adults ≥18 years.  \n- Dosing must be individualized based on IgE level and weight usin",
+      "question": "According to the label, is chronic rhinosinusitis with nasal polyps (CRSwNP) an approved indication for XOLAIR?",
+      "error": null
+    }
+  ]
+}

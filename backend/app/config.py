@@ -159,7 +159,8 @@ class Settings(BaseSettings):
     SEMANTIC_CHUNKING_TIMEOUT_SECONDS: int = 120
     SEMANTIC_CHUNKING_MAX_BLOCKS_PER_CALL: int = 120
     SEMANTIC_CHUNKING_BLOCK_PREVIEW_CHARS: int = 220
-    SEMANTIC_CHUNKING_VERSION: str = "semantic-llm-v1"
+    # v2: TOC demotion + compact hierarchy (fewer false CONTENTS sections).
+    SEMANTIC_CHUNKING_VERSION: str = "semantic-llm-v2"
     SEMANTIC_FALLBACK_VERSION: str = "semantic-fallback-v1"
 
     # ── Layout-aware PDF / OCR ───────────────────────────
@@ -183,6 +184,18 @@ class Settings(BaseSettings):
     PDF_OCR_TESSDATA_DIR: str = ""  # blank → TESSDATA_PREFIX / system tessdata
     PDF_TABLE_MAX_CHARS: int = 4000
     PDF_TABLE_SPLIT_ROWS: int = 40
+    # AWS Textract TABLES is the primary structured-table extractor for RAG.
+    # IAM: textract:AnalyzeDocument. Cost ~$0.015/page analyzed when enabled.
+    # Set PDF_TEXTRACT_TABLES_ENABLED=false for offline/local without AWS.
+    # When PDF_TEXTRACT_TABULAR_ONLY=true (default), Textract runs only on pages
+    # that look tabular — never on ordinary text-only pages.
+    PDF_TEXTRACT_TABLES_ENABLED: bool = True
+    PDF_TEXTRACT_TABULAR_ONLY: bool = True
+    PDF_TEXTRACT_REGION: str = ""  # blank → BEDROCK_REGION / AWS_REGION
+    PDF_TEXTRACT_DPI: int = 0  # 0 → reuse PDF_OCR_DPI
+    PDF_TEXTRACT_TIMEOUT_SECONDS: int = 60
+    PDF_TEXTRACT_MAX_WORKERS: int = 4
+    PDF_TEXTRACT_MIN_CONFIDENCE: float = 50.0
 
     # ── Hybrid Search / RRF ───────────────────────────────
     USE_HYBRID_SEARCH: bool = True   # set to False to fall back to vector-only

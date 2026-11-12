@@ -286,6 +286,64 @@ def is_document_oriented_question(question: str) -> bool:
     return any(rx.search(q) for rx in _DOC_REGEX)
 
 
+# Unit-bearing numerics that make a clinical/document case self-describing.
+_GROUNDED_NUMERIC_RE = re.compile(
+    r"(?i)\b\d+(?:\.\d+)?\s*"
+    r"(?:mg|kg|g|ml|l|%|iu/?mL|ppm|years?\s+old|yo\b|weeks?|months?|days?)\b"
+)
+_TABLE_LOOKUP_CUE_RE = re.compile(
+    r"(?i)\b(table|chart|grid|matrix|intersection|lookup|row|column|cell|"
+    r"dosing\s+table|dose\s+table|dosage\s+table)\b"
+)
+
+
+def is_self_contained_grounded_question(question: str) -> bool:
+    """True when the turn can be answered without prior chat patient/case params.
+
+    Domain-agnostic: document/table language, dual-axis numeric cases, or other
+    multi-numeric grounded asks that are not anaphoric follow-ups.
+    """
+    q = (question or "").strip()
+    if not q:
+        return False
+    if is_conversation_followup(q):
+        return False
+    if is_chat_memory_question(q) or is_capability_question(q):
+        return False
+    if is_document_oriented_question(q):
+        return True
+    if _TABLE_LOOKUP_CUE_RE.search(q):
+        return True
+    nums = _GROUNDED_NUMERIC_RE.findall(q)
+    return len(nums) >= 2
+
+
+def should_inject_prompt_history(
+    question: str,
+    *,
+    has_attach: bool = False,
+) -> bool:
+    """Whether RAG prompts should prepend prior chat turns.
+
+    Self-contained document/case questions must not inherit prior numeric
+    patient params. Anaphoric follow-ups and chat-memory turns still get history.
+    """
+    q = (question or "").strip()
+    if not q:
+        return False
+    if is_chat_memory_question(q) or is_capability_question(q):
+        return True
+    if is_conversation_followup(q):
+        return True
+    if is_self_contained_grounded_question(q):
+        # Standalone grounded ask — skip history even without an attachment when
+        # the question itself clearly targets document content.
+        return False
+    # Ambiguous short asks: keep history so anaphora / prior context can help.
+    # has_attach is part of the public API for call-site clarity.
+    return True
+
+
 def _user_statements(chat_history: Optional[Sequence[Dict[str, Any]]]) -> List[str]:
     if not chat_history:
         return []

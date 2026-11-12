@@ -1,0 +1,232 @@
+{
+  "document_id": "8e78416a-d3c3-4a55-a9e2-3da0784c601d",
+  "session_id": "d822ad7e-7d4e-436d-b3c1-bf63cdd746da",
+  "n": 15,
+  "results": [
+    {
+      "i": 1,
+      "elapsed_s": 10.51,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "insuff_prefix": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this case, the patient received TECENTRIQ HYBREZA intravenously rather than subcutaneously as intended. This is a clear medication error with potential safety implications, even though no adverse event was reported.\n\n### Detailed Analysis\n\n**Case Summary**\n- **Patient**: 62-year-old with metastatic NSCLC\n- **Indication**: Metastatic NSCLC (first-line or later-line based on progression)\n- **Prescribed Dose**: TECENTRIQ HYBREZA 1,875 mg\n- **Route**: Intravenous infusion (instead of subcutaneous injection)\n- **Frequency**: Every 3 weeks (assumed based on standard dosing)\n- **Reported Adverse Event**: None\n\n**Label-Concordant Use Check**\n- **Indication**: TECENTRIQ HYBREZA is indicated for metastatic NSCLC as a monotherapy for patients with high PD-L1 expression or who have progressed after platinum-based chemotherapy [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Dose and Route**: The recommended dose is **1,875 mg administered subcutaneously**",
+      "question": "A 62-year-old with metastatic NSCLC was intentionally given TECENTRIQ HYBREZA 1,875 mg as an intravenous infusion instead of subcutaneous injection. No adverse event was reported. Identify any adverse event, special situation, medication error, or off-label / not label-concordant use.",
+      "error": null
+    },
+    {
+      "i": 2,
+      "elapsed_s": 7.81,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": false,
+        "mentions_dose": true,
+        "insuff_prefix": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this patient, the prescribing information clearly states the recommended TECENTRIQ HYBREZA regimen for adults, including dose, route, injection site, and frequency. This information is essential for ensuring safe and effective therapy.\n\n### Supporting Label Reasoning\n\nFrom the TECENTRIQ HYBREZA prescribing information:\n\n- **Recommended Dose**: The recommended dose is **1,875 mg** of atezolizumab per administration [Source: tecentriq_hybreza_prescribing.pdf, Page 5].\n- **Route**: TECENTRIQ HYBREZA is administered **subcutaneously** only. The label explicitly states: \"**Do not administer TECENTRIQ HYBREZA intravenously**\" [Source: tecentriq_hybreza_prescribing.pdf, Page 5].\n- **Injection Site**: The injection should be given **in the thigh**. The label specifies: \"**TECENTRIQ HYBREZA is for subcutaneous use in the thigh only**\" and advises to \"**Inject in healthy skin and never into areas where the skin is red, bruised, tender, or hard**\" [Source: tecen",
+      "question": "According to the prescribing information, what is the recommended TECENTRIQ HYBREZA dose, route, injection site, and frequency for adults?",
+      "error": null
+    },
+    {
+      "i": 3,
+      "elapsed_s": 7.67,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": false,
+        "mentions_dose": true,
+        "insuff_prefix": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n**Clinical Takeaway**\n\nLooking at this patient, the prescribed regimen of TECENTRIQ HYBREZA 15 mL (1,875 mg atezolizumab + 30,000 units hyaluronidase) subcutaneously in the thigh over ~7 minutes every 3 weeks is **label‑concordant** for adult metastatic NSCLC with high PD‑L1 expression. No adverse event was reported, and there are no special situations or off‑label concerns.\n\n**Supporting Label Reasoning**\n\n- **Indication**: Adult patients with metastatic NSCLC whose tumors have high PD‑L1 expression (PD‑L1 stained ≥ 50 % of tumor cells or ≥ 10 % of tumor‑infiltrating immune cells) and no EGFR/ALK genomic aberrations [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Dose & Route**: The recommended dose is **one 15 mL injection (1,875 mg atezolizumab + 30,000 units hyaluronidase) administered subcutaneously in the thigh** over approximately 7 minutes every 3 weeks [Source: tecentriq_hybreza_prescribing.pdf, Page 5].\n- **Administration**: Must be given by a healthcare professiona",
+      "question": "Adult metastatic NSCLC patient received TECENTRIQ HYBREZA 15 mL (1,875 mg atezolizumab + 30,000 units hyaluronidase) subcutaneously in the thigh over ~7 minutes every 3 weeks by a healthcare professional. No AE. Classify AE / special situation / off-label if any.",
+      "error": null
+    },
+    {
+      "i": 4,
+      "elapsed_s": 8.02,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "insuff_prefix": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this patient, the prescribed regimen of TECENTRIQ HYBREZA 15 mL subcutaneously in the thigh **every week** instead of the label‑recommended **every 3 weeks** is a **dosing discrepancy** that constitutes a **medication error**. No adverse event was reported, and there are no special situation or off‑label concerns.\n\n### Supporting Label Reasoning\n\n**Case Summary**\n- **Indication**: Adult with metastatic NSCLC (high PD‑L1 expression, no EGFR/ALK aberrations) [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Prescribed Dose**: TECENTRIQ HYBREZA 15 mL (1,875 mg atezolizumab + 30,000 units hyaluronidase) subcutaneously in the thigh.\n- **Prescribed Frequency**: Every week (instead of every 3 weeks).\n- **Reported Adverse Event**: None.\n\n**Label‑Concordant Use Check**\n- **Indication**: TECENTRIQ HYBREZA is indicated for first‑line treatment of adult patients with metastatic NSCLC who have high PD‑L1 expression (PD‑L1 stained ≥ 50 % of tumor cells or ≥ ",
+      "question": "Adult patient on TECENTRIQ HYBREZA received the correct 15 mL SC thigh dose but every week instead of every 3 weeks intentionally. No AE. Classify dosing discrepancy / medication error / off-label.",
+      "error": null
+    },
+    {
+      "i": 5,
+      "elapsed_s": 8.31,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": false,
+        "mentions_dose": true,
+        "insuff_prefix": false,
+        "bad_banner": false
+      },
+      "ans_head": "**Clinical Takeaway**\n\nBased on the TECENTRIQ HYBREZA prescribing information, substituting intravenous atezolizumab (TECENTRIQ IV) for TECENTRIQ HYBREZA without adjusting the dose is **not allowed**. The two products have different recommended dosages, routes of administration, and dosing schedules, and the label explicitly warns against such substitution.\n\n**Supporting Label Reasoning**\n\n- **Different Recommended Dosages**: TECENTRIQ HYBREZA contains a fixed combination of atezolizumab and hyaluronidase, and the recommended dose is **15 mL (1,875 mg atezolizumab + 30,000 units hyaluronidase) administered subcutaneously** every 3 weeks [Source: tecentriq_hybreza_prescribing.pdf, Page 2]. In contrast, intravenous atezolizumab has a different dosing regimen that is not interchangeable with TECENTRIQ HYBREZA [Source: tecentriq_hybreza_prescribing.pdf, Page 2].\n\n- **Route of Administration**: TECENTRIQ HYBREZA is **exclusively for subcutaneous use** in the thigh, and the label explicitly states: \"**Do not administer TECENTRIQ HYBREZA intravenously**\" [Source: tecentriq_hybreza_prescribi",
+      "question": "A pharmacist substituted intravenous atezolizumab (TECENTRIQ IV) for TECENTRIQ HYBREZA at the same scheduled visit without adjusting for product differences. No AE. Is this allowed per the label?",
+      "error": null
+    },
+    {
+      "i": 6,
+      "elapsed_s": 9.28,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "insuff_prefix": false,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at this patient, the prescription of TECENTRIQ HYBREZA 15 mL subcutaneously every 3 weeks for early‑stage breast cancer is **off‑label** because TECENTRIQ HYBREZA is not approved for breast cancer. There are no adverse events reported, and no special situation or medication error is evident.\n\n### Supporting Label Reasoning\n\n**Case Summary**\n- **Indication**: Early-stage breast cancer (not an approved indication for TECENTRIQ HYBREZA)\n- **Prescribed Dose**: TECENTRIQ HYBREZA 15 mL (equivalent to 1,875 mg atezolizumab + 30,000 units hyaluronidase)\n- **Route**: Subcutaneous (SC)\n- **Frequency**: Every 3 weeks\n- **Reported Adverse Event**: None\n\n**Label‑Concordant Use Check**\n- **Approved Indications**: TECENTRIQ HYBREZA is approved for several indications, including:\n  - Adjuvant treatment of stage II to IIIA non‑small cell lung cancer (NSCLC) with PD‑L1 expression ≥ 1% [Source: tecentriq_hybreza_prescribing.pdf, Page 4]\n  - First‑line treatment of metastatic NSCLC with high PD‑L1 expression (TC ≥ 50% or IC ≥ 10%) [Source: tecentriq_hybreza_prescribing.pdf",
+      "question": "A patient with early-stage breast cancer (no labeled Hybreza indication for this) was prescribed TECENTRIQ HYBREZA 15 mL SC q3w. No AE. Off-label / special situation / AE?",
+      "error": null
+    },
+    {
+      "i": 7,
+      "elapsed_s": 8.04,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "insuff_prefix": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nLooking at this patient, the prescribed regimen of TECENTRIQ HYBREZA 15 mL subcutaneously every 3 weeks for a 13‑year‑old weighing 35 kg with alveolar soft part sarcoma is **not label‑concordant** because the label does **not** establish a pediatric dose for patients weighing less than 40 kg.\n\n### Supporting Label Reasoning\n\n**Case Summary**\n- **Indication**: Alveolar soft part sarcoma (ASPS)\n- **Patient**: 13‑year‑old, 35 kg\n- **Prescribed Dose**: TECENTRIQ HYBREZA 15 mL (equivalent to 1,875 mg atezolizumab + 30,000 units hyaluronidase)\n- **Route**: Subcutaneous (SC)\n- **Frequency**: Every 3 weeks\n- **Reported Adverse Event**: None\n\n**Label‑Concordant Use Check**\n- **Approved Indications**: TECENTRIQ HYBREZA is indicated for the treatment of adult patients and pediatric patients **12 years of age and older who weigh 40 kg or greater** with unresectable or metastatic ASPS [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Pediatric Dosing**: The recommende",
+      "question": "A 13-year-old weighing 35 kg with alveolar soft part sarcoma was given adult TECENTRIQ HYBREZA 15 mL SC q3w. No AE. Is the pediatric dose established for <40 kg?",
+      "error": null
+    },
+    {
+      "i": 8,
+      "elapsed_s": 9.45,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "insuff_prefix": false,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at this patient, the injection of TECENTRIQ HYBREZA into the abdomen instead of the thigh is **not label-concordant** and constitutes a **medication error**, even though no adverse event was reported.\n\n### Supporting Label Reasoning\n\n**Case Summary**\n- **Indication**: Adult with metastatic NSCLC (high PD-L1 expression, no EGFR/ALK aberrations) [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Prescribed Dose**: TECENTRIQ HYBREZA 15 mL (equivalent to 1,875 mg atezolizumab + 30,000 units hyaluronidase).\n- **Route**: Subcutaneous (SC) injection.\n- **Injection Site**: Abdomen (instead of thigh).\n- **Frequency**: Every 3 weeks.\n- **Reported Adverse Event**: None.\n\n**Label-Concordant Use Check**\n- **Approved Indications**: TECENTRIQ HYBREZA is indicated for the treatment of adult patients with metastatic NSCLC who have high PD-L1 expression (PD-L1 stained ≥ 50% of tumor cells or ≥ 10% of tumor-infiltrating immune cells) and no EGFR/ALK genomic aberrations [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Dose & Route**: The recommended dose is *",
+      "question": "TECENTRIQ HYBREZA was injected subcutaneously into the abdomen instead of the thigh. No AE. Medication error / not label-concordant?",
+      "error": null
+    },
+    {
+      "i": 9,
+      "elapsed_s": 8.11,
+      "status": 200,
+      "flags": {
+        "issue": false,
+        "off_label": false,
+        "mentions_dose": false,
+        "insuff_prefix": false,
+        "bad_banner": false
+      },
+      "ans_head": "**Clinical Takeaway**\n\nLooking at the TECENTRIQ HYBREZA label, the key warnings are that this drug can cause **severe and sometimes fatal immune‑mediated adverse reactions**—most notably **pneumonitis**, but also colitis, hepatitis, endocrinopathies, and others. The general management approach is to **monitor closely, intervene early with steroids, and be prepared to withhold or discontinue the drug** if reactions become severe.\n\n**Supporting Label Reasoning**\n\n- **Immune‑mediated adverse reactions** are a class effect of PD‑1/PD‑L1 inhibitors. They can affect any organ system and may occur **any time during treatment or even after discontinuation** [Source: tecentriq_hybreza_prescribing.pdf, Page 10].\n- **Pneumonitis** is highlighted as a particular concern:\n  - Occurred in **2 %** of patients with NSCLC in pivotal trials, including **Grade 2 (0.8 %) and Grade 1 (1.2 %)** events [Source: tecentriq_hybreza_prescribing.pdf, Page 10].\n  - **Systemic corticosteroids** were required in **40 %** of affected patients, and pneumonitis resolved in both cases reported [Source: tecentriq_hybre",
+      "question": "What are the key warnings about severe immune-mediated adverse reactions with TECENTRIQ HYBREZA (e.g., pneumonitis) and general management approach?",
+      "error": null
+    },
+    {
+      "i": 10,
+      "elapsed_s": 7.37,
+      "status": 200,
+      "flags": {
+        "issue": false,
+        "off_label": false,
+        "mentions_dose": true,
+        "insuff_prefix": false,
+        "bad_banner": false
+      },
+      "ans_head": "**Clinical Takeaway**\n\nYes, TECENTRIQ HYBREZA is approved for unresectable or metastatic hepatocellular carcinoma (HCC), and the label specifically describes its use **in combination with bevacizumab**.\n\n**Supporting Label Reasoning**\n\n- **Approved Indication**: TECENTRIQ HYBREZA is indicated for the treatment of adult patients with unresectable or metastatic HCC who have not received prior systemic therapy [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Combination Partner**: The label states that TECENTRIQ HYBREZA is used **in combination with bevacizumab** for this indication. The dosing and administration instructions specify that TECENTRIQ HYBREZA should be administered prior to bevacizumab when given on the same day, with bevacizumab administered intravenously at 15 mg/kg every 3 weeks [Source: tecentriq_hybreza_prescribing.pdf, Page 5].\n\n**Bottom Line**\n\nFor a patient with unresectable or metastatic HCC, TECENTRIQ HYBREZA is approved and should be used in combination with **bevacizumab**, following the specific administration instructions provided in the prescribing i",
+      "question": "Is unresectable/metastatic HCC an approved use for TECENTRIQ HYBREZA, and with which combination partner does the label describe use?",
+      "error": null
+    },
+    {
+      "i": 11,
+      "elapsed_s": 9.58,
+      "status": 200,
+      "flags": {
+        "issue": false,
+        "off_label": false,
+        "mentions_dose": false,
+        "insuff_prefix": false,
+        "bad_banner": false
+      },
+      "ans_head": "The TECENTRIQ HYBREZA label includes important warnings about pregnancy and embryo-fetal toxicity, which are considered special situations that require careful consideration before prescribing.\n\n### Key Points from the Label:\n\n1. **Pregnancy Category**: The label does not specify a traditional pregnancy category (A, B, C, D, X), but it does provide specific warnings about potential risks to pregnancy and embryo-fetal development [Source: tecentriq_hybreza_prescribing.pdf, Page 10].\n\n2. **Animal Studies**: Animal studies have shown adverse effects on embryo-fetal development, including:\n   - **Fetal toxicity** (increased fetal loss) at doses that produced maternal toxicity\n   - **Maternal toxicity** at doses that were approximately 10 times the recommended human dose [Source: tecentriq_hybreza_prescribing.pdf, Page 10]\n\n3. **Human Data**: There are limited human data on pregnancy exposure to TECENTRIQ HYBREZA. The label states: \"There are no adequate and well-controlled studies in pregnant women. TECENTRIQ HYBREZA may cause fetal harm when administered to a pregnant woman\" [Source: te",
+      "question": "What does the TECENTRIQ HYBREZA label say about pregnancy / embryo-fetal toxicity? Is this a special situation?",
+      "error": null
+    },
+    {
+      "i": 12,
+      "elapsed_s": 8.49,
+      "status": 200,
+      "flags": {
+        "issue": false,
+        "off_label": false,
+        "mentions_dose": true,
+        "insuff_prefix": false,
+        "bad_banner": false
+      },
+      "ans_head": "### Clinical Takeaway\n\nLooking at the TECENTRIQ HYBREZA label, it is **approved for extensive-stage small cell lung cancer (ES-SCLC)** in two distinct settings:  \n1. **First‑line combination therapy** with carboplatin and etoposide, and  \n2. **Maintenance therapy** after progression‑free disease following first‑line induction with TECENTRIQ HYBREZA or intravenous atezolizumab plus carboplatin and etoposide, using lurbinectedin as the combination partner.\n\n### Supporting Label Reasoning\n\n**Indication and Regimen Details**\n\n- **First‑line combination**: TECENTRIQ HYBREZA is indicated **in combination with carboplatin and etoposide** for the first‑line treatment of adult patients with extensive-stage small cell lung cancer (ES-SCLC) [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Maintenance combination**: TECENTRIQ HYBREZA is indicated **in combination with lurbinectedin** for the maintenance treatment of adult patients with ES-SCLC whose disease has not progressed after first‑line induction therapy with TECENTRIQ HYBREZA or intravenous atezolizumab, carboplatin, and etoposide",
+      "question": "What is the labeled use of TECENTRIQ HYBREZA in extensive-stage small cell lung cancer (ES-SCLC)?",
+      "error": null
+    },
+    {
+      "i": 13,
+      "elapsed_s": 7.83,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": false,
+        "mentions_dose": true,
+        "insuff_prefix": false,
+        "bad_banner": false
+      },
+      "ans_head": "**Clinical Takeaway**\n\nLooking at this patient, the label **does not allow self‑administration** of TECENTRIQ HYBREZA. The drug must be given by a healthcare professional, even when no adverse event has occurred.\n\n**Supporting Label Reasoning**\n\n- **Indication & Population**: TECENTRIQ HYBREZA is indicated for adult patients and pediatric patients (≥ 12 years, ≥ 40 kg) with several solid tumors, including NSCLC, SCLC, HCC, melanoma, ASPS, MIBC, and dMMR colon cancer [Source: tecentriq_hybreza_prescribing.pdf, Page 4].\n- **Administration Requirement**: The prescribing information explicitly states:  \n  > “TECENTRIQ HYBREZA must be administered by a healthcare professional.” [Source: tecentriq_hybreza_prescribing.pdf, Page 3]  \n  This requirement appears in the **Dosage and Administration** section and is reiterated in the **Important Dosage and Administration Information** table.\n- **Route & Site**: TECENTRIQ HYBREZA is for **subcutaneous use in the thigh only** and must be injected **over approximately 7 minutes** [Source: tecentriq_hybreza_prescribing.pdf, Page 3]. The label also wa",
+      "question": "A patient was instructed to self-inject TECENTRIQ HYBREZA at home. No AE. Does the label require administration by a healthcare professional?",
+      "error": null
+    },
+    {
+      "i": 14,
+      "elapsed_s": 8.08,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": false,
+        "mentions_dose": false,
+        "insuff_prefix": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\nThe TECENTRIQ HYBREZA label provides clear guidance for managing Grade 3 pneumonitis:\n\n- **Grade 3 pneumonitis**: The label recommends **withholding** TECENTRIQ HYBREZA for Grade 3 pneumonitis [Source: tecentriq_hybreza_prescribing.pdf, Page 7].\n\n- **Grade 4 pneumonitis**: The label recommends **permanent discontinuation** of TECENTRIQ HYBREZA for Grade 4 pneumonitis [Source: tecentriq_hybreza_prescribing.pdf, Page 7].\n\n**Key points:**\n- There is **no dose reduction** recommended for pneumonitis with TECENTRIQ HYBREZA - the approach is either withholding (for Grade 3) or permanent discontinuation (for Grade 4).\n- The label states: \"Withhold for severe (Grade 3) immune-mediated adverse reactions. Permanently discontinue for life-threatening (Grade 4) immune-mediated adverse reactions\" [Source: tecentriq_hybreza_prescribing.pdf, Page 7].\n\nThis management approach aligns with the general principle that for immune-mediated adverse reactions with PD-1/PD-L1 inhibitors, withholding is appro",
+      "question": "For Grade 3 pneumonitis on TECENTRIQ HYBREZA, what does the label generally recommend regarding dose reduction vs withhold/discontinue?",
+      "error": null
+    },
+    {
+      "i": 15,
+      "elapsed_s": 9.84,
+      "status": 200,
+      "flags": {
+        "issue": true,
+        "off_label": true,
+        "mentions_dose": true,
+        "insuff_prefix": true,
+        "bad_banner": false
+      },
+      "ans_head": "Insufficient table evidence to verify a unique row–column intersection. Do not invent a cell value.\n\n### Clinical Takeaway\n\nYes, an adult can switch from intravenous atezolizumab to TECENTRIQ HYBREZA at the next scheduled dose, per the label instructions.\n\n### Supporting Label Reasoning\n\n**Case Summary**\n- **Indication**: Adult patient on intravenous atezolizumab (any approved indication).\n- **Prescribed Regimen**: Switch to TECENTRIQ HYBREZA at the next scheduled dose.\n- **Reported Adverse Event**: None.\n\n**Label-Concordant Use Check**\n- **Switching Guidance**: The TECENTRIQ HYBREZA prescribing information explicitly states that adult patients who are treated with intravenous atezolizumab can switch to subcutaneous TECENTRIQ HYBREZA at their next scheduled dose [Source: tecentriq_hybreza_prescribing.pdf, Page 5].\n- **Dosing Equivalence**: The recommended dose of TECENTRIQ HYBREZA is **15 mL (equivalent to 1,875 mg atezolizumab + 30,000 units hyaluronidase) administered subcutaneously in the thigh every 3 weeks**, which corresponds to the intravenous atezolizumab dose of **1200 mg IV",
+      "question": "Can an adult switch from intravenous atezolizumab to TECENTRIQ HYBREZA at the next scheduled dose per the label?",
+      "error": null
+    }
+  ]
+}

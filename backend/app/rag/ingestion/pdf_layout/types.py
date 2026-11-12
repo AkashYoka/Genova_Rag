@@ -195,6 +195,13 @@ class TableData:
     low_confidence_cells: List[Dict[str, Any]] = field(default_factory=list)
     # Populated by table_normalize.repair_table_data / normalize_table_grid.
     linearized_facts: List[str] = field(default_factory=list)
+    # Optional Textract / structured-cell metadata (backward compatible).
+    # cells: [{row_index, col_index, text, confidence, bbox, row_span, col_span, is_header}]
+    cells: List[Dict[str, Any]] = field(default_factory=list)
+    header_rows: List[List[str]] = field(default_factory=list)
+    # merged_cells: [{row_index, col_index, row_span, col_span, text}]
+    merged_cells: List[Dict[str, Any]] = field(default_factory=list)
+    textract_confidence: float = 0.0
 
     @property
     def n_cols(self) -> int:
@@ -250,6 +257,10 @@ class TableData:
             "low_confidence_cells": self.low_confidence_cells,
             "needs_verification": bool(self.low_confidence_cells),
             "linearized_facts": list(self.linearized_facts or []),
+            "cells": list(self.cells or []),
+            "header_rows": [list(r) for r in (self.header_rows or [])],
+            "merged_cells": list(self.merged_cells or []),
+            "textract_confidence": float(self.textract_confidence or 0.0),
         }
         if include_markdown:
             data["markdown"] = self.markdown

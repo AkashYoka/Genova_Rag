@@ -24,6 +24,20 @@ from app.rag.ingestion.pdf_layout.types import (
 _NUMBERED_HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,3})\s+\S")
 _CHAPTER_RE = re.compile(r"^(chapter|appendix|part|section)\b", re.I)
 _SENTENCE_END_RE = re.compile(r"[.!?;:]$")
+# Prescribing-info / manual TOCs: "1 INDICATIONS AND USAGE ........ 3"
+_TOC_DOT_LEADER_RE = re.compile(r"\.{2,}\s*\d{1,4}\s*$")
+_TOC_NUMBERED_PAGE_RE = re.compile(
+    r"^(\d+(?:\.\d+){0,3})\s+(.+?)\s+(\d{1,4})\s*$"
+)
+_CONTENTS_TITLE_RE = re.compile(
+    r"(?i)^(?:(?:full\s+)?prescribing\s+information:\s*)?contents\*?\s*$"
+    r"|^\s*table\s+of\s+contents\s*$"
+)
+_TOC_EXIT_RE = re.compile(
+    r"(?i)^full\s+prescribing\s+information\s*$"
+    r"|^warning:\s*"
+    r"|^\d+(?:\.\d+)*\s+[A-Za-z].{2,}$"
+)
 
 
 @dataclass
@@ -31,6 +45,42 @@ class StructureState:
     section: str = ""
     subsection: str = ""
     heading_stack: List[str] = field(default_factory=list)
+    # When True, numbered TOC listing lines must not become section headings.
+    in_toc: bool = False
+
+
+def looks_like_toc_entry(text: str) -> bool:
+    """True for TOC listing lines (title + page), not real body headings."""
+    t = normalize_ws(text or "")
+    if not t or len(t) > 160:
+        return False
+    if _TOC_DOT_LEADER_RE.search(t):
+        return True
+    match = _TOC_NUMBERED_PAGE_RE.match(t)
+    if not match:
+        return False
+    title = match.group(2).strip()
+    if _SENTENCE_END_RE.search(title):
+        return False
+    # Real body headings rarely end with a bare page number token.
+    return len(title) <= 110
+
+
+def is_contents_title(text: str) -> bool:
+    return bool(_CONTENTS_TITLE_RE.match(normalize_ws(text or "")))
+
+
+def is_toc_exit_heading(text: str) -> bool:
+    """Body start after a CONTENTS listing (e.g. FULL PRESCRIBING INFORMATION)."""
+    t = normalize_ws(text or "")
+    if not t or looks_like_toc_entry(t) or is_contents_title(t):
+        return False
+    if re.match(r"(?i)^full\s+prescribing\s+information\s*$", t):
+        return True
+    if re.match(r"(?i)^warning:\s*", t):
+        return True
+    # Numbered section heading without trailing page number.
+    return bool(_NUMBERED_HEADING_RE.match(t) and not _TOC_NUMBERED_PAGE_RE.match(t))
 
 
 def body_font_size(pages: Iterable[PageExtraction]) -> float:
@@ -42,13 +92,21 @@ def body_font_size(pages: Iterable[PageExtraction]) -> float:
     return median(sizes) or 11.0
 
 
-def heading_level(line: TextLine, body_size: float) -> int:
+def heading_level(line: TextLine, body_size: float, *, in_toc: bool = False) -> int:
     """Return 1/2/3 for a heading, or 0 for body text."""
     text = line.text.strip()
     if not text or len(text) > 180:
         return 0
+    # Inside a CONTENTS listing, only the CONTENTS title itself may be a heading.
+    if in_toc and not is_contents_title(text):
+        if looks_like_toc_entry(text) or _NUMBERED_HEADING_RE.match(text):
+            return 0
+    if looks_like_toc_entry(text):
+        return 0
     size = line.font_size or line.height
     ratio = size / body_size if body_size else 1.0
+    if is_contents_title(text):
+        return 1
     if _CHAPTER_RE.match(text):
         return 1
     numbered = _NUMBERED_HEADING_RE.match(text)
@@ -68,6 +126,14 @@ def heading_level(line: TextLine, body_size: float) -> int:
 
 
 def _update_state(state: StructureState, heading: str, level: int) -> None:
+    if is_contents_title(heading):
+        state.in_toc = True
+        state.section = "Table of Contents"
+        state.subsection = ""
+        state.heading_stack = ["Table of Contents"]
+        return
+    if state.in_toc and is_toc_exit_heading(heading):
+        state.in_toc = False
     if level <= 1:
         state.section = heading
         state.subsection = ""
@@ -224,11 +290,20 @@ def build_page_elements(
             continue
 
         block: TextBlock = obj
-        level = heading_level(block.lines[0], body_size)
+        # Enter TOC mode from the CONTENTS title even when font sizing is weak.
+        if is_contents_title(block.text):
+            state.in_toc = True
+        elif state.in_toc and is_toc_exit_heading(block.text):
+            state.in_toc = False
+
+        level = heading_level(block.lines[0], body_size, in_toc=state.in_toc)
         if level:
             flush_paragraph()
             flush_list()
             heading = block.text
+            # Normalize the CONTENTS banner so downstream hierarchy is stable.
+            if is_contents_title(heading):
+                heading = "Table of Contents"
             _update_state(state, heading, level)
             elements.append(
                 DocumentElement(
@@ -245,6 +320,12 @@ def build_page_elements(
                     metadata={"font_size": round(block.font_size, 2)},
                 )
             )
+            continue
+
+        # TOC listing lines stay paragraphs so they cannot pollute section state.
+        if state.in_toc and looks_like_toc_entry(block.text):
+            flush_list()
+            paragraph.extend(block.lines)
             continue
 
         if is_caption_line(block.text):

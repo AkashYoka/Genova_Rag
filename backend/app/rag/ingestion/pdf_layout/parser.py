@@ -117,6 +117,68 @@ def _clean_table_rows(rows: Sequence[Sequence[Any]]) -> List[List[str]]:
     return cleaned
 
 
+_TABLE_CUE_RE = re.compile(
+    r"(?i)\b("
+    r"table\s*\d+|tbl\.?\s*\d+|"
+    r"dosing\s+table|dose\s+table|schedule\s+table|"
+    r"see\s+table|refer\s+to\s+table"
+    r")\b"
+)
+
+
+def _page_looks_tabular(
+    page: fitz.Page,
+    *,
+    fallback_tables: Sequence[TableData],
+    page_text: str = "",
+) -> Tuple[bool, str]:
+    """Cheap gate: should Textract TABLES run on this page?
+
+    Textract is for tabular data only — not narrative pages that merely mention
+    a table. Strong signals (extracted grids / find_tables) always qualify.
+    Ruled boxes qualify only when they look like mid-page grids (not full-page
+    borders) and are backed by a table text cue.
+    """
+    if fallback_tables:
+        return True, "fallback_tables"
+
+    find_count = 0
+    try:
+        if hasattr(page, "find_tables"):
+            finder = page.find_tables()
+            found = list(getattr(finder, "tables", []) or [])
+            find_count = len(found)
+            if found:
+                return True, "find_tables"
+    except Exception:
+        find_count = 0
+
+    text = page_text or ""
+    if not text:
+        try:
+            text = page.get_text("text") or ""
+        except Exception:
+            text = ""
+    has_cue = bool(_TABLE_CUE_RE.search(text))
+
+    try:
+        ruled = detect_ruled_table_boxes(page)
+    except Exception:
+        ruled = []
+    page_area = max(1.0, float(page.rect.width) * float(page.rect.height))
+    # Ignore near-full-page borders and tiny noise boxes.
+    significant = [
+        box
+        for box in ruled
+        if (0.08 * page_area) <= box.area <= (0.65 * page_area)
+    ]
+    if significant and (has_cue or find_count > 0):
+        return True, "ruled_boxes_with_cue"
+
+    # Narrative "see Table N" alone is not enough to spend a Textract call.
+    return False, "no_tabular_signal"
+
+
 def _repair_page_tables(
     tables: Sequence[TableData],
     *,
@@ -354,10 +416,10 @@ def parse_pdf(
             )
 
             try:
+                fallback_tables: List[TableData] = []
                 if strategy == "ocr":
-                    lines, tables, confidence, backend, details = _ocr_page_content(page)
+                    lines, fallback_tables, confidence, backend, details = _ocr_page_content(page)
                     page_ext.lines = lines
-                    page_ext.tables = tables
                     page_ext.ocr_confidence = confidence
                     page_ext.ocr_backend = backend
                     page_ext.metrics.update(details)
@@ -368,25 +430,92 @@ def parse_pdf(
                         image_coverage=coverage,
                     )
                 elif strategy == "native":
-                    native_tables = _native_tables(page)
-                    lines = _native_lines(page, [table.bbox for table in native_tables])
+                    # Text lines first (independent of table engine). Table bboxes
+                    # for line exclusion come from fallback native tables; Textract
+                    # tables may replace them below.
+                    fallback_tables = _native_tables(page)
+                    lines = _native_lines(page, [table.bbox for table in fallback_tables])
                     page_ext.lines = lines
-                    page_ext.tables = native_tables
-                    if not lines and not native_tables and coverage >= 0.15:
+                    if not lines and not fallback_tables and coverage >= 0.15:
                         logger.warning(
                             "Page %s has no native lines despite a text layer; retrying with OCR",
                             page_number,
                         )
                         page_ext.strategy = "ocr"
-                        lines, tables, confidence, backend, details = _ocr_page_content(page)
+                        strategy = "ocr"
+                        lines, fallback_tables, confidence, backend, details = _ocr_page_content(page)
                         page_ext.lines = lines
-                        page_ext.tables = tables
                         page_ext.ocr_confidence = confidence
                         page_ext.ocr_backend = backend
                         page_ext.metrics.update(details)
                 else:
                     page_ext.status = "empty"
                     page_ext.metrics["note"] = "blank page with no text or image"
+
+                # Primary table path: Textract TABLES only on tabular pages.
+                # Ordinary text pages keep native/OCR text and never call AWS.
+                table_source = "none"
+                page_ext.tables = []
+                if strategy != "none":
+                    textract_started = time.perf_counter()
+                    textract_tables: List[TableData] = []
+                    textract_error = ""
+                    textract_skipped = False
+                    tabular_only = bool(
+                        getattr(settings, "PDF_TEXTRACT_TABULAR_ONLY", True)
+                    )
+                    looks_tabular, tabular_reason = _page_looks_tabular(
+                        page,
+                        fallback_tables=fallback_tables,
+                        page_text=native_text,
+                    )
+                    page_ext.metrics["tabular_candidate"] = looks_tabular
+                    page_ext.metrics["tabular_reason"] = tabular_reason
+                    run_textract = bool(settings.PDF_TEXTRACT_TABLES_ENABLED) and (
+                        looks_tabular or not tabular_only
+                    )
+                    if settings.PDF_TEXTRACT_TABLES_ENABLED and tabular_only and not looks_tabular:
+                        textract_skipped = True
+                        page_ext.metrics["textract_skipped"] = "non_tabular_page"
+                    if run_textract:
+                        try:
+                            from app.rag.ingestion.pdf_layout.textract_tables import (
+                                extract_tables_from_page,
+                                usable_textract_tables,
+                            )
+
+                            textract_tables = usable_textract_tables(
+                                extract_tables_from_page(page, page_number)
+                            )
+                        except Exception as exc:
+                            textract_error = f"{type(exc).__name__}: {exc}"
+                            logger.warning(
+                                "Textract primary tables failed on page %s: %s",
+                                page_number,
+                                exc,
+                            )
+                    page_ext.metrics["textract_elapsed_s"] = round(
+                        time.perf_counter() - textract_started, 3
+                    )
+                    page_ext.metrics["textract_invoked"] = bool(run_textract)
+                    if textract_error:
+                        page_ext.metrics["textract_error"] = textract_error
+                    page_ext.metrics["textract_tables"] = len(textract_tables)
+                    if textract_tables:
+                        page_ext.tables = list(textract_tables)
+                        table_source = "textract"
+                    elif fallback_tables:
+                        page_ext.tables = list(fallback_tables)
+                        table_source = (
+                            "ocr"
+                            if strategy == "ocr"
+                            or any(
+                                (t.extraction_method or "").startswith("ocr")
+                                for t in fallback_tables
+                            )
+                            else "native"
+                        )
+                page_ext.metrics["table_source"] = table_source
 
                 # Repair collapsed numeric grids via Camelot when needed.
                 if page_ext.tables:

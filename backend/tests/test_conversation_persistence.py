@@ -159,6 +159,41 @@ def test_chat_memory_and_followup_detection():
     assert not is_conversation_followup("What is photosynthesis?")
 
 
+def test_should_inject_prompt_history_gates_self_contained_cases():
+    from app.services.conversation_memory import (
+        is_self_contained_grounded_question,
+        should_inject_prompt_history,
+    )
+
+    table_q = (
+        "According to Table 1 for patients 12 years and older with asthma, "
+        "what dose and frequency apply for pretreatment IgE 350 IU/mL and "
+        "body weight 78 kg?"
+    )
+    case_q = (
+        "Asthma patient >=12 years, IgE 300 IU/mL, weight 70 kg. "
+        "What is the label dose and frequency from the dosing table?"
+    )
+    label_q = (
+        "According to the prescribing information, what is the recommended "
+        "dose and frequency for neovascular (wet) AMD?"
+    )
+    follow_q = "What about that dose?"
+
+    assert is_self_contained_grounded_question(table_q)
+    assert is_self_contained_grounded_question(case_q)
+    assert is_self_contained_grounded_question(label_q)
+    assert not is_self_contained_grounded_question(follow_q)
+
+    assert should_inject_prompt_history(table_q, has_attach=True) is False
+    assert should_inject_prompt_history(case_q, has_attach=True) is False
+    assert should_inject_prompt_history(label_q, has_attach=True) is False
+    assert should_inject_prompt_history(follow_q, has_attach=True) is True
+    assert should_inject_prompt_history(
+        "What did I ask previously?", has_attach=True
+    ) is True
+
+
 def test_build_prompt_history_keeps_early_facts():
     messages = []
     for i in range(40):
