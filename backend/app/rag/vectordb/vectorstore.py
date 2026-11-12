@@ -571,13 +571,6 @@ def delete_document_chunks(document_id: str, user_id: str):
     except Exception as e:
         logger.warning(f"Error deleting BM25 index: {e}")
 
-    try:
-        from app.rag.tables.store import delete_document_tables
-
-        delete_document_tables(user_id=user_id, document_id=document_id)
-    except Exception as e:
-        logger.debug(f"Error deleting table store: {e}")
-
     def _delete_doc_vectors():
         client = get_chroma_client()
         collection = client.get_collection(name=collection_name)

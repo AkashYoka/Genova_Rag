@@ -190,17 +190,6 @@ class TableData:
     extraction_method: str = "native"
     caption: str = ""
     source_lines: int = 0
-    # Complete extracted grid (header rows + body), stable identity and
-    # geometry. ``grid`` keeps unfilled values; spans describe merged cells.
-    table_id: str = ""
-    header_row_count: int = 1
-    grid: List[List[str]] = field(default_factory=list)
-    spans: List[Dict[str, Any]] = field(default_factory=list)
-    cells: List[Dict[str, Any]] = field(default_factory=list)
-    footnotes: List[str] = field(default_factory=list)
-    label_columns: List[int] = field(default_factory=lambda: [0])
-    row_labels: List[str] = field(default_factory=list)
-    original_markdown: str = ""
     # Cells whose OCR confidence was too low for trustworthy financial values.
     # Each entry: {"row": int, "col": int, "text": str, "confidence": float}
     low_confidence_cells: List[Dict[str, Any]] = field(default_factory=list)
@@ -209,9 +198,7 @@ class TableData:
 
     @property
     def n_cols(self) -> int:
-        widths = [len(self.headers)] + [len(r) for r in self.rows]
-        widths += [len(r) for r in self.grid]
-        return max(widths or [0])
+        return max([len(self.headers)] + [len(r) for r in self.rows] or [0])
 
     @property
     def n_rows(self) -> int:
@@ -253,20 +240,8 @@ class TableData:
     def to_json(self, include_markdown: bool = True) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "page": self.page,
-            "table_id": self.table_id,
             "headers": self.headers,
             "rows": self.rows,
-            "header_row_count": self.header_row_count,
-            "grid": self.grid,
-            "spans": self.spans,
-            "cells": self.cells,
-            "footnotes": list(self.footnotes or []),
-            "label_columns": list(self.label_columns or []),
-            "row_labels": list(self.row_labels or []),
-            "original": {
-                "grid": self.grid,
-                "markdown": self.original_markdown or "",
-            },
             "n_rows": self.n_rows,
             "n_cols": self.n_cols,
             "extraction_method": self.extraction_method,

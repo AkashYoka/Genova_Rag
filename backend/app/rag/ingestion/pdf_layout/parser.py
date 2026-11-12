@@ -121,24 +121,14 @@ def _repair_page_tables(
     tables: Sequence[TableData],
     *,
     filepath: str,
-    document_id: str = "",
 ) -> List[TableData]:
-    """Normalize grids; repair only genuinely collapsed legacy tables.
-
-    Layout-aware tables already carry a grid, spans and cell coordinates, so
-    they are normalized in place and never re-extracted by a weaker parser.
-    """
+    """Repair collapsed grids and attach linearized facts (drug-agnostic)."""
     from app.rag.ingestion.pdf_layout.table_normalize import repair_table_data
-    from app.rag.tables.normalize import normalize_table_data
 
     repaired: List[TableData] = []
     for table in tables:
         try:
-            if getattr(table, "grid", None):
-                normalize_table_data(table, document_id=document_id)
-            else:
-                repair_table_data(table, filepath=filepath, caption=table.caption or "")
-                normalize_table_data(table, document_id=document_id)
+            repair_table_data(table, filepath=filepath, caption=table.caption or "")
         except Exception as exc:
             logger.debug(
                 "Table repair skipped on page %s: %s",
@@ -149,16 +139,43 @@ def _repair_page_tables(
     return repaired
 
 
-def _native_tables(page: fitz.Page, *, filepath: str = "") -> List[TableData]:
-    """Layout-aware native extraction with geometry, spans and captions."""
-    from app.rag.tables.extractor import extract_page_tables
-
-    return extract_page_tables(
-        page,
-        page_number=page.number + 1,
-        method="native",
-        filepath=filepath,
-    )
+def _native_tables(page: fitz.Page) -> List[TableData]:
+    if not hasattr(page, "find_tables"):
+        return []
+    try:
+        finder = page.find_tables()
+        found = list(getattr(finder, "tables", []) or [])
+    except Exception as exc:
+        logger.debug("Native table detection failed on page %s: %s", page.number + 1, exc)
+        return []
+    tables: List[TableData] = []
+    for table in found:
+        try:
+            rows = _clean_table_rows(table.extract())
+            bbox = BBox.from_any(getattr(table, "bbox", None))
+            if not bbox or len(rows) < 2:
+                continue
+            width = max(len(row) for row in rows)
+            if width < 2:
+                continue
+            rows = [row + [""] * (width - len(row)) for row in rows]
+            headers = rows[0]
+            data = rows[1:]
+            if not data:
+                continue
+            tables.append(
+                TableData(
+                    page=page.number + 1,
+                    bbox=bbox,
+                    headers=headers,
+                    rows=data,
+                    extraction_method="native",
+                    source_lines=len(rows),
+                )
+            )
+        except Exception as exc:
+            logger.debug("Skipping native table on page %s: %s", page.number + 1, exc)
+    return tables
 
 
 def _ocr_page_content(
@@ -351,13 +368,8 @@ def parse_pdf(
                         image_coverage=coverage,
                     )
                 elif strategy == "native":
-                    native_tables = _native_tables(page, filepath=str(path))
+                    native_tables = _native_tables(page)
                     lines = _native_lines(page, [table.bbox for table in native_tables])
-                    from app.rag.tables.extractor import attach_footnotes_from_lines
-
-                    attach_footnotes_from_lines(
-                        native_tables, lines, float(page.rect.height)
-                    )
                     page_ext.lines = lines
                     page_ext.tables = native_tables
                     if not lines and not native_tables and coverage >= 0.15:
@@ -376,12 +388,10 @@ def parse_pdf(
                     page_ext.status = "empty"
                     page_ext.metrics["note"] = "blank page with no text or image"
 
-                # Normalize merges/labels; repair only legacy collapsed grids.
+                # Repair collapsed numeric grids via Camelot when needed.
                 if page_ext.tables:
                     page_ext.tables = _repair_page_tables(
-                        page_ext.tables,
-                        filepath=str(path),
-                        document_id=document_id or "",
+                        page_ext.tables, filepath=str(path)
                     )
 
                 page_ext.metrics["gutter"] = detect_column_gutter(

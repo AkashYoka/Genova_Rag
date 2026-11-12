@@ -184,15 +184,6 @@ class Settings(BaseSettings):
     PDF_TABLE_MAX_CHARS: int = 4000
     PDF_TABLE_SPLIT_ROWS: int = 40
 
-    # ── Structured tables (extraction → storage → interpretation) ─────────
-    # Complete tables are persisted independently of chunk fragments so a hit
-    # on one row can still attach the whole grid.
-    TABLE_STORE_DIR: str = "./data/tables"
-    TABLE_INTERPRETATION_ENABLED: bool = True
-    TABLE_MAX_CANDIDATES: int = 3
-    TABLE_CONTEXT_MAX_CHARS: int = 9000
-    TABLE_INTERPRETATION_MAX_TOKENS: int = 700
-
     # ── Hybrid Search / RRF ───────────────────────────────
     USE_HYBRID_SEARCH: bool = True   # set to False to fall back to vector-only
     RRF_K: int = 60                  # RRF rank constant; 60 is the standard default

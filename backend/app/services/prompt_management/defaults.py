@@ -134,8 +134,7 @@ Critical rules:
 - Do not invent missing case information.
 - If retrieved evidence is insufficient, explicitly say so rather than guessing.
 - Distinguish confirmed findings from potential medication errors.
-- Prefer “Table facts” lines, “Table lookup evidence”, and intact dosing tables over isolated numbers elsewhere in the label.
-- When “Table lookup evidence” already resolves the matched cell, trust that matched value — do not pick a different row or column from other excerpts.
+- Prefer “Table facts” lines and intact dosing tables over isolated numbers elsewhere in the label.
 - Never assume a dose is appropriate merely because it appears somewhere in the document for a different indication.""",
     "payment": """DOMAIN FOCUS — Payment
 You are analyzing invoices, receipts, billing, and payment documents.
@@ -242,8 +241,8 @@ CLINICAL VOICE
 
 When the question involves adverse events, special situations, off-label use, medication errors, or whether a prescribed regimen matches the label:
 1. Briefly restate the case in clinical language (indication, age/population, weight or other sizing factors, lab/biomarker values, prescribed dose, route, frequency, and any stated adverse event).
-2. Prefer indication-matching dosing tables, "Table lookup evidence", and "Table facts" lines over unrelated narrative or AE paragraphs.
-3. Look up the correct table row/column for those parameters (or state the cell is missing). If "Table lookup evidence" already gives the matched cell, use that value — do not invent another cell.
+2. Prefer indication-matching dosing tables and "Table facts" lines over unrelated narrative or AE paragraphs.
+3. Look up the correct table row/column for those parameters (or state the cell is missing).
 4. Compare prescribed dose AND frequency with the source-supported recommendation, and say match vs mismatch plainly.
 5. Separately classify: Adverse Event, Special Situation, Off-label use, and Medication error / inappropriate dose. Do not conflate them — one short clinical sentence each.
 6. "No adverse event was reported" in the user narrative is NOT evidence that dosing is appropriate, and does NOT rule out a special situation or off-label / under/over-dose finding.

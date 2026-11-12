@@ -35,30 +35,13 @@ def _section_id(document_id: str, path: Sequence[str], ordinal: int, used: set[s
     return candidate
 
 
-def _section_tables(
-    blocks: Iterable[SourceBlock],
-    *,
-    document_id: str,
-) -> List[Dict[str, object]]:
+def _section_tables(blocks: Iterable[SourceBlock]) -> List[Dict[str, object]]:
     tables: List[Dict[str, object]] = []
     for block in blocks:
         if not block.is_table:
             continue
         table = dict(block.table or {})
         table_id = str(table.get("table_id") or "").strip()
-        if not table_id:
-            try:
-                from app.rag.tables.schema import make_table_id
-
-                table_id = make_table_id(
-                    document_id=document_id,
-                    page=block.page_start,
-                    bbox=block.bbox,
-                    headers=list(table.get("headers") or []),
-                    rows=[list(row) for row in (table.get("rows") or [])],
-                )
-            except Exception:
-                table_id = ""
         tables.append(
             {
                 "table_id": table_id,
@@ -139,7 +122,7 @@ def build_hierarchy(
             page_start=page_start,
             page_end=page_end,
             summary=(spec.summary or _fallback_summary(section_blocks, path[-1]))[:500],
-            tables=_section_tables(section_blocks, document_id=document_id),
+            tables=_section_tables(section_blocks),
             path=path,
         )
         nodes.append(node)

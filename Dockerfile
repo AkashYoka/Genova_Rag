@@ -30,7 +30,6 @@ RUN uv venv "$VIRTUAL_ENV"
 COPY backend/requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install -r requirements.txt && \
-    python -m spacy download en_core_web_sm && \
     find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + && \
     find /opt/venv -type f -name "*.pyc" -delete
 

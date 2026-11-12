@@ -44,7 +44,6 @@ RAG_PROMPT_TEMPLATE = """Based on the following document excerpts, answer the us
 ## Instructions
 
 Provide a comprehensive answer based strictly on the document context above. Include inline citations using [Source: filename, Page X] format for every claim you make. If the documents don't contain relevant information, clearly state that. Focus only on the current question; ignore unrelated prior topics. If simplifying language, preserve exact facts, units, and frequencies from the context.
-When the context includes a "Verified table evidence" section, use exactly that table, row, column and cell value; do not substitute a different cell from other excerpts. When the context includes "Complete extracted tables", interpret the full grid (headers, row labels, merged-cell notes and coordinates) rather than isolated rows. When the context includes "Table evidence status: UNCERTAIN", do not guess a row, column or value: state that the table evidence is ambiguous or incomplete. When the context includes a "Table lookup evidence" section or "Table facts" lines, match the user's parameters to the correct row/column before concluding. Prefer a matched cell over unrelated narrative. If the evidence notes a mismatch with a stated value, report the mismatch clearly — do not claim the stated value is correct. If prior chat conflicts with the current Document Context, follow the Document Context.
 
 ## Answer
 """
