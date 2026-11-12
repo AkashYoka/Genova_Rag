@@ -22,6 +22,33 @@ vi.mock("@/lib/chat-attachments", () => ({
   queueDocChat: vi.fn(),
 }));
 
+vi.mock("next-themes", () => ({
+  useTheme: () => ({ theme: "light", resolvedTheme: "light", setTheme: vi.fn() }),
+}));
+
+vi.mock("@xyflow/react", () => {
+  const React = require("react") as typeof import("react");
+  return {
+    ReactFlowProvider: ({ children }: { children: React.ReactNode }) =>
+      React.createElement(React.Fragment, null, children),
+    ReactFlow: () =>
+      React.createElement("div", { "data-testid": "hierarchy-tree-map" }),
+    Background: () => null,
+    Controls: () => null,
+    MiniMap: () => null,
+    Handle: () => null,
+    MarkerType: { ArrowClosed: "arrowclosed" },
+    Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
+    useEdgesState: () => [[], vi.fn(), vi.fn()],
+    useNodesState: () => [[], vi.fn(), vi.fn()],
+    useReactFlow: () => ({
+      fitView: vi.fn(() => Promise.resolve()),
+      setViewport: vi.fn(() => Promise.resolve()),
+      getViewport: () => ({ x: 0, y: 0, zoom: 0.85 }),
+    }),
+  };
+});
+
 import {
   fetchDocumentHierarchy,
   fetchDocumentIndexStatus,
@@ -158,5 +185,14 @@ describe("DocumentExplorer", () => {
     expect(screen.getAllByText("Revenue by quarter").length).toBeGreaterThan(0);
     expect(screen.getByText("Related from")).toBeInTheDocument();
     expect(screen.queryByText(/knowledge graph/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Tree"));
+    expect(screen.getByTestId("hierarchy-tree-map")).toBeInTheDocument();
+    expect(screen.getByText("List")).toBeInTheDocument();
+    // Tree mode opens part details in a modal so the map keeps full width.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Click a part to read summary/i),
+    ).not.toBeInTheDocument();
   });
 });

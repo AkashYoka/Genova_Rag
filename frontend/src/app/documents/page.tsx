@@ -16,7 +16,6 @@ import {
   Search,
   X,
   MessageSquare,
-  Settings,
   RefreshCw,
   Edit2,
   Check,
@@ -24,7 +23,7 @@ import {
   ArrowRight,
   HardDrive,
   FileCode,
-  Network,
+  ListTree,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
@@ -34,7 +33,6 @@ import {
 } from "@/lib/api";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import Header from "@/components/layout/Header";
-import DocumentSettings from "@/components/document/DocumentSettings";
 import BulkActionBar from "@/components/document/BulkActionBar";
 import ProcessingPipelineStatus from "@/components/document/ProcessingPipelineStatus";
 import { Button } from "@/components/ui/button";
@@ -97,7 +95,6 @@ function DocumentLibraryPageContent() {
   const [singleDeletingId, setSingleDeletingId] = useState<string | null>(null);
   const [singleRestoringId, setSingleRestoringId] = useState<string | null>(null);
   const [singlePermanentDeletingId, setSinglePermanentDeletingId] = useState<string | null>(null);
-  const [settingsDoc, setSettingsDoc] = useState<DocInfo | null>(null);
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
@@ -931,40 +928,40 @@ function DocumentLibraryPageContent() {
             <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
               <table className="w-full table-fixed border-collapse text-left text-sm">
                 <thead>
-                  <tr className="text-xs font-medium text-[var(--gd-muted)]">
-                    <th className="sticky top-0 z-10 border-b border-border w-10 bg-[var(--gd-surface)] py-3 pl-4 pr-2">
+                  <tr className="text-[11px] font-medium uppercase tracking-[0.04em] text-[var(--gd-muted)]">
+                    <th className="sticky top-0 z-10 border-b border-[var(--gd-rule)] w-10 bg-[var(--gd-surface)] py-2 pl-4 pr-2">
                       <input
                         type="checkbox"
                         checked={isAllSelected}
                         onChange={toggleSelectAll}
                         aria-label="Select all documents"
-                        className="h-4 w-4 rounded-sm border border-muted-foreground/40 accent-primary cursor-pointer"
+                        className="h-3.5 w-3.5 rounded-sm border border-muted-foreground/40 accent-primary cursor-pointer"
                       />
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border bg-[var(--gd-surface)] py-3 px-3">
+                    <th className="sticky top-0 z-10 border-b border-[var(--gd-rule)] bg-[var(--gd-surface)] py-2 px-3">
                       Name
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border w-[22%] bg-[var(--gd-surface)] py-3 px-3 sm:w-[15%] md:w-[13%]">
+                    <th className="sticky top-0 z-10 border-b border-[var(--gd-rule)] w-[6.5rem] bg-[var(--gd-surface)] py-2 px-2 sm:w-[7rem]">
                       Status
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border hidden w-[9%] bg-[var(--gd-surface)] py-3 px-3 text-right sm:table-cell">
+                    <th className="sticky top-0 z-10 border-b border-[var(--gd-rule)] hidden w-[4.75rem] bg-[var(--gd-surface)] py-2 px-2 text-right sm:table-cell">
                       Size
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border hidden w-[7%] bg-[var(--gd-surface)] py-3 px-3 text-right md:table-cell">
+                    <th className="sticky top-0 z-10 border-b border-[var(--gd-rule)] hidden w-[4rem] bg-[var(--gd-surface)] py-2 px-2 text-right md:table-cell">
                       Pages
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border hidden w-[8%] bg-[var(--gd-surface)] py-3 px-3 text-right md:table-cell">
+                    <th className="sticky top-0 z-10 border-b border-[var(--gd-rule)] hidden w-[4.25rem] bg-[var(--gd-surface)] py-2 px-2 text-right md:table-cell">
                       Chunks
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border hidden w-[11%] bg-[var(--gd-surface)] py-3 px-3 lg:table-cell">
+                    <th className="sticky top-0 z-10 border-b border-[var(--gd-rule)] hidden w-[6.5rem] bg-[var(--gd-surface)] py-2 px-2 lg:table-cell">
                       Uploaded
                     </th>
-                    <th className="sticky top-0 z-10 border-b border-border w-[26%] bg-[var(--gd-surface)] py-3 pl-3 pr-4 text-right sm:w-[20%] lg:w-[15%]">
+                    <th className="sticky top-0 z-10 border-b border-[var(--gd-rule)] w-[7rem] bg-[var(--gd-surface)] py-2 pl-2 pr-3 text-right">
                       Actions
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border/60">
+                <tbody className="divide-y divide-[var(--gd-rule)]">
                   {filteredList.map((doc) => {
                     const isSelected = selectedIds.has(doc.id);
                     const isEditing = editingDocId === doc.id;
@@ -989,7 +986,7 @@ function DocumentLibraryPageContent() {
                       >
                         {/* Checkbox column */}
                         <td
-                          className="py-3 pl-4 pr-2"
+                          className="py-2 pl-4 pr-2 align-middle"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <input
@@ -997,25 +994,25 @@ function DocumentLibraryPageContent() {
                             checked={isSelected}
                             onChange={(e) => toggleSelectOne(doc.id, e)}
                             aria-label={`Select ${doc.original_name}`}
-                            className="h-4 w-4 rounded-sm border border-muted-foreground/40 accent-primary cursor-pointer"
+                            className="h-3.5 w-3.5 rounded-sm border border-muted-foreground/40 accent-primary cursor-pointer"
                           />
                         </td>
 
                         {/* Name & Summary column */}
-                        <td className="py-3 px-3">
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--gd-raised)] text-[var(--gd-muted)]">
+                        <td className="py-2 px-3 align-middle">
+                          <div className="flex items-start gap-2.5">
+                            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--gd-raised)] text-[var(--gd-muted)]">
                               {doc.original_name.endsWith(".pdf") ? (
-                                <FileText className="h-4 w-4" />
+                                <FileText className="h-3.5 w-3.5" />
                               ) : (
-                                <FileCode className="h-4 w-4" />
+                                <FileCode className="h-3.5 w-3.5" />
                               )}
                             </div>
 
                             <div className="min-w-0 flex-1">
                               {isEditing ? (
                                 <div
-                                  className="flex items-center gap-1.5"
+                                  className="flex items-center gap-1"
                                   onClick={(e) => e.stopPropagation()}
                                 >
                                   <Input
@@ -1056,9 +1053,9 @@ function DocumentLibraryPageContent() {
                                   </Button>
                                 </div>
                               ) : (
-                                <div className="flex min-w-0 items-start gap-2">
+                                <div className="flex min-w-0 items-center gap-1.5">
                                   <p
-                                    className="min-w-0 break-words text-xs font-semibold text-foreground"
+                                    className="min-w-0 truncate text-[13px] font-medium leading-5 text-[var(--gd-text)]"
                                     title={doc.original_name}
                                   >
                                     {doc.original_name}
@@ -1067,7 +1064,7 @@ function DocumentLibraryPageContent() {
                                     <button
                                       type="button"
                                       onClick={(e) => startRename(doc, e)}
-                                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity cursor-pointer p-0.5"
+                                      className="shrink-0 opacity-0 group-hover:opacity-100 text-[var(--gd-muted)] hover:text-[var(--gd-text)] transition-opacity cursor-pointer p-0.5"
                                       title="Rename document"
                                       aria-label={`Rename ${doc.original_name}`}
                                     >
@@ -1079,37 +1076,36 @@ function DocumentLibraryPageContent() {
 
                               {doc.summary ? (
                                 <p
-                                  className="mt-1 line-clamp-2 break-words text-[11px] leading-relaxed text-muted-foreground"
+                                  className="mt-0.5 line-clamp-1 break-words text-[11px] leading-4 text-[var(--gd-muted)]"
                                   title={doc.summary}
                                 >
                                   {doc.summary}
                                 </p>
                               ) : null}
 
-                              {/* Keywords tags preview if available */}
-                              {doc.keywords && doc.keywords.length > 0 && (
-                                <div className="mt-1.5 flex flex-wrap gap-1">
-                                  {doc.keywords.slice(0, 3).map((kw, idx) => (
+                              {doc.keywords && doc.keywords.length > 0 ? (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {doc.keywords.slice(0, 2).map((kw, idx) => (
                                     <span
                                       key={idx}
-                                      className="inline-block rounded bg-muted/60 px-1.5 py-0.2 text-[9px] text-muted-foreground"
+                                      className="inline-block rounded px-1.5 py-px text-[10px] leading-4 text-[var(--gd-muted)] bg-[var(--gd-raised)]"
                                     >
                                       #{kw}
                                     </span>
                                   ))}
-                                  {doc.keywords.length > 3 && (
-                                    <span className="text-[9px] text-muted-foreground">
-                                      +{doc.keywords.length - 3} more
+                                  {doc.keywords.length > 2 ? (
+                                    <span className="text-[10px] leading-4 text-[var(--gd-muted)]">
+                                      +{doc.keywords.length - 2}
                                     </span>
-                                  )}
+                                  ) : null}
                                 </div>
-                              )}
+                              ) : null}
                             </div>
                           </div>
                         </td>
 
                         {/* Status column — hover shows ingest pipeline stages */}
-                        <td className="py-3 px-3">
+                        <td className="py-2 px-2 align-middle">
                           <ProcessingPipelineStatus
                             status={doc.status}
                             processingStage={doc.processing_stage}
@@ -1119,17 +1115,17 @@ function DocumentLibraryPageContent() {
                         </td>
 
                         {/* File size column */}
-                        <td className="hidden py-3 px-3 text-right text-xs font-mono text-muted-foreground sm:table-cell">
+                        <td className="hidden py-2 px-2 text-right text-xs tabular-nums text-[var(--gd-muted)] sm:table-cell align-middle">
                           {formatBytes(doc.file_size)}
                         </td>
 
                         {/* Page count column */}
-                        <td className="hidden py-3 px-3 text-right text-xs font-mono text-muted-foreground md:table-cell">
+                        <td className="hidden py-2 px-2 text-right text-xs tabular-nums text-[var(--gd-muted)] md:table-cell align-middle">
                           {doc.page_count > 0 ? doc.page_count : "—"}
                         </td>
 
                         {/* Chunk count column */}
-                        <td className="hidden py-3 px-3 text-right text-xs font-mono text-muted-foreground md:table-cell">
+                        <td className="hidden py-2 px-2 text-right text-xs tabular-nums text-[var(--gd-muted)] md:table-cell align-middle">
                           {doc.chunk_count > 0 ? (
                             <span className="text-[var(--gd-text)]">
                               {doc.chunk_count}
@@ -1140,52 +1136,40 @@ function DocumentLibraryPageContent() {
                         </td>
 
                         {/* Upload date column */}
-                        <td className="hidden py-3 px-3 text-xs text-muted-foreground lg:table-cell">
+                        <td className="hidden py-2 px-2 text-xs text-[var(--gd-muted)] lg:table-cell align-middle">
                           {formatDate(doc.uploaded_at)}
                         </td>
 
                         {/* Actions column */}
                         <td
-                          className="py-3 pl-3 pr-4 text-right"
+                          className="py-2 pl-2 pr-3 text-right align-middle"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="flex flex-wrap items-center justify-end gap-1">
+                          <div className="inline-flex items-center justify-end gap-0.5">
                             {activeTab === "active" ? (
                               <>
                                 <Button
                                   variant="ghost"
-                                  size="sm"
+                                  size="icon"
                                   onClick={() => handleOpenExplorer(doc)}
                                   disabled={doc.status !== "ready"}
-                                  className="h-8 gap-1.5 text-xs text-[var(--gd-text)] hover:bg-[var(--gd-raised)] cursor-pointer px-2"
+                                  className="h-7 w-7 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] cursor-pointer"
                                   title={`Explore hierarchy for ${doc.original_name}`}
+                                  aria-label={`Explore hierarchy for ${doc.original_name}`}
                                 >
-                                  <Network className="h-3.5 w-3.5" />
-                                  <span className="hidden md:inline">Explore</span>
-                                </Button>
-
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleOpenInWorkspace(doc)}
-                                  disabled={doc.status !== "ready"}
-                                  className="h-8 gap-1.5 text-xs text-[var(--gd-text)] hover:bg-[var(--gd-raised)] cursor-pointer px-2"
-                                  title={`Open ${doc.original_name} in Chat Workspace`}
-                                >
-                                  <MessageSquare className="h-3.5 w-3.5" />
-                                  <span className="hidden md:inline">Chat</span>
+                                  <ListTree className="h-3.5 w-3.5" />
                                 </Button>
 
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  onClick={() => setSettingsDoc(doc)}
+                                  onClick={() => handleOpenInWorkspace(doc)}
                                   disabled={doc.status !== "ready"}
-                                  className="h-8 w-8 text-muted-foreground hover:text-foreground cursor-pointer"
-                                  title={`Chunking settings for ${doc.original_name}`}
-                                  aria-label={`Chunking settings for ${doc.original_name}`}
+                                  className="h-7 w-7 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] cursor-pointer"
+                                  title={`Open ${doc.original_name} in Chat Workspace`}
+                                  aria-label={`Open ${doc.original_name} in Chat Workspace`}
                                 >
-                                  <Settings className="h-3.5 w-3.5" />
+                                  <MessageSquare className="h-3.5 w-3.5" />
                                 </Button>
 
                                 <Button
@@ -1193,7 +1177,7 @@ function DocumentLibraryPageContent() {
                                   size="icon"
                                   onClick={(e) => void handleDeleteSingle(doc.id, e)}
                                   disabled={singleDeletingId === doc.id}
-                                  className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                                  className="h-7 w-7 text-[var(--gd-muted)] hover:text-destructive hover:bg-destructive/10 cursor-pointer"
                                   title={`Move ${doc.original_name} to trash`}
                                   aria-label={`Move ${doc.original_name} to trash`}
                                 >
@@ -1208,18 +1192,18 @@ function DocumentLibraryPageContent() {
                               <>
                                 <Button
                                   variant="ghost"
-                                  size="sm"
+                                  size="icon"
                                   onClick={(e) => void handleRestoreSingle(doc.id, e)}
                                   disabled={singleRestoringId === doc.id}
-                                  className="h-8 gap-1.5 text-xs text-[var(--gd-text)] hover:bg-[var(--gd-raised)] cursor-pointer px-2"
+                                  className="h-7 w-7 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] cursor-pointer"
                                   title={`Restore ${doc.original_name}`}
+                                  aria-label={`Restore ${doc.original_name}`}
                                 >
                                   {singleRestoringId === doc.id ? (
                                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                   ) : (
                                     <RefreshCw className="h-3.5 w-3.5" />
                                   )}
-                                  <span>Restore</span>
                                 </Button>
 
                                 <Button
@@ -1229,7 +1213,7 @@ function DocumentLibraryPageContent() {
                                     void handlePermanentDeleteSingle(doc, e)
                                   }
                                   disabled={singlePermanentDeletingId === doc.id}
-                                  className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                                  className="h-7 w-7 text-[var(--gd-muted)] hover:text-destructive hover:bg-destructive/10 cursor-pointer"
                                   title={`Permanently delete ${doc.original_name}`}
                                   aria-label={`Permanently delete ${doc.original_name}`}
                                 >
@@ -1252,21 +1236,6 @@ function DocumentLibraryPageContent() {
           )}
         </div>
       </main>
-
-      {/* Document Chunking Settings Modal */}
-      {settingsDoc && (
-        <DocumentSettings
-          document={settingsDoc}
-          open={Boolean(settingsDoc)}
-          onOpenChange={(open) => {
-            if (!open) setSettingsDoc(null);
-          }}
-          onSettingsSaved={() => {
-            void loadDocuments();
-            setSettingsDoc(null);
-          }}
-        />
-      )}
     </div>
   );
 }

@@ -404,6 +404,30 @@
   box-shadow: var(--gd-shadow);
 }
 
+/* Document Explorer tree map — keep xyflow chrome on Genova tokens */
+.hierarchy-tree-map.react-flow {
+  background-color: var(--gd-ground);
+  color: var(--gd-text);
+}
+.hierarchy-tree-map .react-flow__controls {
+  box-shadow: var(--gd-shadow);
+}
+.hierarchy-tree-map .react-flow__controls-button {
+  background: var(--gd-surface) !important;
+  border-bottom-color: var(--gd-border) !important;
+  color: var(--gd-text) !important;
+}
+.hierarchy-tree-map .react-flow__controls-button:hover {
+  background: var(--gd-raised) !important;
+  color: var(--gd-text) !important;
+}
+.hierarchy-tree-map .react-flow__controls-button svg {
+  fill: currentColor;
+}
+.hierarchy-tree-map .react-flow__minimap {
+  background-color: var(--gd-surface) !important;
+}
+
 .genova-rail {
   @apply border-b border-border bg-card;
 }

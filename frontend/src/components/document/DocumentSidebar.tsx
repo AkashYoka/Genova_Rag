@@ -25,8 +25,6 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { useDropzone } from "react-dropzone";
-import { Settings } from "lucide-react";
-import DocumentSettings from "./DocumentSettings";
 import DocumentCard from "./DocumentCard";
 import BulkActionBar from "./BulkActionBar";
 import ProcessingPipelineStatus from "./ProcessingPipelineStatus";
@@ -76,7 +74,6 @@ export default function DocumentSidebar({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [settingsDoc, setSettingsDoc] = useState<DocInfo | null>(null);
   const [editingDocId, setEditingDocId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
@@ -395,11 +392,6 @@ export default function DocumentSidebar({
     } finally {
       setDeleting(null);
     }
-  };
-
-  const handleSettingsClick = (doc: DocInfo, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSettingsDoc(doc);
   };
 
   const startRename = (doc: DocInfo, e?: React.MouseEvent) => {
@@ -777,17 +769,6 @@ export default function DocumentSidebar({
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity cursor-pointer"
-                            onClick={(e) => handleSettingsClick(doc, e)}
-                            disabled={doc.status !== "ready"}
-                            aria-label="Open chunking settings"
-                            title={`Open chunking settings for ${doc.original_name}`}
-                          >
-                            <Settings className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
                             className="h-6 w-6 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity shrink-0 cursor-pointer"
                             onClick={(e) => handleDelete(doc.id, e)}
                             disabled={deleting === doc.id}
@@ -907,20 +888,6 @@ export default function DocumentSidebar({
         </TabsContent>
       </Tabs>
 
-      {/* ── Settings Modal ───────────────────────────── */}
-      {settingsDoc && (
-        <DocumentSettings
-          document={settingsDoc}
-          open={!!settingsDoc}
-          onOpenChange={(open) => {
-            if (!open) setSettingsDoc(null);
-          }}
-          onSettingsSaved={() => {
-            onDocumentsChange();
-            setSettingsDoc(null);
-          }}
-        />
-      )}
     </div>
   );
 }

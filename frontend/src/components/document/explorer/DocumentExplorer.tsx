@@ -6,12 +6,19 @@ import {
   AlertCircle,
   ArrowLeft,
   List,
+  ListTree,
   MessageSquare,
-  Network,
   RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -41,7 +48,7 @@ import type {
   SectionTreeNode,
 } from "@/types/document-hierarchy";
 import { ContentsList } from "./ContentsList";
-import { HierarchyTree } from "./HierarchyTree";
+import { HierarchyTreeMap } from "./HierarchyTreeMap";
 import { HowToRead } from "./HowToRead";
 import { SectionDetailPanel } from "./SectionDetailPanel";
 import { TablesPanel } from "./TablesPanel";
@@ -128,6 +135,19 @@ export function DocumentExplorer({
   useEffect(() => {
     void loadRoot();
   }, [loadRoot]);
+
+  // Seed Tree map with top-level parents expanded for a useful first view.
+  useEffect(() => {
+    if (!hierarchy?.sections?.length) return;
+    setExpandedIds((prev) => {
+      if (prev.size > 0) return prev;
+      return new Set(
+        hierarchy.sections
+          .filter((section) => (section.children?.length ?? 0) > 0)
+          .map((section) => section.section_id),
+      );
+    });
+  }, [hierarchy]);
 
   const flatSections = useMemo(
     () => (hierarchy ? flattenSections(hierarchy.sections) : []),
@@ -264,10 +284,7 @@ export function DocumentExplorer({
     return (
       <div className="flex h-full min-h-[60vh] flex-col gap-4 p-6">
         <Skeleton className="h-12 w-full max-w-xl" />
-        <div className="grid flex-1 gap-4 lg:grid-cols-[minmax(280px,420px)_1fr]">
-          <Skeleton className="h-[480px] w-full" />
-          <Skeleton className="h-[480px] w-full" />
-        </div>
+        <Skeleton className="h-[min(70vh,640px)] w-full" />
       </div>
     );
   }
@@ -299,6 +316,36 @@ export function DocumentExplorer({
   if (!hierarchy) return null;
 
   const showingDetail = Boolean(selectedSection) && tab === "contents";
+  const isTreeMap = tab === "contents" && viewMode === "tree";
+  const showInlineDetail = showingDetail && !isTreeMap;
+  const treeDetailOpen = isTreeMap && Boolean(selectedSection);
+
+  const detailPanel = selectedSection ? (
+    <SectionDetailPanel
+      section={selectedSection}
+      partNumber={partNumber || 1}
+      partTotal={flatSections.length || hierarchy.section_count}
+      breadcrumb={breadcrumb}
+      chunks={chunks}
+      tables={sectionTables}
+      related={related}
+      selectedChunkId={
+        selection.kind === "chunk" ? selection.chunkId : null
+      }
+      loadingChunks={loadingChunks}
+      loadingRelated={loadingRelated}
+      chunksError={chunksError}
+      relatedError={relatedError}
+      onSelectChunk={selectChunk}
+      onSelectSection={selectSection}
+      onBackToContents={() => setSelection({ kind: "document" })}
+      onBackToParent={
+        selectedSection.parent_section_id
+          ? () => selectSection(selectedSection.parent_section_id!)
+          : undefined
+      }
+    />
+  ) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--gd-ground)]">
@@ -394,7 +441,7 @@ export function DocumentExplorer({
                     : "text-[var(--gd-muted)] hover:text-[var(--gd-text)]",
                 )}
               >
-                <Network className="h-3.5 w-3.5" />
+                <ListTree className="h-3.5 w-3.5" />
                 Tree
               </button>
             </div>
@@ -402,86 +449,111 @@ export function DocumentExplorer({
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(300px,440px)_minmax(0,1fr)]">
-        <aside className="min-h-0 border-b border-[var(--gd-border)] bg-[var(--gd-surface)] lg:border-b-0 lg:border-r">
-          {tab === "tables" ? (
-            <div className="h-full overflow-y-auto p-4">
-              <TablesPanel
-                tables={allTables}
-                emptyLabel="No tables were indexed for this document."
-                onSelectSection={selectSection}
-              />
+      {isTreeMap ? (
+        <div className="relative min-h-0 flex-1 bg-[var(--gd-surface)]">
+          <HierarchyTreeMap
+            documentName={documentName}
+            partCount={hierarchy.section_count}
+            sections={hierarchy.sections}
+            flatSections={flatSections}
+            expandedIds={expandedIds}
+            selectedSectionId={selectedSectionId}
+            onToggleExpand={onToggleExpand}
+            onSelectSection={selectSection}
+            onExpandAll={() =>
+              setExpandedIds(new Set(collectExpandableIds(hierarchy.sections)))
+            }
+            onCollapseAll={() => setExpandedIds(new Set())}
+          />
+          {!selectedSection ? (
+            <div className="pointer-events-none absolute bottom-4 left-4 z-10 max-w-sm rounded-xl border border-[var(--gd-border)] bg-[var(--gd-surface)]/95 px-3 py-2 text-[11px] text-[var(--gd-muted)] shadow-sm backdrop-blur-sm">
+              Click a part to read summary, source text, tables, and related
+              sections.
             </div>
-          ) : (
-            <div className="h-[min(48vh,420px)] min-h-0 lg:h-full">
-              {viewMode === "list" ? (
-                <div className="h-full overflow-y-auto">
-                  <ContentsList
-                    sections={flatSections}
-                    selectedSectionId={selectedSectionId}
-                    onSelectSection={selectSection}
-                  />
-                </div>
-              ) : (
-                <HierarchyTree
-                  sections={hierarchy.sections}
-                  expandedIds={expandedIds}
-                  selectedSectionId={selectedSectionId}
-                  onToggleExpand={onToggleExpand}
+          ) : null}
+        </div>
+      ) : (
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(300px,440px)_minmax(0,1fr)]">
+          <aside className="min-h-0 border-b border-[var(--gd-border)] bg-[var(--gd-surface)] lg:border-b-0 lg:border-r">
+            {tab === "tables" ? (
+              <div className="h-full overflow-y-auto p-4">
+                <TablesPanel
+                  tables={allTables}
+                  emptyLabel="No tables were indexed for this document."
                   onSelectSection={selectSection}
-                  onExpandAll={() =>
-                    setExpandedIds(
-                      new Set(collectExpandableIds(hierarchy.sections)),
-                    )
-                  }
-                  onCollapseAll={() => setExpandedIds(new Set())}
                 />
-              )}
-            </div>
-          )}
-        </aside>
+              </div>
+            ) : (
+              <div className="h-[min(48vh,420px)] min-h-0 overflow-y-auto lg:h-full">
+                <ContentsList
+                  sections={flatSections}
+                  selectedSectionId={selectedSectionId}
+                  onSelectSection={selectSection}
+                />
+              </div>
+            )}
+          </aside>
 
-        <main className="min-h-0 overflow-y-auto px-4 py-5 md:px-8 md:py-6">
-          {tab === "tables" && !selectedSection ? (
-            <div className="mx-auto max-w-xl">
-              <HowToRead />
-            </div>
-          ) : null}
+          <main className="min-h-0 overflow-y-auto px-4 py-5 md:px-8 md:py-6">
+            {tab === "tables" && !selectedSection ? (
+              <div className="mx-auto max-w-xl">
+                <HowToRead />
+              </div>
+            ) : null}
 
-          {tab === "contents" && !showingDetail ? (
-            <div className="mx-auto max-w-xl">
-              <HowToRead />
-            </div>
-          ) : null}
+            {tab === "contents" && !showInlineDetail ? (
+              <div className="mx-auto max-w-xl">
+                <HowToRead />
+              </div>
+            ) : null}
 
-          {tab === "contents" && selectedSection ? (
-            <SectionDetailPanel
-              section={selectedSection}
-              partNumber={partNumber || 1}
-              partTotal={flatSections.length || hierarchy.section_count}
-              breadcrumb={breadcrumb}
-              chunks={chunks}
-              tables={sectionTables}
-              related={related}
-              selectedChunkId={
-                selection.kind === "chunk" ? selection.chunkId : null
-              }
-              loadingChunks={loadingChunks}
-              loadingRelated={loadingRelated}
-              chunksError={chunksError}
-              relatedError={relatedError}
-              onSelectChunk={selectChunk}
-              onSelectSection={selectSection}
-              onBackToContents={() => setSelection({ kind: "document" })}
-              onBackToParent={
-                selectedSection.parent_section_id
-                  ? () => selectSection(selectedSection.parent_section_id!)
-                  : undefined
-              }
-            />
-          ) : null}
-        </main>
-      </div>
+            {showInlineDetail ? detailPanel : null}
+          </main>
+        </div>
+      )}
+
+      <Dialog
+        open={treeDetailOpen}
+        onOpenChange={(open) => {
+          if (!open) setSelection({ kind: "document" });
+        }}
+      >
+        <DialogContent
+          showCloseButton
+          className="flex h-[min(92vh,880px)] w-[calc(100vw-1rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl"
+        >
+          <DialogHeader className="shrink-0 border-b border-[var(--gd-border)] px-5 py-3 pr-12 text-left">
+            <DialogTitle className="truncate text-base">
+              {selectedSection?.title || "Part details"}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[var(--gd-muted)]">
+              {[
+                partNumber
+                  ? `Part ${partNumber} of ${flatSections.length || hierarchy.section_count}`
+                  : null,
+                selectedSection
+                  ? [
+                      selectedSection.page_start != null
+                        ? `p. ${selectedSection.page_start}`
+                        : null,
+                      selectedSection.page_end != null &&
+                      selectedSection.page_end !== selectedSection.page_start
+                        ? `–${selectedSection.page_end}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join("") || null
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            {detailPanel}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

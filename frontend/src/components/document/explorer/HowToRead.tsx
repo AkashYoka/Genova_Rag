@@ -17,8 +17,8 @@ export function HowToRead() {
         <div>
           <dt className="font-medium text-[var(--gd-text)]">List and Tree</dt>
           <dd className="mt-1 text-[var(--gd-muted)]">
-            List is a flat numbered index. Tree shows nested sections without a
-            diagram.
+            List is a flat numbered index. Tree is a visual map of document
+            parts and how they nest — not an entity knowledge graph.
           </dd>
         </div>
         <div>
