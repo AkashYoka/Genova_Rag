@@ -103,25 +103,50 @@ def collect_candidate_tables(
         tid = str(chunk.get("table_id") or table.get("table_id") or "").strip()
         if not tid or not table:
             continue
+        cur_score = float(chunk.get("score") or chunk.get("confidence") or 0)
+        cur_caption = str(
+            table.get("caption") or chunk.get("caption") or ""
+        ).strip()
+        if cur_caption and not str(table.get("caption") or "").strip():
+            table = dict(table)
+            table["caption"] = cur_caption
         if tid not in best:
             order.append(tid)
             best[tid] = {
                 "chunk": chunk,
                 "table": table,
                 "table_id": tid,
-                "score": float(chunk.get("score") or chunk.get("confidence") or 0),
+                "score": cur_score,
             }
             continue
         prev = best[tid]
+        prev_table = prev.get("table") or {}
         cur_rows = len(table.get("rows") or [])
-        prev_rows = len(prev["table"].get("rows") or [])
-        cur_score = float(chunk.get("score") or chunk.get("confidence") or 0)
+        prev_rows = len(prev_table.get("rows") or [])
+        prev_caption = str(
+            prev_table.get("caption") or (prev.get("chunk") or {}).get("caption") or ""
+        ).strip()
+        # Never let a higher-scoring empty-caption retrieval wipe a recovered title.
+        if cur_caption and not prev_caption:
+            merged = dict(prev_table)
+            merged.update({k: v for k, v in table.items() if k != "caption" or v})
+            merged["caption"] = cur_caption
+            best[tid] = {
+                "chunk": chunk,
+                "table": merged,
+                "table_id": tid,
+                "score": max(cur_score, float(prev.get("score") or 0)),
+            }
+            continue
         if cur_rows > prev_rows or (
             cur_rows == prev_rows and cur_score > prev["score"]
         ):
+            merged = dict(table)
+            if prev_caption and not cur_caption:
+                merged["caption"] = prev_caption
             best[tid] = {
                 "chunk": chunk,
-                "table": table,
+                "table": merged,
                 "table_id": tid,
                 "score": cur_score,
             }
@@ -131,6 +156,36 @@ def collect_candidate_tables(
     else:
         ordered = sorted(ordered, key=lambda item: item["score"], reverse=True)
     return ordered[: max(1, int(top_k or 4))]
+
+
+# Age/cohort words are scored via ``_age_prior`` only. Including them in
+# distinctive caption hits lets "Adult X" questions prefer an unrelated
+# sibling whose caption merely says "Adult …" over the indication-matched table.
+_AGE_COHORT_TOKENS = frozenset(
+    {
+        "adult",
+        "adults",
+        "adolescent",
+        "adolescents",
+        "pediatric",
+        "paediatric",
+        "child",
+        "children",
+        "infant",
+        "infants",
+        "neonate",
+        "neonates",
+        "neonatal",
+        "geriatric",
+        "elderly",
+        "years",
+        "year",
+        "age",
+        "ages",
+        "older",
+        "younger",
+    }
+)
 
 
 def scope_rank_candidates(
@@ -147,6 +202,8 @@ def scope_rank_candidates(
         _tokens,
         build_table_applicability,
         question_age_constraints,
+        question_table_number,
+        table_number_match,
         _bound_compatible,
         _header_units,
     )
@@ -160,13 +217,29 @@ def scope_rank_candidates(
         return items
 
     q = question or ""
-    q_tokens = _tokens(q)
+    q_tokens = _tokens(q) - _AGE_COHORT_TOKENS
     age_bounds = question_age_constraints(q)
+    table_num = question_table_number(q)
     axis_units = {
         (c.unit or "").lower().replace(" ", "")
         for c in extract_numeric_constraints(q)
         if c.role == ROLE_AXIS and c.unit
     }
+
+    # Hard preference: when the question cites Table N and at least one candidate
+    # caption matches, drop non-matching siblings (domain-agnostic).
+    if table_num:
+        matched_num = [
+            item
+            for item in items
+            if table_number_match(
+                item.get("table") or {},
+                item.get("chunk") or {},
+                table_num,
+            )
+        ]
+        if matched_num:
+            items = matched_num
 
     enriched: List[Dict[str, Any]] = []
     for item in items:
@@ -181,14 +254,13 @@ def scope_rank_candidates(
         axis_overlap = len(axis_units & header_units) if axis_units else 0
         caption = str(table.get("caption") or chunk.get("caption") or "")
         scope_tokens = set(profile.purpose_tokens or set()) | _tokens(caption)
+        scope_tokens |= set(profile.cue_tokens or set())
         for val in (profile.attributes or {}).values():
             scope_tokens |= _tokens(str(val))
-        # Light cue that this looks like a dosing/lookup matrix vs AE prose table.
         dosing_like = 1.0 if re.search(
             r"(?i)\b(dose|doses|dosing|dosage|recommended|schedule|regimen)\b",
             caption + " " + " ".join(profile.cues[:4]),
         ) else 0.0
-        # Soft age-band prior when the question implies adult vs pediatric cohort.
         age_prior = 0.0
         cap_low = caption.lower()
         q_low = q.lower()
@@ -217,11 +289,17 @@ def scope_rank_candidates(
             age_prior -= 1.5
         if pediatric_q and adult_t and not pediatric_t:
             age_prior -= 1.0
-        # Soft applicability prior from distinctive caption tokens already in scope
-        # (no fixed disease/product whitelist — domain-agnostic).
+        # Prefer earlier pages among otherwise equal siblings (primary tables).
+        try:
+            page_key = int(
+                table.get("page")
+                or table.get("page_start")
+                or chunk.get("page")
+                or 10_000
+            )
+        except (TypeError, ValueError):
+            page_key = 10_000
         indication_prior = 0.0
-        # Prefer tables whose distinctive scope tokens appear in the question.
-        # Computed after enrichment loop via _q_hit; seed lightly here from overlap.
         if scope_tokens & q_tokens:
             indication_prior += 0.5
         enriched.append(
@@ -232,6 +310,7 @@ def scope_rank_candidates(
                 "_dosing_like": dosing_like,
                 "_age_prior": age_prior,
                 "_indication_prior": indication_prior,
+                "_page_key": page_key,
                 "_caption": caption,
             }
         )
@@ -239,25 +318,23 @@ def scope_rank_candidates(
     if not enriched:
         return list(items)  # age filter emptied — keep original rather than fail closed
 
-    # Distinctive tokens per table relative to siblings (soft signal only).
     for item in enriched:
         others: set = set()
         for other in enriched:
             if other is item:
                 continue
             others |= other["_scope_tokens"]
-        distinctive = item["_scope_tokens"] - others
+        # Content tokens only — age/cohort handled by ``_age_prior``.
+        distinctive = (item["_scope_tokens"] - others) - _AGE_COHORT_TOKENS
+        content_scope = item["_scope_tokens"] - _AGE_COHORT_TOKENS
         item["_q_hit"] = distinctive & q_tokens
-        item["_q_overlap"] = item["_scope_tokens"] & q_tokens
+        item["_q_overlap"] = content_scope & q_tokens
 
-    # Prefer matrices that host the query axis units (any unit pair).
     if axis_units:
         with_axes = [item for item in enriched if item["_axis_overlap"] > 0]
         if with_axes:
             enriched = with_axes
 
-    # Soft preference: among axis-compatible tables, boost distinctive
-    # question↔caption token hits — do NOT hard-drop zero-hit siblings.
     for item in enriched:
         hit = len(item.get("_q_hit") or ())
         if hit:
@@ -267,13 +344,14 @@ def scope_rank_candidates(
     ranked = sorted(
         enriched,
         key=lambda item: (
-            float(item.get("_axis_overlap") or 0),
             float(item.get("_indication_prior") or 0),
-            float(item.get("_dosing_like") or 0),
             float(item.get("_age_prior") or 0),
+            float(item.get("_axis_overlap") or 0),
+            float(item.get("_dosing_like") or 0),
             len(item.get("_q_hit") or ()),
             len(item.get("_q_overlap") or ()),
             float(item.get("score") or 0),
+            -float(item.get("_page_key") or 10_000),
         ),
         reverse=True,
     )
@@ -285,12 +363,13 @@ def scope_rank_candidates(
                 "table": item.get("table"),
                 "table_id": item.get("table_id"),
                 "score": float(item.get("score") or 0)
-                + 5.0 * float(item.get("_axis_overlap") or 0)
                 + 6.0 * float(item.get("_indication_prior") or 0)
+                + 5.0 * float(item.get("_axis_overlap") or 0)
                 + 4.0 * float(item.get("_dosing_like") or 0)
                 + 3.0 * float(item.get("_age_prior") or 0)
                 + 3.0 * len(item.get("_q_hit") or ())
-                + 0.5 * len(item.get("_q_overlap") or ()),
+                + 0.5 * len(item.get("_q_overlap") or ())
+                - 0.1 * float(item.get("_page_key") or 0),
             }
         )
     return out
@@ -702,18 +781,37 @@ def expand_document_sibling_chunks(
             continue
         for row in rows or []:
             tid = str(row.get("table_id") or "").strip()
-            if not tid or tid in seen:
+            if not tid:
                 continue
             table = dict(row.get("table") or {})
             if not table.get("rows"):
                 continue
             table.setdefault("table_id", tid)
-            table.setdefault("caption", row.get("caption") or "")
+            # Prefer non-empty SQL caption/understanding over stale empty
+            # values left in retrieved Chroma payloads.
+            sql_caption = str(row.get("caption") or "").strip()
+            if sql_caption:
+                table["caption"] = sql_caption
+            else:
+                table.setdefault("caption", "")
             table.setdefault("page", row.get("page_start"))
-            if row.get("llm_understanding") and not table.get("llm_understanding"):
+            if row.get("llm_understanding"):
                 table["llm_understanding"] = row.get("llm_understanding")
             units = _header_units(table)
             caption = str(table.get("caption") or row.get("caption") or "")
+            # Patch already-retrieved siblings that arrived with empty captions.
+            if tid in seen:
+                if sql_caption:
+                    for existing in out:
+                        if str(existing.get("table_id") or "") != tid:
+                            continue
+                        existing["caption"] = sql_caption
+                        et = dict(existing.get("table") or {})
+                        et["caption"] = sql_caption
+                        if row.get("llm_understanding"):
+                            et["llm_understanding"] = row.get("llm_understanding")
+                        existing["table"] = et
+                continue
             # Keep matrices with axis units or any non-empty caption (domain-agnostic).
             if not caption.strip() and len(units) < 1:
                 continue
@@ -751,15 +849,41 @@ def interpret_with_selector(
     settings = settings or get_settings()
     top_k = int(getattr(settings, "TABLE_RAG_SELECTOR_TOP_K", 4) or 4)
     expanded = expand_document_sibling_chunks(chunks)
-    # Oversample then scope-rank so indication/cohort siblings are filtered.
-    raw = collect_candidate_tables(
-        expanded, top_k=max(top_k * 4, 12), question=""
-    )
+    # Rank the full expanded sibling pool before truncating by retrieval score.
+    pool_k = max(len(expanded), top_k * 8, 32)
+    raw = collect_candidate_tables(expanded, top_k=pool_k, question="")
     candidates = scope_rank_candidates(question, raw)[: max(1, top_k)]
     if not candidates:
         candidates = collect_candidate_tables(
             expanded, top_k=top_k, question=question
         )
+    # When the top caption-scoped table already yields a unique axis cell,
+    # prefer Python over the LLM sibling choice.
+    if candidates:
+        try:
+            from app.rag.generation.structured_lookup import lookup_cell_in_table
+
+            scoped = candidates[0]
+            deterministic = lookup_cell_in_table(
+                coerce_table_dict(scoped.get("table")),
+                question,
+                filename=str((scoped.get("chunk") or {}).get("filename") or ""),
+                page=(scoped.get("table") or {}).get("page"),
+            )
+            if isinstance(deterministic, VerifiedCell):
+                decision = TableLookupDecision(
+                    status="matched",
+                    table_id=str(scoped.get("table_id") or ""),
+                    row_index=deterministic.row_index,
+                    col_index=deterministic.col_index,
+                    rationale="deterministic_scope_rank_axis_lookup",
+                )
+                evidence = dict(deterministic.evidence or {})
+                evidence["verification"] = "python_scope_rank_deterministic"
+                deterministic.evidence = evidence
+                return deterministic, decision, candidates
+        except Exception as exc:
+            logger.warning("Deterministic scope-rank lookup failed: %s", exc)
     decision = select_table_coordinates_llm(
         question, candidates, client=client, settings=settings
     )

@@ -45,7 +45,12 @@ def _row_to_dict(row: Any) -> Dict[str, Any]:
         "low_confidence_cells",
         _json_load(row.low_confidence_json, default=[]) or [],
     )
-    table_json.setdefault("caption", row.caption or "")
+    # Always prefer the SQL caption column — Chroma/table_json may still hold
+    # an empty string from pre-recovery extracts.
+    if row.caption:
+        table_json["caption"] = row.caption
+    else:
+        table_json.setdefault("caption", "")
     table_json.setdefault("extraction_method", row.extraction_method or "")
     pages = _json_load(getattr(row, "pages_json", None), default=None)
     if not isinstance(pages, list) or not pages:

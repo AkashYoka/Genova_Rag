@@ -219,6 +219,53 @@ def test_scope_rank_prefers_indication_matched_dosing_table():
     # Pediatric cohort must be age-filtered out for a 40-year-old.
     assert all(c["table_id"] != "t_peds" for c in ranked)
 
+    # "Adult <indication>" must not let the word Adult alone promote a sibling
+    # whose caption merely says Adult + a different indication.
+    adult_phrased = scope_rank_candidates(
+        "Adult asthma, 80 kg, IgE 250 IU/mL prescribed 75 mg every 4 weeks. "
+        "Classify dosing deviation.",
+        raw,
+    )
+    assert adult_phrased, "expected scoped candidates for Adult asthma phrasing"
+    assert adult_phrased[0]["table_id"] == "t_asthma"
+
+
+def test_scope_rank_hard_prefers_cited_table_number():
+    """Explicit ``Table N`` in the question must beat higher-scoring siblings."""
+    t1 = {
+        "table_id": "t1",
+        "page": 5,
+        "caption": "Table 1. Rates for Cohort A Ages 12 and Older",
+        "headers": ["Assay", "30-60 kg", ">70-90 kg"],
+        "rows": [[">300-400", "225", "300"]],
+        "llm_understanding": {
+            "purpose": "Table 1. Rates for Cohort A Ages 12 and Older",
+            "applicability_cues": ["Table 1. Rates for Cohort A Ages 12 and Older"],
+        },
+    }
+    t4 = {
+        "table_id": "t4",
+        "page": 8,
+        "caption": "Table 4. Rates for Mixed Adult and Pediatric Cohort",
+        "headers": ["Assay", ">=10-12 kg", ">70-80 kg"],
+        "rows": [[">300-400", "150", "600"]],
+        "llm_understanding": {
+            "purpose": "Table 4. Rates for Mixed Adult and Pediatric Cohort",
+            "applicability_cues": ["Table 4. Rates for Mixed Adult and Pediatric Cohort"],
+        },
+    }
+    chunks = [
+        {"table_id": "t4", "table": t4, "score": 0.99, "caption": t4["caption"], "page": 8},
+        {"table_id": "t1", "table": t1, "score": 0.2, "caption": t1["caption"], "page": 5},
+    ]
+    ranked = scope_rank_candidates(
+        "According to Table 1 for persons 12 years and older, what value for "
+        "assay 350 and body weight 78 kg?",
+        collect_candidate_tables(chunks, top_k=4, question=""),
+    )
+    assert ranked[0]["table_id"] == "t1"
+    assert all(c["table_id"] != "t4" for c in ranked)
+
 
 # ── 3. Multi-page stitching ──────────────────────────────────────────────────
 

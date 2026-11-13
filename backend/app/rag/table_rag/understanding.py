@@ -548,6 +548,31 @@ def _section_path_for_block(nodes: Sequence[Any], block_id: str) -> str:
     return ""
 
 
+def _caption_from_surrounding(surrounding_text: str) -> str:
+    """Domain-agnostic: pick ``Table/Figure/Exhibit N. …`` from neighbor text."""
+    text = str(surrounding_text or "").strip()
+    if not text:
+        return ""
+    try:
+        from app.rag.ingestion.pdf_layout.caption_recovery import (
+            _CAPTION_LEAD_RE,
+            _merge_caption_lines,
+        )
+    except Exception:
+        return ""
+    # Surrounding is joined with " | "; scan segments and full string.
+    segments = [s.strip() for s in re.split(r"\s*\|\s*", text) if s.strip()]
+    for seg in segments:
+        if _CAPTION_LEAD_RE.match(seg):
+            return _merge_caption_lines([seg])
+    match = _CAPTION_LEAD_RE.search(text)
+    if match:
+        # Take from match start through ~320 chars of the surrounding blob.
+        start = match.start()
+        return _merge_caption_lines([text[start : start + 320]])
+    return ""
+
+
 def _surrounding_text(
     blocks: Sequence[Any],
     table_block: Any,
@@ -649,6 +674,16 @@ def understand_document_tables(
             " > ".join(p for p in (block.section, block.subsection) if p)
         )
         surrounding = _surrounding_text(blocks, block)
+        # If extraction left caption empty, lift a titled line from neighbors
+        # so applicability cues are not just the generic section name.
+        if not str(table.get("caption") or "").strip():
+            recovered = _caption_from_surrounding(surrounding)
+            if recovered:
+                table["caption"] = recovered
+                try:
+                    block.table = dict(table)
+                except Exception:
+                    pass
         payload = build_table_prompt_payload(
             table,
             block_id=block.block_id,

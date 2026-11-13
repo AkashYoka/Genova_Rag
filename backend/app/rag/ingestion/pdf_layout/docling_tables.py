@@ -541,6 +541,27 @@ def extract_tables_from_pdf(
                 logger.debug("Skipping Docling table %s: %s", ordinal, exc)
                 continue
             if td:
+                # Docling often leaves caption empty even when the PDF has
+                # "Table N. …" above the grid — recover from page geometry.
+                if not (td.caption or "").strip():
+                    try:
+                        from app.rag.ingestion.pdf_layout.caption_recovery import (
+                            enrich_table_caption,
+                        )
+
+                        enrich_table_caption(
+                            td,
+                            filepath=filepath,
+                            document=document,
+                            docling_table=table,
+                        )
+                    except Exception as cap_exc:
+                        logger.debug(
+                            "Caption recovery skipped for page %s table %s: %s",
+                            page,
+                            ordinal,
+                            cap_exc,
+                        )
                 out.append(td)
 
     if not out and batch_errors:

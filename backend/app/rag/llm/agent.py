@@ -855,6 +855,21 @@ def _reconcile_answer_with_verified_cell(
         or (meta.get("evidence") or {}).get("prescribed_value") is not None
     )
     is_calculation = bool(meta.get("calculation"))
+    # Attach a value unit from headers when the cell is a bare number (e.g. Dose (mg)).
+    if raw_val and not re.search(r"[A-Za-z%]", raw_val):
+        blob = " ".join(
+            str(x or "")
+            for x in (meta.get("col_headers"), meta.get("row_headers"), meta.get("headers"))
+        )
+        um = re.search(
+            r"(?i)(?:dose|amount|value|price|cost|limit)\s*\(\s*(mg|g|ml|%|usd|eur)\s*\)"
+            r"|\(\s*(mg|ml|%|usd|eur)\s*\)",
+            blob,
+        )
+        if um:
+            unit = um.group(1) or um.group(2)
+            if unit and unit.lower() not in raw_val.lower():
+                raw_val = f"{raw_val} {unit}"
     m_val = re.search(r"(-?\d+(?:\.\d+)?)", raw_val)
     if not m_val:
         # Non-numeric verified token — require verbatim presence.

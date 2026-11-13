@@ -257,6 +257,34 @@ def build_table_applicability(
     )
 
 
+_TABLE_NUM_RE = re.compile(r"(?i)\btable\s+(\d+)\b")
+
+
+def question_table_number(question: str) -> Optional[str]:
+    """Return explicit ``Table N`` cited in the question, if any."""
+    m = _TABLE_NUM_RE.search(question or "")
+    return m.group(1) if m else None
+
+
+def table_number_match(
+    table: Dict[str, Any],
+    chunk: Optional[Dict[str, Any]],
+    num: str,
+) -> bool:
+    """True when caption/section/headers mention the same Table N."""
+    chunk = chunk or {}
+    blobs = [
+        str(table.get("caption") or ""),
+        str(chunk.get("caption") or ""),
+        str(chunk.get("section") or ""),
+        str(table.get("section") or ""),
+    ]
+    for h in table.get("headers") or []:
+        blobs.append(str(h or ""))
+    blob = " ".join(blobs)
+    return bool(re.search(rf"(?i)\btable\s+{re.escape(str(num))}\b", blob))
+
+
 def _extract_bound_ranges_from_text(cue: str) -> List[ParsedRange]:
     """Parse unit-tagged applicability intervals from free text (e.g. years)."""
     ranges: List[ParsedRange] = []
