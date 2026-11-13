@@ -1,4 +1,4 @@
-"""Parser integration tests for the Textract-only table extraction path."""
+"""Parser integration tests for Docling-primary / Textract-fallback table path."""
 from __future__ import annotations
 
 import json
@@ -19,15 +19,18 @@ def _make_text_pdf(path, text: str = "This is a normal paragraph for layout pars
     doc.close()
 
 
-def _fake_table() -> TableData:
+def _fake_table(*, method: str = "textract_detect") -> TableData:
     return TableData(
         page=1,
         bbox=BBox(60.0, 200.0, 300.0, 260.0),
         headers=["Metric", "Value"],
         rows=[["Alpha", "10"]],
-        extraction_method="textract",
+        extraction_method=method,
+        extraction_engine=method,
         caption="Table 1. Demo",
         header_rows=[["Metric", "Value"]],
+        structure_confidence=0.9,
+        ocr_confidence=99.0,
         cells=[
             {
                 "row_index": 0,
@@ -55,12 +58,16 @@ def _fake_table() -> TableData:
 
 
 @pytest.fixture(autouse=True)
-def _textract_settings(monkeypatch):
+def _hybrid_settings(monkeypatch):
     monkeypatch.setattr(
         parser,
         "get_settings",
         lambda: types.SimpleNamespace(
             PDF_LAYOUT_WRITE_DIAGNOSTICS=False,
+            PDF_DOCLING_TABLES_ENABLED=False,  # force Textract fallback path in these tests
+            PDF_DOCLING_TABLEFORMER_MODE="accurate",
+            # Hybrid-path tests must opt into fallback (Docling-only default is false).
+            PDF_TEXTRACT_FALLBACK_ENABLED=True,
             PDF_TEXTRACT_TABLES_ENABLED=True,
             PDF_TEXTRACT_TABULAR_ONLY=False,
             PDF_TEXTRACT_REGION="us-east-1",
@@ -71,11 +78,15 @@ def _textract_settings(monkeypatch):
             PDF_CHUNK_OVERLAP=100,
             PDF_TABLE_MAX_CHARS=4000,
             PDF_TABLE_SPLIT_ROWS=40,
+            PDF_TABLE_QUALITY_MIN_COLS=2,
+            PDF_TABLE_QUALITY_MIN_ROWS=1,
+            PDF_TABLE_QUALITY_MAX_EMPTY_CELL_RATIO=0.65,
+            PDF_TABLE_QUALITY_MIN_STRUCTURE_CONFIDENCE=0.35,
         ),
     )
 
 
-def test_parse_pdf_uses_textract_without_legacy_table_fallback(monkeypatch, tmp_path):
+def test_parse_pdf_uses_textract_fallback_when_docling_disabled(monkeypatch, tmp_path):
     pdf_path = tmp_path / "native.pdf"
     _make_text_pdf(pdf_path)
 
@@ -99,12 +110,12 @@ def test_parse_pdf_uses_textract_without_legacy_table_fallback(monkeypatch, tmp_
     parsed = parser.parse_pdf(str(pdf_path), document_name="native.pdf")
 
     report = parsed.report["table_extraction"]
-    assert report["engine"] == "textract"
+    assert report["engine"] == "docling+textract_fallback"
     assert report["table_count"] == 1
     assert report["failure_count"] == 0
     assert calls["textract"] == 1
-    assert parsed.pages[0].metrics["table_source"] == "textract"
-    assert parsed.pages[0].metrics["table_engine"] == "textract"
+    assert parsed.pages[0].metrics["table_source"] == "textract_fallback"
+    assert parsed.pages[0].metrics["table_engine"] == "docling+textract_fallback"
     assert parsed.pages[0].metrics["textract_invoked"] is True
 
     table_chunks = [
@@ -112,13 +123,14 @@ def test_parse_pdf_uses_textract_without_legacy_table_fallback(monkeypatch, tmp_
     ]
     assert table_chunks
     payload = json.loads(table_chunks[0]["table_json"])
-    assert payload["extraction_method"] == "textract"
+    assert payload["extraction_method"] == "textract_detect"
     assert payload["headers"] == ["Metric", "Value"]
     assert payload["rows"] == [["Alpha", "10"]]
     assert "merged_cells" in payload
+    assert "extraction_engine" in payload
 
 
-def test_parse_pdf_reports_textract_failure_without_fallback(monkeypatch, tmp_path):
+def test_parse_pdf_reports_textract_failure_without_legacy_store(monkeypatch, tmp_path):
     pdf_path = tmp_path / "native.pdf"
     _make_text_pdf(pdf_path)
 
@@ -153,5 +165,5 @@ def test_parse_pdf_reports_textract_failure_without_fallback(monkeypatch, tmp_pa
     ]
 
 
-def test_table_engine_is_always_textract():
-    assert parser._table_engine() == "textract"
+def test_table_engine_is_hybrid_docling_textract():
+    assert parser._table_engine() == "docling+textract_fallback"

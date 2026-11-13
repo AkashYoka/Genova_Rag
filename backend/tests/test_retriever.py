@@ -13,9 +13,17 @@ def test_transform_query_includes_original_and_dedupes(monkeypatch):
         ],
     )
 
+    # Default: LLM rewrite OFF — only original (+ deterministic structured variants).
     queries = retriever.transform_query("How do taxes and healthcare work?")
+    assert queries[0] == "How do taxes and healthcare work?"
+    assert "How do taxes work?" not in queries
 
-    assert queries == [
+    # Explicit allow_llm_rewrite enables paraphrases.
+    queries_llm = retriever.transform_query(
+        "How do taxes and healthcare work?",
+        allow_llm_rewrite=True,
+    )
+    assert queries_llm == [
         "How do taxes and healthcare work?",
         "How do taxes work?",
         "How does healthcare work?",
@@ -34,7 +42,11 @@ def test_retrieve_fans_out_transformed_queries_and_merges_duplicates(monkeypatch
     mock_query.filter.return_value.all.return_value = [("doc-1",)]
     monkeypatch.setattr("app.database.SessionLocal", lambda: mock_db)
 
-    monkeypatch.setattr(retriever, "transform_query", lambda _query: ["taxes", "healthcare"])
+    monkeypatch.setattr(
+        retriever,
+        "transform_query",
+        lambda _query, **_kw: ["taxes", "healthcare"],
+    )
     monkeypatch.setattr(retriever, "embed_query", lambda query: f"embedding:{query}")
     monkeypatch.setattr(retriever, "get_reranker", lambda: None)
 
@@ -96,7 +108,9 @@ def test_retrieve_includes_active_but_excludes_deleted(monkeypatch):
     mock_query.filter.return_value.all.return_value = [("doc-active",)]
     monkeypatch.setattr("app.database.SessionLocal", lambda: mock_db)
     
-    monkeypatch.setattr(retriever, "transform_query", lambda _query: ["test"])
+    monkeypatch.setattr(
+        retriever, "transform_query", lambda _query, **_kw: ["test"]
+    )
     monkeypatch.setattr(retriever, "embed_query", lambda query: f"embedding:{query}")
     monkeypatch.setattr(retriever, "get_reranker", lambda: None)
     

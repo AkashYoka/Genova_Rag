@@ -1,16 +1,18 @@
 """Generic matrix/table repair and retrieval-friendly linearization.
 
 Complex PDF tables often use multi-row headers, merged cells, and labels split
-across rows (e.g. Every / 4 / weeks). Native word-alignment extraction can smash
-row labels into one cell and break row×column relationships. This module:
+across rows (e.g. Every / 4 / weeks). Geometry extraction can smash row labels
+into one cell and break row×column relationships. This module:
 
 1. Detects collapsed / low-quality grids.
-2. Optionally repairs a page via Camelot (stream/lattice/network).
-3. Forward-fills fragmented frequency/schedule labels.
+2. Forward-fills fragmented schedule/interval labels.
+3. Promotes range-like header bands.
 4. Emits linearized cell facts for retrieval and LLM context.
+5. Stitches multipage table continuations.
 
-Domain-agnostic: works for any row-label × column-header numeric matrix
-(schedules, rate cards, invoices, lab grids, etc.).
+Domain-agnostic: works for any row-label × column-header matrix
+(schedules, rate cards, invoices, lab grids, engineering specs, etc.).
+No Camelot / third-party table repair.
 """
 from __future__ import annotations
 
@@ -36,7 +38,10 @@ _COMPLETE_FREQ_RE = re.compile(
     r"every\s+\d+\s+(?:weeks?|days?|months?|hours?|hrs?)",
     re.I,
 )
-_NUMERIC_DOSE_RE = re.compile(r"^\d+(?:\.\d+)?(?:\s*mg)?$", re.I)
+# Numeric value cells (optional short unit suffix) — domain-agnostic.
+_NUMERIC_VALUE_RE = re.compile(
+    r"^\d+(?:\.\d+)?(?:\s*[a-zA-Z%/μµ²³]{0,6})?$", re.I
+)
 
 
 @dataclass
@@ -78,7 +83,7 @@ def looks_collapsed_table(
         if not label:
             empty_label += 1
         rest = " ".join(normalize_ws(c) for c in row[1:])
-        if any(_NUMERIC_DOSE_RE.match(normalize_ws(c)) for c in row[1:]):
+        if any(_NUMERIC_VALUE_RE.match(normalize_ws(c)) for c in row[1:]):
             numeric_rows += 1
         elif re.search(r"\b\d{2,4}\b", rest):
             numeric_rows += 1
@@ -147,7 +152,7 @@ def coalesce_frequency_fragments(rows: List[List[str]], freq_col: int = 1) -> Li
 def expand_newline_cells(rows: List[List[str]]) -> List[List[str]]:
     """Split cells that contain newline-stacked values into separate columns when safe.
 
-    Camelot sometimes merges adjacent weight columns into one cell with newlines.
+    Some extractors merge adjacent range columns into one cell with newlines.
     When every stacked cell in a row has the same arity, expand columns.
     """
     if not rows:
@@ -370,32 +375,31 @@ def render_table_with_facts(
     return "\n\n".join(p for p in parts if p)
 
 
-def _promote_weight_headers(raw_rows: List[List[str]]) -> Tuple[List[str], List[List[str]]]:
-    """Prefer a row that looks like body-weight column headers over a sparse title row."""
+def _promote_range_headers(raw_rows: List[List[str]]) -> Tuple[List[str], List[List[str]]]:
+    """Prefer a row rich in range/unit labels over a sparse title row."""
     if len(raw_rows) < 2:
         return raw_rows[0], raw_rows[1:] if len(raw_rows) > 1 else []
 
-    def weight_score(row: Sequence[str]) -> int:
+    def range_header_score(row: Sequence[str]) -> int:
         score = 0
         for cell in row:
             text = normalize_ws(cell)
-            if re.search(r"(?i)\bkg\b", text):
-                score += 2
+            # Any short unit token (kg, %, USD, MPa, …) strengthens header candidacy.
+            if re.search(r"(?i)\b[a-z]{1,6}\b", text) and re.search(r"\d", text):
+                score += 1
             score += len(split_range_labels(text))
         return score
 
     best_i = 0
-    best_score = weight_score(raw_rows[0])
-    # Only look at the first few rows for header promotion.
+    best_score = range_header_score(raw_rows[0])
     for i, row in enumerate(raw_rows[:4]):
-        score = weight_score(row)
+        score = range_header_score(row)
         if score > best_score:
             best_score = score
             best_i = i
     if best_i == 0 or best_score < 2:
         return raw_rows[0], raw_rows[1:]
     headers = list(raw_rows[best_i])
-    # Keep useful labels from earlier header rows when a cell is empty.
     for prior in raw_rows[:best_i]:
         for c, cell in enumerate(prior):
             if c >= len(headers):
@@ -405,113 +409,214 @@ def _promote_weight_headers(raw_rows: List[List[str]]) -> Tuple[List[str], List[
     if not normalize_ws(headers[0]):
         headers[0] = "Row label"
     body = raw_rows[best_i + 1 :]
-    # Drop decorative "Dose (mg)" spacer rows.
+    # Drop sparse unit/banner spacer rows (mostly empty + a unit/label token).
     body = [
         row
         for row in body
         if not (
             sum(1 for c in row if normalize_ws(c)) <= 2
-            and any(re.search(r"(?i)^dose", c or "") for c in row)
+            and any(
+                re.search(r"(?i)^(?:unit|value|amount|total|rate|%|\(\s*[a-z]{1,6}\s*\))$", c or "")
+                for c in row
+            )
         )
     ]
     return headers, body
 
 
-def camelot_tables_for_page(
-    filepath: str,
-    page: int,
+def _norm_header_key(headers: Sequence[str]) -> Tuple[str, ...]:
+    return tuple(normalize_ws(str(h or "")).lower() for h in headers)
+
+
+def _cols_match(a: Sequence[Sequence[str]], b: Sequence[Sequence[str]]) -> bool:
+    def width(grid: Sequence[Sequence[str]]) -> int:
+        if not grid:
+            return 0
+        return max(len(row) for row in grid)
+
+    # Compare header widths when present, else data-row widths.
+    wa = width(a)
+    wb = width(b)
+    return wa > 0 and wa == wb
+
+
+def _headers_repeated(prev_headers: Sequence[str], next_headers: Sequence[str]) -> bool:
+    if not prev_headers or not next_headers:
+        return False
+    return _norm_header_key(prev_headers) == _norm_header_key(next_headers)
+
+
+def _looks_continuation_bbox(
+    prev: Any,
+    nxt: Any,
     *,
-    flavors: Sequence[str] = ("stream", "lattice", "network"),
-) -> List[Dict[str, Any]]:
-    """Extract tables for a single PDF page via Camelot (best-effort)."""
+    page_height_prev: float = 792.0,
+    page_height_next: float = 792.0,
+    bottom_frac: float = 0.28,
+    top_frac: float = 0.35,
+) -> bool:
+    """True when prev sits near page bottom and next near page top."""
+    pb = getattr(prev, "bbox", None)
+    nb = getattr(nxt, "bbox", None)
+    if pb is None or nb is None:
+        # Missing geometry → allow continuation when other signals match.
+        return True
     try:
-        import camelot
-    except Exception as exc:
-        logger.debug("Camelot unavailable for table repair: %s", exc)
+        prev_bottom = float(getattr(pb, "y1", 0) or 0)
+        next_top = float(getattr(nb, "y0", 0) or 0)
+        ph = float(page_height_prev or 792.0)
+        nh = float(page_height_next or 792.0)
+        near_bottom = prev_bottom >= ph * (1.0 - bottom_frac)
+        near_top = next_top <= nh * top_frac
+        return near_bottom and near_top
+    except Exception:
+        return True
+
+
+def _strip_repeated_header_row(
+    prev_headers: Sequence[str],
+    next_headers: Sequence[str],
+    next_rows: List[List[str]],
+) -> Tuple[List[str], List[List[str]], bool]:
+    """If next page repeats leaf headers, drop the duplicate header row."""
+    headers = list(next_headers or [])
+    rows = [list(r) for r in next_rows]
+    if _headers_repeated(prev_headers, headers):
+        return list(prev_headers), rows, True
+    # Continuation with no header row (headers empty / placeholder).
+    if not any(normalize_ws(h) for h in headers):
+        return list(prev_headers), rows, True
+    # First data row equals previous headers → treat as repeated header.
+    if rows and _headers_repeated(prev_headers, [str(c or "") for c in rows[0]]):
+        return list(prev_headers), rows[1:], True
+    return headers, rows, False
+
+
+def stitch_multipage_tables(
+    pages: Sequence[Any],
+) -> List[Any]:
+    """Merge consecutive cross-page table continuations in-place on pages.
+
+    Invoked after Textract extraction + header reconstruction / repair.
+    Two consecutive tables on page N and N+1 are stitched when:
+      (a) normalized column counts match
+      (b) page N+1 repeats identical leaf headers (strip them) OR has no header
+      (c) vertical bboxes indicate page-bottom → page-top continuation
+
+    Mutates ``page.tables`` lists and sets ``table.pages`` on survivors.
+    Returns the flat list of post-stitch tables for convenience.
+    """
+    page_list = list(pages or [])
+    if not page_list:
         return []
 
-    records: List[Dict[str, Any]] = []
-    page_str = str(int(page))
-    for flavor in flavors:
-        try:
-            try:
-                tables = camelot.read_pdf(
-                    filepath,
-                    pages=page_str,
-                    flavor=flavor,
-                    suppress_stdout=True,
-                )
-            except TypeError:
-                tables = camelot.read_pdf(filepath, pages=page_str, flavor=flavor)
-        except Exception as exc:
-            logger.debug("Camelot flavor=%s page=%s failed: %s", flavor, page, exc)
-            continue
-        for table in tables or []:
-            try:
-                df = table.df
-                raw_rows = [[normalize_ws(str(c)) for c in row] for row in df.values.tolist()]
-                raw_rows = [r for r in raw_rows if any(r)]
-                if len(raw_rows) < 2:
-                    continue
-                headers, body = _promote_weight_headers(raw_rows)
-                accuracy = None
-                report = getattr(table, "parsing_report", None) or {}
+    # Ensure every table has a pages list seeded from its page number.
+    for page in page_list:
+        page_h = float((getattr(page, "metrics", None) or {}).get("page_height") or 792.0)
+        for table in list(getattr(page, "tables", None) or []):
+            if not getattr(table, "pages", None):
                 try:
-                    if report.get("accuracy") is not None:
-                        accuracy = float(report["accuracy"])
+                    table.pages = [int(getattr(table, "page", 0) or page.page_number)]
                 except Exception:
-                    pass
-                records.append(
-                    {
-                        "headers": headers,
-                        "rows": body,
-                        "flavor": flavor,
-                        "accuracy": accuracy,
-                        "page": page,
-                        "collapsed": looks_collapsed_table(headers, body),
-                    }
+                    table.pages = [int(getattr(page, "page_number", 1) or 1)]
+            setattr(table, "_page_height", page_h)
+
+    # Walk pages in order; for each table on page N, try to absorb the first
+    # compatible continuation table on page N+1 (same ordinal preference).
+    for idx in range(len(page_list) - 1):
+        cur_page = page_list[idx]
+        next_page = page_list[idx + 1]
+        cur_tables = list(getattr(cur_page, "tables", None) or [])
+        next_tables = list(getattr(next_page, "tables", None) or [])
+        if not cur_tables or not next_tables:
+            continue
+        cur_h = float((getattr(cur_page, "metrics", None) or {}).get("page_height") or 792.0)
+        next_h = float((getattr(next_page, "metrics", None) or {}).get("page_height") or 792.0)
+
+        consumed: set[int] = set()
+        for t_idx, prev in enumerate(cur_tables):
+            prev_headers = list(getattr(prev, "headers", []) or [])
+            prev_rows = [list(r) for r in (getattr(prev, "rows", []) or [])]
+            best_j = -1
+            for j, nxt in enumerate(next_tables):
+                if j in consumed:
+                    continue
+                next_headers = list(getattr(nxt, "headers", []) or [])
+                next_rows = [list(r) for r in (getattr(nxt, "rows", []) or [])]
+                # (a) column counts
+                if not _cols_match(
+                    [prev_headers] + prev_rows if prev_headers else prev_rows,
+                    [next_headers] + next_rows if next_headers else next_rows,
+                ):
+                    # Also accept equal header lengths directly.
+                    if len(prev_headers) != len(next_headers) and not (
+                        next_headers and len(prev_headers) == max(len(r) for r in next_rows or [[]])
+                    ):
+                        if len(prev_headers) != max((len(r) for r in next_rows), default=0):
+                            continue
+                # (b) repeated / missing headers
+                _, stripped_rows, ok_headers = _strip_repeated_header_row(
+                    prev_headers, next_headers, next_rows
                 )
-            except Exception as exc:
-                logger.debug("Skipping Camelot table parse: %s", exc)
-    return records
+                if not ok_headers:
+                    continue
+                # (c) bbox continuation
+                if not _looks_continuation_bbox(
+                    prev, nxt, page_height_prev=cur_h, page_height_next=next_h
+                ):
+                    continue
+                best_j = j
+                # Merge into prev.
+                prev.rows = prev_rows + stripped_rows
+                pages_acc = list(getattr(prev, "pages", None) or [getattr(prev, "page", cur_page.page_number)])
+                nxt_pages = list(getattr(nxt, "pages", None) or [getattr(nxt, "page", next_page.page_number)])
+                for p in nxt_pages:
+                    try:
+                        pages_acc.append(int(p))
+                    except (TypeError, ValueError):
+                        pass
+                prev.pages = sorted(set(int(p) for p in pages_acc))
+                # Carry low-confidence / merged cells with row offset.
+                offset = len(prev_rows)
+                for item in list(getattr(nxt, "low_confidence_cells", None) or []):
+                    if isinstance(item, dict):
+                        adj = dict(item)
+                        if "row" in adj and adj["row"] is not None:
+                            try:
+                                adj["row"] = int(adj["row"]) + offset
+                            except (TypeError, ValueError):
+                                pass
+                        prev.low_confidence_cells = list(
+                            getattr(prev, "low_confidence_cells", None) or []
+                        ) + [adj]
+                for item in list(getattr(nxt, "merged_cells", None) or []):
+                    if isinstance(item, dict):
+                        adj = dict(item)
+                        if adj.get("row_index") is not None:
+                            try:
+                                adj["row_index"] = int(adj["row_index"]) + offset
+                            except (TypeError, ValueError):
+                                pass
+                        prev.merged_cells = list(getattr(prev, "merged_cells", None) or []) + [adj]
+                # Prefer richer caption from the first page.
+                if not getattr(prev, "caption", "") and getattr(nxt, "caption", ""):
+                    prev.caption = nxt.caption
+                consumed.add(j)
+                break
+            if best_j < 0:
+                continue
+        if consumed:
+            next_page.tables = [
+                t for j, t in enumerate(next_tables) if j not in consumed
+            ]
 
-
-def pick_best_camelot_repair(
-    filepath: str,
-    page: int,
-    *,
-    prefer_unCollapsed: bool = True,
-) -> Optional[NormalizedTable]:
-    """Choose the best Camelot extraction for a page and normalize it."""
-    candidates = camelot_tables_for_page(filepath, page)
-    if not candidates:
-        return None
-    scored: List[Tuple[float, Dict[str, Any], NormalizedTable]] = []
-    for cand in candidates:
-        norm = normalize_table_grid(
-            cand["headers"],
-            cand["rows"],
-            method=f"camelot:{cand.get('flavor')}",
-        )
-        score = 0.0
-        if prefer_unCollapsed and not looks_collapsed_table(norm.headers, norm.rows):
-            score += 50.0
-        if cand.get("collapsed"):
-            score -= 30.0
-        score += min(40.0, float(cand.get("accuracy") or 0.0) / 2.5)
-        score += min(30.0, float(len(norm.facts)))
-        # Prefer tables with distinct first-column labels.
-        labels = {normalize_ws(r[0]) for r in norm.rows if r and normalize_ws(r[0])}
-        score += min(20.0, float(len(labels)) * 2.0)
-        scored.append((score, cand, norm))
-    scored.sort(key=lambda t: t[0], reverse=True)
-    best_score, best_cand, best_norm = scored[0]
-    if best_score < 20:
-        return None
-    best_norm.repaired = True
-    best_norm.method = f"camelot:{best_cand.get('flavor')}"
-    best_norm.quality_notes = best_norm.quality_notes + ("camelot_repair",)
-    return best_norm
+    flat: List[Any] = []
+    for page in page_list:
+        for table in list(getattr(page, "tables", None) or []):
+            if not getattr(table, "pages", None):
+                table.pages = [int(getattr(table, "page", page.page_number) or 1)]
+            flat.append(table)
+    return flat
 
 
 def repair_table_data(
@@ -520,27 +625,31 @@ def repair_table_data(
     filepath: Optional[str] = None,
     caption: str = "",
 ) -> Any:
-    """In-place repair of a TableData-like object when collapsed.
+    """In-place structural normalize of a TableData-like object.
 
-    Returns the same object with headers/rows potentially replaced and
-    ``metadata``-style attributes left untouched. Adds ``linearized_facts``
-    onto the object when possible.
+    ``filepath`` is retained for call-site compatibility but is unused — Camelot
+    repair has been removed. Collapsed grids are normalized in-place and flagged
+    via linearized facts / existing quality metadata.
     """
+    del filepath  # no external repair engine
     headers = list(getattr(table, "headers", []) or [])
     rows = [list(r) for r in (getattr(table, "rows", []) or [])]
-    page = int(getattr(table, "page", 0) or 0)
 
-    if looks_collapsed_table(headers, rows) and filepath and page > 0:
-        repaired = pick_best_camelot_repair(filepath, page)
-        if repaired and not looks_collapsed_table(repaired.headers, repaired.rows):
-            table.headers = repaired.headers
-            table.rows = repaired.rows
-            table.extraction_method = repaired.method
-            headers, rows = repaired.headers, repaired.rows
+    if looks_collapsed_table(headers, rows) and rows:
+        headers, rows = _promote_range_headers(
+            [headers] + rows if headers else rows
+        )
 
-    normalized = normalize_table_grid(headers, rows, caption=caption or getattr(table, "caption", "") or "")
-    # Keep normalized frequency fills even when not fully repaired via Camelot.
+    normalized = normalize_table_grid(
+        headers,
+        rows,
+        caption=caption or getattr(table, "caption", "") or "",
+    )
     if normalized.rows and not looks_collapsed_table(normalized.headers, normalized.rows):
+        table.headers = normalized.headers
+        table.rows = normalized.rows
+    elif normalized.rows:
+        # Still apply schedule-fragment fills even when the grid stays sparse.
         table.headers = normalized.headers
         table.rows = normalized.rows
     setattr(table, "linearized_facts", normalized.facts)

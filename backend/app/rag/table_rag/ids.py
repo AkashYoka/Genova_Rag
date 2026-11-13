@@ -4,8 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
 
+from app.rag.table_rag.schema import TablePayload, coerce_table_dict
 
 _WS_RE = re.compile(r"\s+")
 
@@ -58,61 +59,94 @@ def make_table_id(
 
 
 def ensure_table_id(
-    table: Dict[str, Any],
+    table: Union[Dict[str, Any], TablePayload],
     *,
     ordinal: int,
     document_id: str = "",
     page_fallback: int = 1,
 ) -> str:
     """Return existing ``table_id`` or assign one in-place."""
-    existing = str(table.get("table_id") or "").strip()
+    data = coerce_table_dict(table)
+    existing = str(data.get("table_id") or "").strip()
     if existing:
+        if isinstance(table, TablePayload):
+            table.table_id = existing
+        elif isinstance(table, dict):
+            table["table_id"] = existing
         return existing
-    page = int(table.get("page") or page_fallback or 1)
+    page = int(data.get("page") or page_fallback or 1)
     table_id = make_table_id(
         page=page,
         ordinal=ordinal,
-        bbox=table.get("bbox"),
-        headers=table.get("headers") or [],
+        bbox=data.get("bbox"),
+        headers=data.get("headers") or [],
         document_id=document_id,
     )
-    table["table_id"] = table_id
+    if isinstance(table, TablePayload):
+        table.table_id = table_id
+    elif isinstance(table, dict):
+        table["table_id"] = table_id
     return table_id
 
 
-def parse_table_payload(raw: Any) -> Optional[Dict[str, Any]]:
-    """Parse ``table_json`` from chunk metadata into a dict."""
+def parse_table_payload(raw: Any) -> Optional[TablePayload]:
+    """Parse ``table_json`` from chunk/SQL metadata into ``TablePayload``."""
     if raw is None or raw == "":
         return None
-    if isinstance(raw, dict):
-        return dict(raw)
+    data: Any = raw
+    if isinstance(raw, TablePayload):
+        return raw
     if isinstance(raw, str):
         try:
-            parsed = json.loads(raw)
+            data = json.loads(raw)
         except (TypeError, json.JSONDecodeError):
             return None
-        return parsed if isinstance(parsed, dict) else None
-    return None
+    if not isinstance(data, dict):
+        return None
+    try:
+        payload = TablePayload.model_validate(data)
+    except Exception:
+        # Best-effort: keep unknown shapes rather than dropping the grid.
+        try:
+            payload = TablePayload.model_construct(**{
+                k: v for k, v in data.items() if isinstance(k, str)
+            })
+        except Exception:
+            return None
+    # Normalize pages list from page / page_start / page_end when missing.
+    if not payload.pages:
+        pages: List[int] = []
+        for key in ("page", "page_start", "page_end"):
+            try:
+                val = getattr(payload, key, None)
+                if val is not None:
+                    pages.append(int(val))
+            except (TypeError, ValueError):
+                pass
+        payload.pages = sorted(set(pages)) if pages else []
+    return payload
 
 
-def table_fingerprint(table: Dict[str, Any]) -> str:
-    """Content fingerprint used to dedupe split table parts."""
-    headers = [_normalize(h) for h in (table.get("headers") or [])]
-    rows = table.get("rows") or []
+def table_fingerprint(table: Union[Dict[str, Any], TablePayload]) -> str:
+    """Content fingerprint used to group split table parts."""
+    data = coerce_table_dict(table)
+    headers = [_normalize(h) for h in (data.get("headers") or [])]
+    rows = data.get("rows") or []
     # Prefer full-table identity over split-part rows.
-    if table.get("table_id"):
-        return str(table["table_id"])
+    if data.get("table_id"):
+        return str(data["table_id"])
     sample_rows = [
         [_normalize(c) for c in (row or [])]
         for row in rows[:3]
     ]
     payload = {
-        "page": table.get("page"),
+        "page": data.get("page"),
+        "pages": data.get("pages") or [],
         "headers": headers,
         "sample_rows": sample_rows,
-        "bbox": table.get("bbox"),
-        "n_rows": table.get("n_rows"),
-        "n_cols": table.get("n_cols"),
+        "bbox": data.get("bbox"),
+        "n_rows": data.get("n_rows"),
+        "n_cols": data.get("n_cols"),
     }
     return hashlib.sha1(
         json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")

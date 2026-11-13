@@ -87,7 +87,7 @@ def test_validation_flags_unknown_headers_and_low_conf():
 
 
 def test_summary_and_row_include_llm_phrases_without_changing_values():
-    from app.rag.table_rag.representations import table_interpretation_text
+    from app.rag.table_rag.representations import table_card_text, table_interpretation_text
 
     table = _table()
     understanding = TableUnderstanding(
@@ -106,19 +106,17 @@ def test_summary_and_row_include_llm_phrases_without_changing_values():
         confidence=0.8,
     )
     table = apply_understanding_to_table(table, understanding)
-    # Separate embeddings: summary stays structural; interpretation is its own text.
-    summary = table_summary_text(table, section="Dosage", include_llm=False)
-    assert "TABLE SUMMARY" in summary
-    assert ">300-400" in summary  # extracted fact/row still present
-    assert "LLM TABLE INTERPRETATION" not in summary
+    # Production: table_card folds structure + LLM understanding into one surface.
+    card = table_card_text(table, section="Dosage")
+    assert "TABLE CARD" in card
+    assert ">300-400" in card  # extracted fact/row still present
+    assert "LLM TABLE INTERPRETATION" in card
+    assert "Pretreatment assay" in card
+    assert "not cell ground truth" in card.lower()
 
+    # Legacy aliases still work.
     interp = table_interpretation_text(table, section="Dosage")
-    assert "TABLE INTERPRETATION" in interp
     assert "LLM TABLE INTERPRETATION" in interp
-    assert "not cell ground truth" in interp.lower()
-    assert "Pretreatment assay" in interp
-
-    # Legacy combined mode still available when flag is off.
     combined = table_summary_text(table, section="Dosage", include_llm=True)
     assert "LLM TABLE INTERPRETATION" in combined
 
@@ -273,13 +271,15 @@ def test_expand_index_includes_llm_interpretation_text():
     expanded, records = expand_table_rag_chunks(
         [chunk], document_id="doc-1", filename="x.pdf"
     )
-    summaries = [c for c in expanded if c["chunk_type"] == "table_summary"]
+    cards = [
+        c
+        for c in expanded
+        if c["chunk_type"] in ("table_card", "table_summary")
+    ]
     interps = [c for c in expanded if c["chunk_type"] == "table_interpretation"]
-    rows = [c for c in expanded if c["chunk_type"] == "table_row"]
-    assert summaries
-    assert "LLM TABLE INTERPRETATION" not in summaries[0]["text"]
-    assert interps
-    assert "LLM TABLE INTERPRETATION" in interps[0]["text"]
-    assert "index_kind" in interps[0] and interps[0]["index_kind"] == "table_interpretation"
-    assert rows
+    # Interpretation is folded into table_card — no separate chunk.
+    assert cards
+    assert "LLM TABLE INTERPRETATION" in cards[0]["text"]
+    assert cards[0]["index_kind"] in ("table_card", "table_summary")
+    assert not interps
     assert records[0]["table"]["rows"] == table["rows"]

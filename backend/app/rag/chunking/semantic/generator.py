@@ -320,6 +320,15 @@ def generate_chunks(
             group_len = len(context)
 
         for unit in units:
+            unit_blocks = unit.get("blocks") or []
+            is_table_unit = any(getattr(b, "is_table", False) for b in unit_blocks)
+            # Never mix table units with prose in the same chunk — preserve
+            # headers/grid structure and avoid paragraph-style embedding.
+            if is_table_unit:
+                flush()
+                group.append(unit)
+                flush()
+                continue
             unit_len = len(unit["text"]) + 2
             if group and group_len + unit_len > max_chars:
                 flush()
@@ -365,11 +374,20 @@ def _emit_chunk(
     ]
     page_start = min(pages) if pages else 1
     page_end = max(pages) if pages else page_start
-    extraction_method = (
-        "ocr" if any(block.extraction_method == "ocr" for block in used_blocks) else "native"
-    )
-    content_type = _dominant_content_type(used_blocks)
     table_blocks = [block for block in used_blocks if block.is_table]
+    # Prefer table extraction provenance over native/ocr body classification.
+    extraction_method = "native"
+    if table_blocks:
+        table0 = dict(table_blocks[0].table or {})
+        extraction_method = str(
+            table0.get("extraction_engine")
+            or table0.get("extraction_method")
+            or table_blocks[0].extraction_method
+            or "native"
+        )
+    elif any(block.extraction_method == "ocr" for block in used_blocks):
+        extraction_method = "ocr"
+    content_type = _dominant_content_type(used_blocks)
 
     path = list(node.path)
     chunk: Dict[str, Any] = {
@@ -406,33 +424,85 @@ def _emit_chunk(
     if document_name:
         chunk["document_name"] = document_name
 
+    all_table_ids: List[str] = []
+    sibling_chunks: List[Dict[str, Any]] = []
     if table_blocks:
-        table_block = table_blocks[0]
-        table = _complete_table_json(
-            table_block,
-            table_part=next(
-                (unit.get("table_part") for unit in units if unit.get("table_part")),
-                None,
-            ),
-            row_start=next(
-                (unit.get("row_start") for unit in units if unit.get("row_start") is not None),
-                None,
-            ),
-            row_count=next(
-                (unit.get("row_count") for unit in units if unit.get("row_count") is not None),
-                None,
-            ),
-        )
-        table_id = str(table.get("table_id") or "")
-        chunk["table_json"] = json.dumps(table, ensure_ascii=False)
-        if table_id:
-            chunk["table_id"] = table_id
-            chunk["table_index"] = table_index.get(table_id, 0)
-            chunk["table_ids"] = json.dumps([table_id])
-        part = next(
-            (unit.get("table_part") for unit in units if unit.get("table_part")), None
-        )
-        if part is not None:
-            chunk["table_part"] = int(part)
+        # Primary chunk keeps the first table (backward compatible). Extra
+        # tables in the same section are emitted as sibling table chunks so
+        # TableRAG expand/persist does not drop invoice line-item grids.
+        for ti, table_block in enumerate(table_blocks):
+            table = _complete_table_json(
+                table_block,
+                table_part=(
+                    next(
+                        (unit.get("table_part") for unit in units if unit.get("table_part")),
+                        None,
+                    )
+                    if ti == 0
+                    else None
+                ),
+                row_start=(
+                    next(
+                        (
+                            unit.get("row_start")
+                            for unit in units
+                            if unit.get("row_start") is not None
+                        ),
+                        None,
+                    )
+                    if ti == 0
+                    else None
+                ),
+                row_count=(
+                    next(
+                        (
+                            unit.get("row_count")
+                            for unit in units
+                            if unit.get("row_count") is not None
+                        ),
+                        None,
+                    )
+                    if ti == 0
+                    else None
+                ),
+            )
+            table_id = str(table.get("table_id") or "")
+            if table_id:
+                all_table_ids.append(table_id)
+            if ti == 0:
+                chunk["table_json"] = json.dumps(table, ensure_ascii=False)
+                if table_id:
+                    chunk["table_id"] = table_id
+                    chunk["table_index"] = table_index.get(table_id, 0)
+                part = next(
+                    (unit.get("table_part") for unit in units if unit.get("table_part")),
+                    None,
+                )
+                if part is not None:
+                    chunk["table_part"] = int(part)
+                continue
+
+            sibling = dict(chunk)
+            sibling_text = (table_block.text or "").strip() or json.dumps(
+                table.get("headers") or [], ensure_ascii=False
+            )
+            sibling["text"] = sibling_text
+            sibling["chunk_type"] = "table"
+            sibling["content_type"] = "table"
+            sibling["table_json"] = json.dumps(table, ensure_ascii=False)
+            sibling["page"] = int(table_block.page_start or page_start)
+            sibling["page_start"] = int(table_block.page_start or page_start)
+            sibling["page_end"] = int(table_block.page_end or page_end)
+            sibling["source_block_ids"] = json.dumps([table_block.block_id])
+            if table_id:
+                sibling["table_id"] = table_id
+                sibling["table_index"] = table_index.get(table_id, 0)
+                sibling["table_ids"] = json.dumps([table_id])
+            sibling.pop("table_part", None)
+            sibling_chunks.append(sibling)
+
+        if all_table_ids:
+            chunk["table_ids"] = json.dumps(all_table_ids)
 
     chunks.append(chunk)
+    chunks.extend(sibling_chunks)

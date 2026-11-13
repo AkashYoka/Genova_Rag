@@ -1,11 +1,13 @@
-"""AWS Textract TABLES → TableData for Genova RAG.
+"""AWS Textract DetectDocumentText → geometry tables → TableData.
 
 Sole production structured-table extractor. The parser gates calls via
 ``_page_looks_tabular`` (when ``PDF_TEXTRACT_TABULAR_ONLY``) so ordinary text
 pages never hit AWS.
 
-Uses AnalyzeDocument(FeatureTypes=["TABLES"]) on a per-page PNG.
-IAM: textract:AnalyzeDocument. Cost ~$0.015/page analyzed.
+Uses DetectDocumentText on a per-page PNG (~$1.50 / 1,000 pages), then
+reconstructs row/column structure from WORD/LINE bounding boxes via the
+existing ``table_from_words`` / header-reconstruction path.
+IAM: textract:DetectDocumentText.
 
 On client/API errors the parser records ``textract_error`` and leaves tables
 empty — there is no img2table or Tesseract table fallback. Body text is never
@@ -22,14 +24,22 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from botocore.config import Config
 
 from app.config import get_settings
+from app.rag.ingestion.pdf_layout.analyzer import (
+    alignment_table_regions,
+    detect_ruled_table_boxes,
+    extract_grid_positions,
+    table_from_words,
+    words_to_lines,
+)
 from app.rag.ingestion.pdf_layout.header_reconstruction import (
     reconstruct_table_headers_cached,
 )
-from app.rag.ingestion.pdf_layout.types import BBox, TableData, normalize_ws
+from app.rag.ingestion.pdf_layout.types import BBox, TableData, TextWord, normalize_ws
 
 logger = logging.getLogger(__name__)
 
 _textract_client = None
+_EXTRACTION_METHOD = "textract_detect"
 
 
 def _textract_region() -> str:
@@ -102,54 +112,89 @@ def _geometry_to_pdf_bbox(
     )
 
 
-def _cell_text_from_block(
-    cell: Dict[str, Any],
-    blocks_by_id: Dict[str, Dict[str, Any]],
-) -> str:
-    texts: List[str] = []
-    for rel in cell.get("Relationships") or []:
-        if rel.get("Type") != "CHILD":
+def words_from_detect_blocks(
+    blocks: Sequence[Dict[str, Any]],
+    *,
+    page_number: int,
+    page_width: float,
+    page_height: float,
+    min_confidence: float = 0.0,
+) -> List[TextWord]:
+    """Convert DetectDocumentText WORD blocks into positioned TextWord objects."""
+    words: List[TextWord] = []
+    for block in blocks:
+        if block.get("BlockType") != "WORD":
             continue
-        for child_id in rel.get("Ids") or []:
-            child = blocks_by_id.get(child_id) or {}
-            btype = child.get("BlockType")
-            if btype == "WORD":
-                texts.append(str(child.get("Text") or ""))
-            elif btype == "SELECTION_ELEMENT" and child.get("SelectionStatus") == "SELECTED":
-                texts.append("X")
-    return normalize_ws(" ".join(t for t in texts if t))
-
-
-def _merged_span_map(
-    table_block: Dict[str, Any],
-    blocks_by_id: Dict[str, Dict[str, Any]],
-) -> Dict[Tuple[int, int], Tuple[int, int, str]]:
-    """Map (row, col) → (row_span, col_span, text) for merged cells."""
-    spans: Dict[Tuple[int, int], Tuple[int, int, str]] = {}
-    for rel in table_block.get("Relationships") or []:
-        if rel.get("Type") != "MERGED_CELL":
+        text = normalize_ws(str(block.get("Text") or ""))
+        if not text:
             continue
-        for mid in rel.get("Ids") or []:
-            merged = blocks_by_id.get(mid) or {}
-            if merged.get("BlockType") != "MERGED_CELL":
-                continue
-            row = int(merged.get("RowIndex") or 0)
-            col = int(merged.get("ColumnIndex") or 0)
-            row_span = max(1, int(merged.get("RowSpan") or 1))
-            col_span = max(1, int(merged.get("ColumnSpan") or 1))
-            text = _cell_text_from_block(merged, blocks_by_id)
-            if row < 1 or col < 1:
-                continue
-            for r in range(row, row + row_span):
-                for c in range(col, col + col_span):
-                    spans[(r, c)] = (row_span if (r, c) == (row, col) else 0, col_span if (r, c) == (row, col) else 0, text)
-            spans[(row, col)] = (row_span, col_span, text)
-    return spans
+        conf = float(block.get("Confidence") or 0.0)
+        if conf < min_confidence:
+            continue
+        bbox = _geometry_to_pdf_bbox(
+            block.get("Geometry") or {},
+            page_width=page_width,
+            page_height=page_height,
+        )
+        if bbox.area <= 0:
+            continue
+        words.append(
+            TextWord(
+                text=text,
+                bbox=bbox,
+                page=page_number,
+                confidence=conf,
+            )
+        )
+    return words
 
 
-def _is_header_cell(cell: Dict[str, Any]) -> bool:
-    entity = cell.get("EntityTypes") or []
-    return "COLUMN_HEADER" in entity or "TABLE_TITLE" in entity
+def lines_from_detect_blocks(
+    blocks: Sequence[Dict[str, Any]],
+    *,
+    page_number: int,
+    page_width: float,
+    page_height: float,
+) -> List[Tuple[str, BBox]]:
+    """LINE blocks with PDF bboxes (region hints / diagnostics)."""
+    lines: List[Tuple[str, BBox]] = []
+    for block in blocks:
+        if block.get("BlockType") != "LINE":
+            continue
+        text = normalize_ws(str(block.get("Text") or ""))
+        if not text:
+            continue
+        bbox = _geometry_to_pdf_bbox(
+            block.get("Geometry") or {},
+            page_width=page_width,
+            page_height=page_height,
+        )
+        if bbox.area <= 0:
+            continue
+        lines.append((text, bbox))
+    return lines
+
+
+_BANNER_TOKEN_RE = re.compile(
+    r"(?i)^(?:dose|value|amount|unit|rate|freq(?:uency)?|"
+    r"total|count|%|\(\s*[a-zμµ/%]{1,6}\s*\))$"
+)
+
+
+def _is_label_banner_row(row: Sequence[str]) -> bool:
+    """Detect non-data banner rows like blank|blank|Dose|(mg)|blank."""
+    cells = [normalize_ws(c) for c in row]
+    nonempty = [c for c in cells if c]
+    if len(nonempty) < 2 or len(nonempty) > max(3, len(cells) // 3):
+        return False
+    if cells and cells[0]:
+        return False
+    for cell in nonempty:
+        if re.search(r"\d", cell) and not cell.startswith("("):
+            return False
+        if not _BANNER_TOKEN_RE.match(cell):
+            return False
+    return True
 
 
 def _leaf_headers(header_rows: Sequence[Sequence[str]]) -> List[str]:
@@ -171,8 +216,6 @@ def _leaf_headers(header_rows: Sequence[Sequence[str]]) -> List[str]:
         if not parts:
             leaves.append(f"Column {c + 1}")
             continue
-        # Prefer the most specific trailing label when earlier parts are generic
-        # category words without digits (avoids "Body > >60-70 kg" noise).
         child = parts[-1]
         if len(parts) >= 2 and re.search(r"\d", child) and not re.search(r"\d", parts[0]):
             leaves.append(child)
@@ -181,62 +224,459 @@ def _leaf_headers(header_rows: Sequence[Sequence[str]]) -> List[str]:
     return leaves
 
 
-_BANNER_TOKEN_RE = re.compile(
-    r"(?i)^(?:dose|value|amount|unit|rate|freq(?:uency)?|"
-    r"total|count|%|\(\s*[a-zμµ/%]{1,6}\s*\))$"
+def _merge_soft_continuation_rows(rows: Sequence[Sequence[str]]) -> List[List[str]]:
+    """Merge multi-line cell wraps where a following row continues empty columns."""
+    if not rows:
+        return []
+    out: List[List[str]] = [list(rows[0])]
+    for raw in rows[1:]:
+        prev = list(out[-1])
+        row = list(raw)
+        width = max(len(prev), len(row))
+        prev.extend([""] * (width - len(prev)))
+        row.extend([""] * (width - len(row)))
+
+        nonempty_idx = [i for i, c in enumerate(row) if normalize_ws(c)]
+        # Only merge when the leading key cell is empty — a true multi-line wrap.
+        if not nonempty_idx or normalize_ws(row[0]):
+            out.append(row)
+            continue
+
+        if all(not normalize_ws(prev[i]) for i in nonempty_idx):
+            for i in nonempty_idx:
+                prev[i] = normalize_ws(row[i])
+            out[-1] = prev
+            continue
+
+        # Soft wrap into prior cells that are empty or hyphen-truncated.
+        if all(
+            (not normalize_ws(prev[i])) or prev[i].endswith("-")
+            for i in nonempty_idx
+        ):
+            for i in nonempty_idx:
+                left = normalize_ws(prev[i])
+                right = normalize_ws(row[i])
+                if not right:
+                    continue
+                if left.endswith("-"):
+                    prev[i] = left[:-1] + right
+                else:
+                    prev[i] = normalize_ws(f"{left} {right}" if left else right)
+            out[-1] = prev
+            continue
+
+        out.append(row)
+    return out
+
+
+def _pad_row(row: Sequence[str], width: int) -> List[str]:
+    values = [normalize_ws(c) for c in row]
+    if len(values) < width:
+        values.extend([""] * (width - len(values)))
+    return values[:width]
+
+
+_PURE_NUM_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+_HEADERISH_TOKEN_RE = re.compile(
+    r"(?i)(?:\b(?:kg|g|mg|ml|l|%|usd|eur|mpa|psi|hz|v|a|w)\b|"
+    r"freq|unit|value|amount|rate|total|weight|weeks?|months?|"
+    r"period|grade|size|range|column\s+\d+|\(\s*[a-z]{1,6}\s*\))"
 )
 
 
-def _is_label_banner_row(row: Sequence[str]) -> bool:
-    """Detect non-data banner rows like blank|blank|Dose|(mg)|blank.
-
-    Domain-agnostic: known label/unit tokens only, mostly empty cells, no
-    numeric ranges. Single-letter body values are NOT treated as banners.
-    """
+def _is_data_row(row: Sequence[str]) -> bool:
+    """True when a row looks like table body (dose integers / IgE bins)."""
     cells = [normalize_ws(c) for c in row]
     nonempty = [c for c in cells if c]
-    if len(nonempty) < 2 or len(nonempty) > max(3, len(cells) // 3):
+    if not nonempty:
         return False
-    # Require leading body key empty so real first-column labels are kept.
-    if cells and cells[0]:
-        return False
-    for cell in nonempty:
-        if re.search(r"\d", cell) and not cell.startswith("("):
-            return False
-        if not _BANNER_TOKEN_RE.match(cell):
-            return False
-    return True
+    pure_nums = sum(1 for c in nonempty if _PURE_NUM_RE.match(c))
+    if pure_nums >= 2:
+        return True
+    # IgE/range key + at least one numeric dose.
+    if cells and re.search(r"\d", cells[0]) and pure_nums >= 1:
+        if re.search(r"[<>≥≤]|-|to", cells[0], re.I):
+            return True
+    return False
 
 
-def _infer_header_row_count(grid: List[List[Dict[str, Any]]]) -> int:
-    if not grid:
-        return 0
-    headerish = 0
-    for row in grid:
-        if not row:
+def _is_weak_header_label(text: str) -> bool:
+    value = normalize_ws(text)
+    if not value:
+        return True
+    return bool(re.match(r"(?i)^column\s+\d+$", value))
+
+
+def _drop_empty_body_columns(
+    headers: List[str],
+    header_rows: List[List[str]],
+    body: List[List[str]],
+) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+    """Remove columns that never carry body values (alignment ghost cols)."""
+    if not body:
+        return headers, header_rows, body
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        1,
+    )
+    headers = _pad_row(headers, width)
+    header_rows = [_pad_row(r, width) for r in header_rows]
+    body = [_pad_row(r, width) for r in body]
+    keep = [
+        i
+        for i in range(width)
+        if any(normalize_ws(row[i]) for row in body)
+    ]
+    if 0 not in keep and width > 0:
+        keep = [0] + keep
+    if len(keep) < 2:
+        return headers, header_rows, body
+    return (
+        [headers[i] for i in keep],
+        [[row[i] for i in keep] for row in header_rows],
+        [[row[i] for i in keep] for row in body],
+    )
+
+
+def _promote_leading_header_bands(
+    headers: List[str],
+    header_rows: List[List[str]],
+    body: List[List[str]],
+) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+    """Move leading non-data rows into header_rows for multi-row headers."""
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        1,
+    )
+    headers = _pad_row(headers, width)
+    header_rows = [_pad_row(r, width) for r in header_rows]
+    body = [_pad_row(r, width) for r in body]
+
+    # Seed header_rows from weak leaf headers produced by table_from_words.
+    if not header_rows and headers and any(h for h in headers):
+        header_rows = [list(headers)]
+    elif headers and header_rows:
+        # Prefer explicit header_rows; keep headers as leaf candidates later.
+        pass
+
+    promote_from = 0
+    for index, row in enumerate(body):
+        if _is_data_row(row):
             break
-        header_flags = sum(1 for cell in row if cell.get("is_header"))
-        if header_flags >= max(1, len(row) // 2):
-            headerish += 1
-        else:
-            break
-    if headerish > 0:
-        # Peek one more row: numeric/unit leaf bands often lack COLUMN_HEADER flags.
-        if headerish < len(grid):
-            nxt = grid[headerish]
-            texts = [normalize_ws(c.get("text") or "") for c in nxt]
-            nonempty = [t for t in texts if t]
-            if (
-                nonempty
-                and not texts[0]
-                and sum(1 for t in nonempty if re.search(r"\d", t)) >= max(2, len(nonempty) - 1)
-                and sum(1 for t in nonempty if re.fullmatch(r"-?\d+(?:\.\d+)?", t))
-                < max(2, len(nonempty) // 2)
-            ):
-                headerish += 1
-        return headerish
-    # Fallback: first row is headers when the table has ≥2 rows.
-    return 1 if len(grid) >= 2 else 0
+        nonempty = [c for c in row if c]
+        headerish = sum(1 for c in nonempty if _HEADERISH_TOKEN_RE.search(c))
+        # Sparse banner / label rows also stay in the header band.
+        if nonempty and headerish == 0 and not any(_is_weak_header_label(c) for c in nonempty):
+            # Short alphabetic labels (e.g. Dosing / Freq.) still count.
+            alphaish = sum(1 for c in nonempty if re.search(r"[A-Za-z]", c) and not _PURE_NUM_RE.match(c))
+            if alphaish < max(1, len(nonempty) // 2):
+                break
+        promote_from = index + 1
+
+    if promote_from:
+        header_rows = header_rows + [list(r) for r in body[:promote_from]]
+        body = body[promote_from:]
+
+    # Drop synthetic Column-N-only seed row when real header bands exist.
+    if len(header_rows) >= 2 and header_rows[0]:
+        if all(_is_weak_header_label(c) or not c for c in header_rows[0]):
+            header_rows = header_rows[1:]
+        elif sum(1 for c in header_rows[0] if c and not _is_weak_header_label(c)) <= 1:
+            # e.g. ["Pretreatment", "", ...] above richer bands — keep it.
+            pass
+
+    leaves = _leaf_headers(header_rows) if header_rows else headers
+    if not leaves and body:
+        leaves = [f"Column {i + 1}" for i in range(width)]
+    return leaves, header_rows, body
+
+
+def _synthetic_cells(
+    headers: Sequence[str],
+    header_rows: Sequence[Sequence[str]],
+    body: Sequence[Sequence[str]],
+    *,
+    table_bbox: BBox,
+    mean_conf: float,
+) -> List[Dict[str, Any]]:
+    """Approximate per-cell metadata for downstream consumers."""
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        1,
+    )
+    header_count = len(header_rows) if header_rows else (1 if headers else 0)
+    total_rows = header_count + len(body)
+    if total_rows <= 0 or width <= 0 or table_bbox.area <= 0:
+        return []
+
+    cell_w = table_bbox.width / width
+    cell_h = table_bbox.height / total_rows
+    cells: List[Dict[str, Any]] = []
+
+    def _emit(ri: int, ci: int, text: str, is_header: bool) -> None:
+        x0 = table_bbox.x0 + ci * cell_w
+        y0 = table_bbox.y0 + ri * cell_h
+        cells.append(
+            {
+                "row_index": ri,
+                "col_index": ci,
+                "text": normalize_ws(text),
+                "confidence": mean_conf,
+                "bbox": [x0, y0, x0 + cell_w, y0 + cell_h],
+                "row_span": 1,
+                "col_span": 1,
+                "is_header": is_header,
+            }
+        )
+
+    if header_rows:
+        for ri, row in enumerate(header_rows):
+            padded = _pad_row(row, width)
+            for ci, text in enumerate(padded):
+                _emit(ri, ci, text, True)
+    elif headers:
+        for ci, text in enumerate(_pad_row(headers, width)):
+            _emit(0, ci, text, True)
+
+    for bi, row in enumerate(body):
+        ri = header_count + bi
+        for ci, text in enumerate(_pad_row(row, width)):
+            _emit(ri, ci, text, False)
+    return cells
+
+
+def _finalize_geometry_table(
+    table: TableData,
+    *,
+    region_words: Sequence[TextWord],
+    min_confidence: float,
+) -> Optional[TableData]:
+    """Banner cleanup, multiline merge, header reconstruction, metadata."""
+    width = max(len(table.headers or []), max((len(r) for r in table.rows), default=0))
+    if width < 2:
+        return None
+
+    headers = [normalize_ws(h) for h in (table.headers or [])]
+    header_rows: List[List[str]] = (
+        [list(r) for r in table.header_rows]
+        if table.header_rows
+        else ([list(headers)] if headers else [])
+    )
+    body = _merge_soft_continuation_rows(
+        [_pad_row(r, width) for r in (table.rows or [])]
+    )
+
+    headers, header_rows, body = _promote_leading_header_bands(
+        headers, header_rows, body
+    )
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        width,
+    )
+    headers = _pad_row(headers, width)
+    header_rows = [_pad_row(r, width) for r in header_rows]
+    body = [_pad_row(r, width) for r in body]
+
+    cleaned_body: List[List[str]] = []
+    for row in body:
+        if _is_label_banner_row(row):
+            for ci, cell in enumerate(row):
+                token = normalize_ws(cell)
+                if not token:
+                    continue
+                if ci < len(headers) and not normalize_ws(headers[ci]):
+                    headers[ci] = token
+                elif ci < len(headers) and token.lower() not in headers[ci].lower():
+                    if _BANNER_TOKEN_RE.match(token) and not re.search(r"\d", headers[ci]):
+                        headers[ci] = f"{headers[ci]} {token}".strip()
+            continue
+        cleaned_body.append(row)
+    body = cleaned_body
+    headers, header_rows, body = _drop_empty_body_columns(
+        headers, header_rows, body
+    )
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        1,
+    )
+    if header_rows:
+        headers = _leaf_headers(header_rows)
+
+    if not body and not headers:
+        return None
+
+    if header_rows and not any(headers):
+        headers = _leaf_headers(header_rows)
+
+    confidences = [float(w.confidence) for w in region_words if w.confidence is not None]
+    mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
+
+    recon = reconstruct_table_headers_cached(
+        header_rows=header_rows,
+        rows=body,
+        cells=[],
+        merged_cells=[],
+        existing_headers=headers,
+    )
+    if recon.leaf_headers and len(recon.leaf_headers) == width:
+        headers = list(recon.leaf_headers)
+    if recon.reconstructed_header_rows:
+        header_rows = [list(r) for r in recon.reconstructed_header_rows]
+    if recon.reconstructed_rows:
+        body = [list(r) for r in recon.reconstructed_rows]
+
+    low_confidence_cells = list(table.low_confidence_cells or [])
+    for w in region_words:
+        if w.confidence < min_confidence and w.text:
+            low_confidence_cells.append(
+                {
+                    "row": -1,
+                    "col": -1,
+                    "text": w.text,
+                    "confidence": float(w.confidence),
+                    "reason": "low_word_confidence",
+                }
+            )
+    if recon.needs_verification:
+        low_confidence_cells.append(
+            {
+                "row": -1,
+                "col": -1,
+                "text": "",
+                "confidence": recon.normalization_confidence * 100.0,
+                "reason": "header_reconstruction_uncertain",
+            }
+        )
+
+    for ri, row in enumerate(body):
+        empty = sum(1 for c in row[1:] if not normalize_ws(c))
+        if row and empty >= max(2, (len(row) - 1) // 2):
+            low_confidence_cells.append(
+                {
+                    "row": ri,
+                    "col": -1,
+                    "text": normalize_ws(row[0]) if row else "",
+                    "confidence": mean_conf,
+                    "reason": "sparse_row",
+                }
+            )
+
+    cells = _synthetic_cells(
+        headers,
+        header_rows,
+        body,
+        table_bbox=table.bbox,
+        mean_conf=mean_conf,
+    )
+
+    return TableData(
+        page=table.page,
+        bbox=table.bbox,
+        headers=headers,
+        rows=body,
+        extraction_method=_EXTRACTION_METHOD,
+        extraction_engine=_EXTRACTION_METHOD,
+        caption=table.caption or "",
+        source_lines=table.source_lines or len(region_words),
+        low_confidence_cells=low_confidence_cells,
+        cells=cells,
+        header_rows=header_rows,
+        merged_cells=[],
+        textract_confidence=round(mean_conf, 2),
+        ocr_confidence=round(mean_conf, 2),
+        structure_confidence=float(
+            recon.normalization_confidence if recon else 0.0
+        ),
+        provenance={
+            "engine": _EXTRACTION_METHOD,
+            "page": table.page,
+            "quality_notes": list((recon.warnings if recon else []) or []),
+        },
+        header_reconstruction=recon.to_dict(),
+        normalized_header_paths=[list(p) for p in recon.normalized_header_paths],
+        pages=list(table.pages or []),
+    )
+
+
+def _union_bbox(words: Sequence[TextWord]) -> Optional[BBox]:
+    if not words:
+        return None
+    return BBox(
+        min(w.bbox.x0 for w in words),
+        min(w.bbox.y0 for w in words),
+        max(w.bbox.x1 for w in words),
+        max(w.bbox.y1 for w in words),
+    )
+
+
+def _candidate_regions(
+    words: Sequence[TextWord],
+    *,
+    page: Any,
+    page_width: float,
+    page_height: float,
+) -> List[Tuple[BBox, Optional[Sequence[float]], Optional[Sequence[float]]]]:
+    """Ordered table regions: ruled boxes, then alignment clusters, then full page."""
+    regions: List[Tuple[BBox, Optional[Sequence[float]], Optional[Sequence[float]]]] = []
+    seen: List[BBox] = []
+
+    def _add(
+        bbox: BBox,
+        grid_x: Optional[Sequence[float]] = None,
+        grid_y: Optional[Sequence[float]] = None,
+    ) -> None:
+        if bbox.area <= 0:
+            return
+        for existing in seen:
+            if existing.iou(bbox) >= 0.55 or existing.contains(bbox, tolerance=2.0):
+                return
+        seen.append(bbox)
+        regions.append((bbox, grid_x, grid_y))
+
+    if page is not None:
+        try:
+            for bbox in detect_ruled_table_boxes(page):
+                grid_x, grid_y = extract_grid_positions(page, bbox)
+                if len(grid_x) > 16 or len(grid_y) > 90:
+                    grid_x, grid_y = [], []
+                _add(bbox, grid_x or None, grid_y or None)
+        except Exception as exc:
+            logger.debug("Ruled table detection skipped: %s", exc)
+
+    lines = words_to_lines(words, page_width)
+    try:
+        for bbox, _region_lines in alignment_table_regions(
+            lines, page_width, page_height, excluded=seen
+        ):
+            _add(bbox)
+    except Exception as exc:
+        logger.debug("Alignment region detection skipped: %s", exc)
+
+    if not regions:
+        full = _union_bbox(words)
+        if full is not None:
+            # Slight pad so edge words are not clipped by contains().
+            pad_x = max(1.0, page_width * 0.005)
+            pad_y = max(1.0, page_height * 0.005)
+            _add(
+                BBox(
+                    max(0.0, full.x0 - pad_x),
+                    max(0.0, full.y0 - pad_y),
+                    min(page_width, full.x1 + pad_x),
+                    min(page_height, full.y1 + pad_y),
+                )
+            )
+    return regions
 
 
 def table_data_from_textract_blocks(
@@ -246,236 +686,62 @@ def table_data_from_textract_blocks(
     page_width: float,
     page_height: float,
     min_confidence: float = 50.0,
+    page: Any = None,
 ) -> List[TableData]:
-    """Convert Textract AnalyzeDocument Blocks into TableData objects."""
-    blocks_by_id = {b.get("Id"): b for b in blocks if b.get("Id")}
+    """Convert DetectDocumentText Blocks into TableData via geometry reconstruction.
+
+    Accepts WORD/LINE blocks only (no TABLE/CELL). ``page`` is optional and
+    enables ruled-grid hints from vector drawings when present.
+    """
+    # Keep low-confidence words for layout; flag them later.
+    words = words_from_detect_blocks(
+        blocks,
+        page_number=page_number,
+        page_width=page_width,
+        page_height=page_height,
+        min_confidence=0.0,
+    )
+    if len(words) < 4:
+        return []
+
     tables: List[TableData] = []
-
-    for block in blocks:
-        if block.get("BlockType") != "TABLE":
-            continue
-        cell_blocks: List[Dict[str, Any]] = []
-        for rel in block.get("Relationships") or []:
-            if rel.get("Type") != "CHILD":
-                continue
-            for cid in rel.get("Ids") or []:
-                child = blocks_by_id.get(cid) or {}
-                if child.get("BlockType") == "CELL":
-                    cell_blocks.append(child)
-        if not cell_blocks:
-            continue
-
-        max_row = max(int(c.get("RowIndex") or 0) for c in cell_blocks)
-        max_col = max(int(c.get("ColumnIndex") or 0) for c in cell_blocks)
-        if max_row < 1 or max_col < 1:
-            continue
-
-        merged = _merged_span_map(block, blocks_by_id)
-        grid: List[List[Dict[str, Any]]] = [
-            [
-                {
-                    "row_index": r,
-                    "col_index": c,
-                    "text": "",
-                    "confidence": 0.0,
-                    "bbox": None,
-                    "row_span": 1,
-                    "col_span": 1,
-                    "is_header": False,
-                }
-                for c in range(1, max_col + 1)
-            ]
-            for r in range(1, max_row + 1)
+    for bbox, grid_x, grid_y in _candidate_regions(
+        words,
+        page=page,
+        page_width=page_width,
+        page_height=page_height,
+    ):
+        region_words = [
+            w for w in words if bbox.contains(w.bbox) or bbox.intersection_area(w.bbox) > 0.5 * w.bbox.area
         ]
-
-        confidences: List[float] = []
-        low_confidence_cells: List[Dict[str, Any]] = []
-        cells_out: List[Dict[str, Any]] = []
-        merged_out: List[Dict[str, Any]] = []
-
-        for cell in cell_blocks:
-            row = int(cell.get("RowIndex") or 0)
-            col = int(cell.get("ColumnIndex") or 0)
-            if row < 1 or col < 1 or row > max_row or col > max_col:
-                continue
-            row_span = max(1, int(cell.get("RowSpan") or 1))
-            col_span = max(1, int(cell.get("ColumnSpan") or 1))
-            text = _cell_text_from_block(cell, blocks_by_id)
-            conf = float(cell.get("Confidence") or 0.0)
-            confidences.append(conf)
-            bbox = _geometry_to_pdf_bbox(
-                cell.get("Geometry") or {},
-                page_width=page_width,
-                page_height=page_height,
-            )
-            is_header = _is_header_cell(cell)
-            span_info = merged.get((row, col))
-            if span_info:
-                m_row_span, m_col_span, m_text = span_info
-                if m_text:
-                    text = m_text
-                # Primary merged origin has positive spans; clones are (0, 0, text).
-                if m_row_span > 0 and m_col_span > 0:
-                    row_span = m_row_span
-                    col_span = m_col_span
-                    if row_span > 1 or col_span > 1:
-                        merged_out.append(
-                            {
-                                "row_index": row - 1,
-                                "col_index": col - 1,
-                                "row_span": row_span,
-                                "col_span": col_span,
-                                "text": text,
-                            }
-                        )
-
-            entry = {
-                "row_index": row - 1,
-                "col_index": col - 1,
-                "text": text,
-                "confidence": conf,
-                "bbox": list(bbox.as_tuple()),
-                "row_span": row_span,
-                "col_span": col_span,
-                "is_header": is_header,
-            }
-            cells_out.append(entry)
-            if conf < min_confidence and text:
-                low_confidence_cells.append(
-                    {"row": row - 1, "col": col - 1, "text": text, "confidence": conf}
-                )
-
-            for r in range(row, min(max_row, row + row_span - 1) + 1):
-                for c in range(col, min(max_col, col + col_span - 1) + 1):
-                    slot = grid[r - 1][c - 1]
-                    # Primary cell owns spans; filled clones keep text.
-                    if (r, c) == (row, col) or not slot["text"]:
-                        slot["text"] = text
-                        slot["confidence"] = conf
-                        slot["bbox"] = list(bbox.as_tuple())
-                        slot["is_header"] = is_header or slot["is_header"]
-                    if (r, c) == (row, col):
-                        slot["row_span"] = row_span
-                        slot["col_span"] = col_span
-
-        header_count = _infer_header_row_count(grid)
-        header_rows = [
-            [normalize_ws(cell["text"]) for cell in grid[r]]
-            for r in range(header_count)
-        ]
-        body = [
-            [normalize_ws(cell["text"]) for cell in grid[r]]
-            for r in range(header_count, max_row)
-        ]
-        headers = _leaf_headers(header_rows)
-        if not headers and body:
-            # Single-row table: treat as header-less body.
-            headers = [f"Column {i + 1}" for i in range(max_col)]
-        if not body and header_rows:
-            # Only header-like rows: keep last as body if ≥2 header rows.
-            if len(header_rows) >= 2:
-                body = [header_rows[-1]]
-                header_rows = header_rows[:-1]
-                headers = _leaf_headers(header_rows)
-            else:
-                body = [list(headers)]
-                headers = [f"Column {i + 1}" for i in range(max_col)]
-                header_rows = []
-
-        # Drop non-data banner rows (e.g. Dose | (mg) under column groups).
-        cleaned_body: List[List[str]] = []
-        for row in body:
-            if _is_label_banner_row(row):
-                # Fold banner tokens into headers when a column header is empty.
-                for ci, cell in enumerate(row):
-                    token = normalize_ws(cell)
-                    if not token:
-                        continue
-                    if ci < len(headers) and not normalize_ws(headers[ci]):
-                        headers[ci] = token
-                    elif ci < len(headers) and token.lower() not in headers[ci].lower():
-                        if _BANNER_TOKEN_RE.match(token) and not re.search(r"\d", headers[ci]):
-                            headers[ci] = f"{headers[ci]} {token}".strip()
-                continue
-            cleaned_body.append(row)
-        body = cleaned_body
-
-        if max_col < 2 or (not body and not headers):
-            continue
-
-        # Geometry-aware header path reconstruction + fragmented cell repair.
-        recon = reconstruct_table_headers_cached(
-            header_rows=header_rows,
-            rows=body,
-            cells=cells_out,
-            merged_cells=merged_out,
-            existing_headers=headers,
-        )
-        if recon.leaf_headers and len(recon.leaf_headers) == max_col:
-            headers = list(recon.leaf_headers)
-        if recon.reconstructed_header_rows:
-            header_rows = [list(r) for r in recon.reconstructed_header_rows]
-        if recon.reconstructed_rows:
-            body = [list(r) for r in recon.reconstructed_rows]
-        if recon.needs_verification:
-            low_confidence_cells.append(
-                {
-                    "row": -1,
-                    "col": -1,
-                    "text": "",
-                    "confidence": recon.normalization_confidence * 100.0,
-                    "reason": "header_reconstruction_uncertain",
-                }
-            )
-
-        table_bbox = _geometry_to_pdf_bbox(
-            block.get("Geometry") or {},
+        raw = table_from_words(
+            words,
+            bbox,
+            page=page_number,
             page_width=page_width,
             page_height=page_height,
+            grid_x=grid_x,
+            grid_y=grid_y,
+            method=_EXTRACTION_METHOD,
         )
-        mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
-        # Flag sparse data rows (many empties) for downstream verification.
-        for ri, row in enumerate(body):
-            empty = sum(1 for c in row[1:] if not normalize_ws(c))
-            if row and empty >= max(2, (len(row) - 1) // 2):
-                low_confidence_cells.append(
-                    {
-                        "row": ri,
-                        "col": -1,
-                        "text": normalize_ws(row[0]) if row else "",
-                        "confidence": mean_conf,
-                        "reason": "sparse_row",
-                    }
-                )
-        tables.append(
-            TableData(
-                page=page_number,
-                bbox=table_bbox,
-                headers=headers,
-                rows=body,
-                extraction_method="textract_tables",
-                source_lines=max_row,
-                low_confidence_cells=low_confidence_cells,
-                cells=cells_out,
-                header_rows=header_rows,
-                merged_cells=merged_out,
-                textract_confidence=round(mean_conf, 2),
-                header_reconstruction=recon.to_dict(),
-                normalized_header_paths=[list(p) for p in recon.normalized_header_paths],
-            )
+        if not raw:
+            continue
+        finalized = _finalize_geometry_table(
+            raw,
+            region_words=region_words,
+            min_confidence=min_confidence,
         )
+        if finalized:
+            tables.append(finalized)
     return tables
 
 
-def _analyze_document_bytes(png_bytes: bytes) -> Dict[str, Any]:
+def _detect_document_text_bytes(png_bytes: bytes) -> Dict[str, Any]:
     client = get_textract_client()
     last_err: Optional[Exception] = None
     for attempt in range(4):
         try:
-            return client.analyze_document(
-                Document={"Bytes": png_bytes},
-                FeatureTypes=["TABLES"],
-            )
+            return client.detect_document_text(Document={"Bytes": png_bytes})
         except Exception as exc:
             last_err = exc
             err = str(exc)
@@ -492,7 +758,7 @@ def _analyze_document_bytes(png_bytes: bytes) -> Dict[str, Any]:
                 raise
             wait = (2 ** attempt) + random.uniform(0, 1)
             logger.warning(
-                "Textract TABLES throttled — retry in %.1fs (attempt %s/4)",
+                "Textract DetectDocumentText throttled — retry in %.1fs (attempt %s/4)",
                 wait,
                 attempt + 1,
             )
@@ -503,11 +769,15 @@ def _analyze_document_bytes(png_bytes: bytes) -> Dict[str, Any]:
 
 
 def extract_tables_from_page(page, page_number: int) -> List[TableData]:
-    """Render a PDF page and extract tables via Textract TABLES.
+    """Render a PDF page and extract tables via DetectDocumentText + geometry.
 
-    Returns [] on any failure so callers can fall back to native/OCR extractors.
+    Returns [] on any failure so callers can surface textract_error without
+    falling back to native/OCR table extractors.
     """
     settings = get_settings()
+    # Docling-only phase: both flags must be true before any AWS call.
+    if not bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)):
+        return []
     if not settings.PDF_TEXTRACT_TABLES_ENABLED:
         return []
 
@@ -518,7 +788,7 @@ def extract_tables_from_page(page, page_number: int) -> List[TableData]:
         scale = dpi / 72.0
         pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
         png_bytes = pix.tobytes("png")
-        # Sync AnalyzeDocument Bytes limit is 5 MB.
+        # Sync DetectDocumentText Bytes limit is 5 MB.
         if len(png_bytes) > 4_500_000:
             logger.warning(
                 "Textract page %s PNG too large (%s bytes); skipping",
@@ -526,7 +796,7 @@ def extract_tables_from_page(page, page_number: int) -> List[TableData]:
                 len(png_bytes),
             )
             return []
-        resp = _analyze_document_bytes(png_bytes)
+        resp = _detect_document_text_bytes(png_bytes)
         blocks = list(resp.get("Blocks") or [])
         page_width = float(page.rect.width)
         page_height = float(page.rect.height)
@@ -536,10 +806,11 @@ def extract_tables_from_page(page, page_number: int) -> List[TableData]:
             page_width=page_width,
             page_height=page_height,
             min_confidence=float(settings.PDF_TEXTRACT_MIN_CONFIDENCE or 50.0),
+            page=page,
         )
     except Exception as exc:
         logger.warning(
-            "Textract TABLES failed on page %s: %s — falling back to native/OCR",
+            "Textract DetectDocumentText failed on page %s: %s — no table fallback",
             page_number,
             exc,
         )

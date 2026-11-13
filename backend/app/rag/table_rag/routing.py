@@ -29,14 +29,13 @@ _NUMERIC_UNIT_RE = re.compile(
 _PARAGRAPH_CUE_RE = re.compile(
     r"(?i)\b("
     r"what\s+is|explain|describe|summarize|summary|mechanism|"
-    r"indication|contraindication|warning|precaution|adverse|"
-    r"side\s*effect|how\s+(?:does|do|is|are)|why|"
-    r"definition|overview|background|clinical\s+pharmacology"
+    r"how\s+(?:does|do|is|are)|why|"
+    r"definition|overview|background|introduction"
     r")\b"
 )
-_AXIS_PAIR_RE = re.compile(
-    r"(?is)(?=.*\b\d+(?:\.\d+)?\s*kg\b)"
-    r"(?=.*\b\d+(?:\.\d+)?\s*(?:iu/?mL|ng/?mL|ug/?mL|µg/?mL|μg/?mL|mg))"
+# Two distinct numeric+unit mentions → likely matrix axis intersection.
+_UNIT_TOKEN_RE = re.compile(
+    r"(?i)\b\d+(?:\.\d+)?\s*([a-zA-Zμµ%/²³]{1,8})\b"
 )
 
 
@@ -68,7 +67,12 @@ def route_query(question: str) -> QueryRoute:
     table_cue = bool(_TABLE_CUE_RE.search(q))
     numeric = _NUMERIC_UNIT_RE.findall(q)
     paragraph_cue = bool(_PARAGRAPH_CUE_RE.search(q))
-    axis_pair = bool(_AXIS_PAIR_RE.search(q))
+    unit_tokens = {
+        m.group(1).lower().rstrip("s")
+        for m in _UNIT_TOKEN_RE.finditer(q)
+        if m.group(1)
+    }
+    axis_pair = len(unit_tokens) >= 2
     multi_numeric = len(numeric) >= 2
 
     structured = axis_pair or (table_cue and multi_numeric)

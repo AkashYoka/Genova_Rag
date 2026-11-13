@@ -202,27 +202,19 @@ def _structured_table_query_variants(query: str) -> List[str]:
     return variants
 
 
-def transform_query(query: str) -> List[str]:
+def transform_query(
+    query: str,
+    *,
+    allow_llm_rewrite: bool = False,
+) -> List[str]:
     """Expand one question into ≤ MAX_QUERY_VARIANTS (4) search strings.
 
-    Exact example
-    -------------
-    IN:  query = _EX_Q
-    Ops: generated = _generate_query_variants(_EX_Q)  # up to 3 paraphrases
-         return _dedupe_queries([_EX_Q, *generated])[:4]
+    LLM paraphrases are **disabled by default** (``allow_llm_rewrite=False``).
+    ``retrieve`` only enables them as a fallback when the top-1 hybrid RRF
+    score falls below ``TABLE_RAG_REWRITE_FALLBACK_THRESHOLD``.
 
-    ILLUSTRATIVE OUT (paraphrases depend on live LLM; shapes only):
-      [
-        _EX_Q,
-        "recommended values table chart schedule parameters",
-        "lookup table row column matching criteria",
-        "<LLM paraphrase>",
-      ]
-
-    Fallback: LLM exception → log warning; generated=[]; return [original] only.
+    Deterministic table-oriented variants are always included.
     Blank strip → ``[]``.
-
-    Next: retrieve loops ``for search_query in transform_query(query)``.
     """
     original_query = query.strip()
     if not original_query:
@@ -230,11 +222,19 @@ def transform_query(query: str) -> List[str]:
 
     structured_variants = _structured_table_query_variants(original_query)
 
-    try:
-        generated_queries = _generate_query_variants(original_query)
-    except Exception as e:
-        logger.warning("Query transformation failed, using original query only: %s", e)
-        generated_queries = []
+    generated_queries: List[str] = []
+    rewrite_enabled = bool(
+        allow_llm_rewrite
+        or getattr(settings, "TABLE_RAG_QUERY_REWRITE_ENABLED", False)
+    )
+    if rewrite_enabled:
+        try:
+            generated_queries = _generate_query_variants(original_query)
+        except Exception as e:
+            logger.warning(
+                "Query transformation failed, using original query only: %s", e
+            )
+            generated_queries = []
 
     # Prefer deterministic table-oriented variants ahead of LLM paraphrases so
     # narrative chunks do not crowd out the matching schedule/matrix.
@@ -427,14 +427,96 @@ def _chunk_index_from_id(chunk_id: Any) -> Optional[int]:
 
 def _needs_adjacent_expansion(chunk: Dict[str, Any]) -> bool:
     chunk_type = str(chunk.get("chunk_type") or chunk.get("content_type") or "").lower()
-    if chunk_type in ("table", "table_summary", "table_interpretation", "table_row"):
+    if chunk_type in (
+        "table",
+        "table_card",
+        "table_row_window",
+        "table_summary",
+        "table_interpretation",
+        "table_row",
+    ):
         return True
     text = str(chunk.get("text") or "")
     if re.search(r"(?i)\btable\s+\d+\b", text):
         return True
-    if "table facts:" in text.lower():
+    if "table facts:" in text.lower() or "table card" in text.lower():
         return True
     return False
+
+
+def _dedupe_table_hits_by_table_id(
+    candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Collapse table_card / table_row_window hits to one chunk per table_id.
+
+    Retains the highest RRF/score hit and unions matched ``row_indices`` as
+    hints. Non-table chunks pass through unchanged. Runs *before* cross-encoder
+    reranking and SQL hydrate.
+    """
+    if not candidates:
+        return candidates
+    table_kinds = {
+        "table_card",
+        "table_row_window",
+        "table_summary",
+        "table_interpretation",
+        "table_row",
+        "table",
+    }
+    best: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    passthrough: List[Dict[str, Any]] = []
+    for chunk in candidates:
+        chunk_type = str(
+            chunk.get("chunk_type") or chunk.get("content_type") or ""
+        ).lower()
+        index_kind = str(chunk.get("index_kind") or "").lower()
+        is_table = (
+            chunk_type in table_kinds
+            or index_kind in table_kinds
+            or bool(chunk.get("table_id") and chunk.get("table_json"))
+        )
+        table_id = str(chunk.get("table_id") or "").strip()
+        if not is_table or not table_id:
+            passthrough.append(chunk)
+            continue
+        key = f"{chunk.get('document_id') or ''}:{table_id}"
+        score = float(chunk.get("score") or chunk.get("rrf_score") or 0)
+        hints: List[int] = []
+        for raw in chunk.get("row_indices") or []:
+            try:
+                hints.append(int(raw))
+            except (TypeError, ValueError):
+                pass
+        if chunk.get("row_index") is not None:
+            try:
+                hints.append(int(chunk["row_index"]))
+            except (TypeError, ValueError):
+                pass
+        if key not in best:
+            order.append(key)
+            item = dict(chunk)
+            if hints:
+                item["row_indices"] = sorted(set(hints))
+                item["row_index"] = item["row_indices"][0]
+            best[key] = item
+            continue
+        prev = best[key]
+        prev_score = float(prev.get("score") or prev.get("rrf_score") or 0)
+        prev_hints = list(prev.get("row_indices") or [])
+        merged_hints = sorted(set(prev_hints + hints))
+        if score > prev_score:
+            item = dict(chunk)
+            if merged_hints:
+                item["row_indices"] = merged_hints
+                item["row_index"] = merged_hints[0]
+            # Prefer card text when scores tie later; here score wins.
+            best[key] = item
+        else:
+            if merged_hints:
+                prev["row_indices"] = merged_hints
+                prev["row_index"] = merged_hints[0]
+    return [best[k] for k in order] + passthrough
 
 
 def _boost_table_candidates(
@@ -481,10 +563,24 @@ def _boost_table_candidates(
         factor = 1.0
         is_table = (
             chunk_type
-            in ("table", "table_summary", "table_interpretation", "table_row")
+            in (
+                "table",
+                "table_card",
+                "table_row_window",
+                "table_summary",
+                "table_interpretation",
+                "table_row",
+            )
             or index_kind
-            in ("table_summary", "table_interpretation", "table_row")
+            in (
+                "table_card",
+                "table_row_window",
+                "table_summary",
+                "table_interpretation",
+                "table_row",
+            )
             or "table facts:" in text_l
+            or "table card" in text_l
             or "table interpretation" in text_l
             or bool(item.get("table_json"))
         )
@@ -492,17 +588,22 @@ def _boost_table_candidates(
 
         if is_table:
             factor += 0.35
-            if chunk_type == "table_row" or index_kind == "table_row":
-                # Exact-value / multi-constraint lookups land on row texts.
+            if chunk_type in ("table_row_window", "table_row") or index_kind in (
+                "table_row_window",
+                "table_row",
+            ):
+                # Exact-value / multi-constraint lookups land on row windows.
                 factor += 0.25 if modality_l == "table" else 0.15
-            elif chunk_type == "table_summary" or index_kind == "table_summary":
-                factor += 0.2 if modality_l == "table" else 0.1
+            elif chunk_type in ("table_card", "table_summary") or index_kind in (
+                "table_card",
+                "table_summary",
+            ):
+                factor += 0.22 if modality_l == "table" else 0.12
             elif (
                 chunk_type == "table_interpretation"
                 or index_kind == "table_interpretation"
             ):
-                # Semantic purpose / axis phrasing — useful for how/why questions.
-                factor += 0.22 if modality_l == "table" else 0.12
+                factor += 0.15 if modality_l == "table" else 0.08
         if re.search(r"(?i)\btable\s+\d+\b", text) and re.search(
             r"(?i)dose|dosing|schedule|frequency|amount|rate|weight|"
             r"every\s+\d+\s+(?:weeks?|days?|hours?|months?)",
@@ -769,9 +870,47 @@ def retrieve(
     # final slice after boost/rerank (agent typically passes TOP_K_RERANK=8).
     stage1_top_k = max(int(settings.TOP_K_RETRIEVAL or 20), int(top_k or 0))
 
-    # ── Stage 1: Hybrid retrieval with query transformation ───────────────────
-    all_candidates: List[Dict[str, Any]] = []
-    search_queries = transform_query(query)
+    def _stage1_for_queries(search_queries: List[str]) -> List[Dict[str, Any]]:
+        pool: List[Dict[str, Any]] = []
+        for search_query in search_queries:
+            query_vector = embed_query(search_query)
+            vector_results = query_chunks(
+                query_embedding=query_vector,
+                user_id=user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+                top_k=stage1_top_k,
+            )
+            if settings.USE_HYBRID_SEARCH:
+                try:
+                    from app.rag.retrieval.bm25 import query_bm25
+
+                    bm25_results = query_bm25(
+                        query=search_query,
+                        user_id=user_id,
+                        document_id=document_id,
+                        document_ids=document_ids,
+                        top_k=stage1_top_k,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "BM25 retrieval failed, using vector-only: %s", exc
+                    )
+                    bm25_results = []
+                merged = rrf_merge(
+                    vector_results=vector_results,
+                    bm25_results=bm25_results,
+                    k=settings.RRF_K,
+                )
+                for chunk in merged:
+                    chunk["score"] = chunk.pop("rrf_score")
+                pool.extend(merged)
+            else:
+                pool.extend(vector_results)
+        return pool
+
+    # ── Stage 1: Hybrid retrieval (LLM rewrite OFF by default) ───────────────
+    search_queries = transform_query(query, allow_llm_rewrite=False)
 
     query_modality = "both"
     try:
@@ -796,52 +935,64 @@ def retrieve(
     except Exception:
         pass
 
-    for search_query in search_queries:
-        query_vector = embed_query(search_query)
-
-        # Vector results (always)
-        vector_results = query_chunks(
-            query_embedding=query_vector,
-            user_id=user_id,
-            document_id=document_id,
-            document_ids=document_ids,
-            top_k=stage1_top_k,
-        )
-
-        if settings.USE_HYBRID_SEARCH:
-            try:
-                from app.rag.retrieval.bm25 import query_bm25
-                bm25_results = query_bm25(
-                    query=search_query,
-                    user_id=user_id,
-                    document_id=document_id,
-                    document_ids=document_ids,
-                    top_k=stage1_top_k,
-                )
-            except Exception as exc:
-                logger.warning("BM25 retrieval failed, using vector-only: %s", exc)
-                bm25_results = []
-
-            merged = rrf_merge(
-                vector_results=vector_results,
-                bm25_results=bm25_results,
-                k=settings.RRF_K,
-            )
-
-            for chunk in merged:
-                chunk["score"] = chunk.pop("rrf_score")
-
-            all_candidates.extend(merged)
-        else:
-            all_candidates.extend(vector_results)
-
+    all_candidates = _stage1_for_queries(search_queries)
     if not all_candidates:
         return []
 
     candidates = _merge_candidates(all_candidates)
+
+    # Low-confidence fallback: invoke LLM rewrite only when top-1 RRF is weak.
+    # RRF scores with k=60 live in ~0.015–0.033 (1/(60+rank)), not cosine 0–1.
+    rewrite_threshold = float(
+        getattr(settings, "TABLE_RAG_REWRITE_FALLBACK_THRESHOLD", 0.018) or 0.018
+    )
+    top1 = max((float(c.get("score") or 0) for c in candidates), default=0.0)
+    rewrite_triggered = False
+    if top1 < rewrite_threshold and not getattr(
+        settings, "TABLE_RAG_QUERY_REWRITE_ENABLED", False
+    ):
+        try:
+            expanded = transform_query(query, allow_llm_rewrite=True)
+            new_queries = [q for q in expanded if q not in search_queries]
+            if new_queries:
+                rewrite_triggered = True
+                extra = _stage1_for_queries(new_queries)
+                if extra:
+                    candidates = _merge_candidates(candidates + extra)
+                    search_queries = _dedupe_queries([*search_queries, *new_queries])
+                    try:
+                        from app.rag.retrieval.rag_debug import record_rewrites
+
+                        record_rewrites(search_queries)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.warning("Rewrite fallback skipped: %s", exc)
+
+    logger.info(
+        "TableRAG rewrite_gate top1_rrf_score=%.6f threshold=%.6f rewrite_triggered=%s",
+        top1,
+        rewrite_threshold,
+        rewrite_triggered,
+    )
+    try:
+        from app.rag.table_rag.telemetry import record_rewrite_gate
+
+        record_rewrite_gate(
+            top1_rrf_score=top1, rewrite_triggered=rewrite_triggered
+        )
+    except Exception:
+        pass
+    # Stash on chunks for calibrators / eval scripts.
+    for chunk in candidates:
+        chunk.setdefault("_top1_rrf_score", top1)
+        chunk.setdefault("_rewrite_triggered", rewrite_triggered)
+
     candidates = _boost_table_candidates(
         query, candidates, modality=query_modality
     )
+    # Collapse card/window hits per table_id before cross-encoder + hydrate.
+    candidates = _dedupe_table_hits_by_table_id(candidates)
 
     # ── Stage 2: Cross-encoder reranking ─────────────────────────────────────
     final_k = top_k if top_k is not None else settings.TOP_K_RERANK

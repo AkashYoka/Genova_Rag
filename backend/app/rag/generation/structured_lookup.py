@@ -185,35 +185,31 @@ class VerifiedCell:
                 "The stated amount EQUALS the verified label cell. Characterize "
                 "as matching / concordant for that amount unless a stated "
                 "frequency/schedule clearly conflicts with the verified row. "
-                "Do NOT call it an intentional deviation, medication error, or "
-                "off-label dosing solely because a prescription was mentioned.\n"
+                "Do NOT invent a deviation solely because a stated amount was mentioned.\n"
                 if same_amount
                 else "The stated amount DIFFERS from the verified label cell. "
-                "Describe the mismatch factually; separate label facts from "
-                "interpretation. Do not invent clinical consequences.\n"
+                "Describe the mismatch factually (label cell + any schedule vs "
+                "stated amount). Do not invent domain-specific classifications "
+                "or consequences beyond what the evidence supports.\n"
             )
             return (
                 f"{VERIFIED_BLOCK_MARKER}\n"
-                "This question compares a stated administered/prescribed amount "
-                "against a verified table cell.\n"
+                "This question compares a stated amount against a verified table cell.\n"
                 f"- Label / table cell value (authoritative): {self.value}\n"
-                f"- Stated administered/prescribed amount: {p_s}\n"
+                f"- Stated amount: {p_s}\n"
                 f"{freq_line}"
                 f"- Row: {row_s}\n"
                 f"- Column: {col_s}\n"
                 f"{provenance}"
                 f"- Confidence: {self.confidence:.1f}\n"
                 f"{match_rule}"
-                "Do NOT claim the patient received the label cell value when it "
+                "Do NOT claim the stated amount equals the label cell when it "
                 "differs. Do NOT replace the label cell with a neighboring cell "
                 "or another table.\n"
                 "Preserve value, units, and schedule/frequency as separate fields.\n"
-                "Exposure math (required when amount AND frequency both differ): "
-                "normalize both regimens to the same time window (e.g. mg per "
-                "4 weeks) and state that ratio. Example: 150 mg every 4 weeks "
-                "= 150 mg/4 wk; 300 mg every 2 weeks = 600 mg/4 wk → prescribed "
-                "≈ 25% of labeled exposure — do NOT say “half-dose” or "
-                "“half the frequency” as the exposure comparison."
+                "When amount AND frequency/period both differ: normalize both to "
+                "the same time window (or comparable basis) and state that ratio. "
+                "Do not substitute informal fractions for the normalized comparison."
             )
         return (
             f"{VERIFIED_BLOCK_MARKER}\n"
@@ -264,7 +260,7 @@ class InsufficientEvidence:
                 f"- Reason: {self.reason}\n"
                 f"- Status: {self.status}\n"
                 "- A unique matrix cell was not verified. Answer from clear prose "
-                "dosing/guidance in Document Context when present.\n"
+                "guidance in Document Context when present.\n"
                 "- Do not invent a matrix cell, swap sibling tables, or fabricate "
                 "row/column intersections.\n"
                 "- Preserve uncertainty: separate labeled facts from interpretation."
@@ -463,20 +459,10 @@ def _frequency_constraints(
 
 
 def _parse_table_payload(raw: Any) -> Optional[Dict[str, Any]]:
-    if raw is None:
-        return None
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str):
-        text = raw.strip()
-        if not text:
-            return None
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        return data if isinstance(data, dict) else None
-    return None
+    from app.rag.table_rag.ids import parse_table_payload as _parse
+
+    payload = _parse(raw)
+    return payload.to_dict() if payload is not None else None
 
 
 def _label_unit_cues(label: str) -> str:

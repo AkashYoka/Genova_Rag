@@ -539,9 +539,9 @@ class DocumentChunk(Base):
 class DocumentTable(Base):
     """Complete extracted table structure for TableRAG retrieval.
 
-    Chroma/BM25 hold table_summary, table_interpretation, and table_row *index*
-    texts; this row is the durable source of headers, rows, merged cells,
-    bboxes, and confidence flags passed to answer generation.
+    Chroma/BM25 hold table_card and table_row_window *index* texts; this row is
+    the durable source of headers, rows, merged cells, bboxes, and confidence
+    flags passed to answer generation.
     """
 
     __tablename__ = "document_tables"
@@ -571,6 +571,8 @@ class DocumentTable(Base):
     filename = Column(String(255), nullable=True)
     page_start = Column(Integer, nullable=True)
     page_end = Column(Integer, nullable=True)
+    # JSON list of page numbers for multipage-stitched tables.
+    pages_json = Column(LongText, nullable=True)
     section = Column(String(512), nullable=True)
     subsection = Column(String(512), nullable=True)
     caption = Column(LongText, nullable=True)

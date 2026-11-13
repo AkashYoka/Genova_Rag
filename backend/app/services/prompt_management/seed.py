@@ -44,14 +44,25 @@ def _snapshot(db: Session, template: PromptTemplate, note: str, user_id: Optiona
 
 _MEDICAL_PV_MARKER = "PHARMACOVIGILANCE / PRESCRIBING CASE ASSESSMENT"
 _MEDICAL_VOICE_MARKER = "CLINICAL VOICE"
+_MEDICAL_SIBLING_MARKER = "SIBLING TABLE / INDICATION DISAMBIGUATION"
+_MEDICAL_BOUNDARY_MARKER = "RANGE / BOUNDARY MATCHING"
+_PAYMENT_INVOICE_MARKER = "INVOICE / LINE-ITEM ACCURACY"
 
 
 def _looks_like_stock_short_overlay(content: str) -> bool:
-    """True for the original brief DOMAIN FOCUS stubs (safe to upgrade once)."""
+    """True for original brief DOMAIN FOCUS stubs (safe to upgrade once).
+
+    Also upgrades medium-length pre-principle stubs that still lack epistemic
+    framing (finance/legal/research/etc. elevations).
+    """
     text = (content or "").strip()
     if not text.startswith("DOMAIN FOCUS"):
         return False
-    return len(text) < 450
+    if len(text) < 450:
+        return True
+    if "Epistemic rules:" not in text and "CLINICAL VOICE" not in text:
+        return len(text) < 1600
+    return False
 
 
 def _should_upgrade_medical_overlay(content: str) -> bool:
@@ -70,6 +81,42 @@ def _should_upgrade_medical_overlay(content: str) -> bool:
     if _MEDICAL_PV_MARKER not in text:
         return True
     if _MEDICAL_VOICE_MARKER not in text:
+        return True
+    if _MEDICAL_SIBLING_MARKER not in text:
+        return True
+    if _MEDICAL_BOUNDARY_MARKER not in text:
+        return True
+    # Drop fixture-hardcoded overlays (product/band examples) in favor of principles.
+    if any(
+        marker in text
+        for marker in (
+            "CRSwNP",
+            "IgE **300**",
+            "150 mg/4 wk",
+            "wet AMD",
+            "Table 1 style",
+        )
+    ):
+        return True
+    # Upgrade when PV taxonomy still softens regimen off-label into mere "deviation".
+    if (
+        "Off-label use: Yes when" not in text
+        and "prefer “intentional deviation from labeled dosing”" in text
+    ):
+        return True
+    if "non-recommended dose" not in text and "PHARMACOVIGILANCE" in text:
+        return True
+    return False
+
+
+def _should_upgrade_payment_overlay(content: str) -> bool:
+    text = (content or "").strip()
+    if not text.startswith("DOMAIN FOCUS — Payment"):
+        return False
+    if _PAYMENT_INVOICE_MARKER not in text:
+        return True
+    # Drop country-/fixture-specific invoice examples.
+    if any(marker in text for marker in ("GSTIN", "CGST/SGST", "8,850.00", "HSN")):
         return True
     return False
 
@@ -199,6 +246,22 @@ def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) 
             _snapshot(db, existing_overlay, "Medical clinician-voice overlay upgrade")
             logger.info("Upgraded medical domain overlay with clinician voice / PV assessment")
             continue
+        if (
+            slug == "payment"
+            and existing_overlay
+            and existing_overlay.is_default
+            and _should_upgrade_payment_overlay(existing_overlay.content)
+            and content.strip()
+            and existing_overlay.content.strip() != content.strip()
+        ):
+            existing_overlay.content = content
+            existing_overlay.description = DOMAIN_META[slug]["purpose"]
+            existing_overlay.version = int(existing_overlay.version or 1) + 1
+            existing_overlay.is_active = True
+            existing_overlay.is_default = True
+            _snapshot(db, existing_overlay, "Payment invoice line-item overlay upgrade")
+            logger.info("Upgraded payment domain overlay with invoice line-item rules")
+            continue
         upsert_template(
             domain=domain,
             prompt_type="system",
@@ -243,13 +306,17 @@ def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) 
             )
             if existing:
                 # Upgrade stock medical RAG/QA when missing PV block or clinician voice.
+                content_text = existing.content or ""
                 needs_medical_task_upgrade = (
                     slug == "medical"
                     and prompt_type in {"rag", "qa"}
                     and existing.is_default
                     and (
-                        "Separately classify: Adverse Event" not in (existing.content or "")
-                        or _MEDICAL_VOICE_MARKER not in (existing.content or "")
+                        "TASK FLOW" not in content_text
+                        or "CRSwNP" in content_text
+                        or "IgE 300" in content_text
+                        or "150 vs 600 mg" in content_text
+                        or "Off-label use = wrong indication" not in content_text
                     )
                 )
                 if needs_medical_task_upgrade:

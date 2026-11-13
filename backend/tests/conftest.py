@@ -10,6 +10,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "ragas_integration: optional RAGAS judge/integration tests (run separately)",
+    )
+
+
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND_DIR = ROOT / "backend"
 

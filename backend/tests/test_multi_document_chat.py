@@ -21,7 +21,7 @@ def test_retrieve_forwards_document_ids_to_vector_and_bm25(monkeypatch):
 
     seen = {"vector": "unset", "bm25": "unset"}
 
-    monkeypatch.setattr(retriever, "transform_query", lambda _q: ["q"])
+    monkeypatch.setattr(retriever, "transform_query", lambda _q, **_kw: ["q"])
     monkeypatch.setattr(retriever, "embed_query", lambda q: f"embedding:{q}")
     monkeypatch.setattr(retriever, "get_reranker", lambda: None)
 
@@ -49,7 +49,7 @@ def test_retrieve_multi_doc_fetches_per_document(monkeypatch):
 
     seen_ids = []
 
-    monkeypatch.setattr(retriever, "transform_query", lambda _q: ["q"])
+    monkeypatch.setattr(retriever, "transform_query", lambda _q, **_kw: ["q"])
     monkeypatch.setattr(retriever, "embed_query", lambda q: f"embedding:{q}")
     monkeypatch.setattr(retriever, "get_reranker", lambda: None)
 
@@ -85,7 +85,7 @@ def test_retrieve_single_document_leaves_document_ids_none(monkeypatch):
 
     seen = {"vector_id": "unset", "vector_ids": "unset"}
 
-    monkeypatch.setattr(retriever, "transform_query", lambda _q: ["q"])
+    monkeypatch.setattr(retriever, "transform_query", lambda _q, **_kw: ["q"])
     monkeypatch.setattr(retriever, "embed_query", lambda q: f"embedding:{q}")
     monkeypatch.setattr(retriever, "get_reranker", lambda: None)
 

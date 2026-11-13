@@ -100,6 +100,23 @@ def _chroma_exclusive() -> Iterator[None]:
                     pass
 
 
+def reset_chroma_client(*, reason: str = "") -> None:
+    """Drop the process-wide PersistentClient so the next call re-opens on disk.
+
+    Needed after concurrent writers (ingest + query) leave a stale HNSW/SQLite
+    plan that surfaces as ``Error finding id``. A fresh client from another
+    process can query successfully while this process's handle is poisoned.
+    """
+    global _chroma_client
+    with _chroma_lock:
+        if _chroma_client is not None:
+            logger.warning(
+                "Resetting Chroma PersistentClient%s",
+                f" ({reason})" if reason else "",
+            )
+        _chroma_client = None
+
+
 def _chroma_retry(operation_name: str, fn: Callable[[], Any]) -> Any:
     """Run ``fn`` under the Chroma lock with retries for transient SQLite faults."""
     last_exc: Optional[BaseException] = None
@@ -111,6 +128,9 @@ def _chroma_retry(operation_name: str, fn: Callable[[], Any]) -> Any:
             last_exc = exc
             if attempt >= _CHROMA_MAX_ATTEMPTS or not _is_chroma_transient_error(exc):
                 raise
+            # Stale in-process handle after concurrent ingest: reopen client.
+            if "error finding id" in str(exc).lower():
+                reset_chroma_client(reason=f"{operation_name} attempt {attempt}")
             delay = _CHROMA_RETRY_BASE_SEC * (2 ** (attempt - 1))
             logger.warning(
                 "Chroma %s failed (attempt %s/%s): %s — retrying in %.2fs",

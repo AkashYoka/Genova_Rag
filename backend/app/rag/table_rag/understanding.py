@@ -16,26 +16,34 @@ from app.config import get_settings
 from app.rag.table_rag.schema import (
     ApplicabilityAttribute,
     ColumnMeaning,
+    ColumnValueProfile,
     HierarchicalHeaderNote,
     LookupAttribute,
+    TablePayload,
     TableUnderstanding,
     TableUnderstandingBatch,
+    coerce_table_dict,
 )
 
 logger = logging.getLogger(__name__)
 
 _JSON_RE = re.compile(r"\{[\s\S]*\}|\[[\s\S]*\]")
+_NUM_TOKEN_RE = re.compile(r"(?i)(-?\d+(?:\.\d+)?)")
+_UNIT_TOKEN_RE = re.compile(
+    r"(?i)\b(iu/?m?l|ng/?ml|ug/?ml|µg/?ml|μg/?ml|mcg/?ml|kg|mg|g|ml|l|%|years?|yo)\b"
+)
+_BOUND_OP_RE = re.compile(r"(≤|<=|≥|>=|<|>|–|-|—)")
 
-SYSTEM_PROMPT = """You analyze extracted PDF tables for a retrieval system.
+SYSTEM_PROMPT = """You are a precision document structure analyzer. Given a table's section path, caption, surrounding context, headers, full-column value profiles, and sample rows, output structured JSON matching TableUnderstanding.
+Rules:
+1. Never invent, alter, or normalize cell values.
+2. Explicitly identify `differentiating_dimensions` (e.g., patient cohort, age group, indication, currency, region) that distinguish this table from sibling tables in the same document.
+3. Document exact boundary semantics (inclusive vs. exclusive) and footnote exceptions found in headers or surrounding text.
 
-CRITICAL RULES:
-- Do NOT invent, rewrite, or correct cell values.
+Additional constraints:
 - Do NOT invent rows or columns that are not present.
 - Never change headers, rows, merged cells, or numeric grid contents.
-- Interpret structure only: purpose, header hierarchy, row/column relationships,
-  units, footnotes, lookup axes, applicability, and search phrases.
-- Use ONLY evidence present in the payload: caption, section_path, surrounding_text,
-  headers, header paths, and sample rows.
+- Use ONLY evidence in the payload (including column_profiles covering 100% of rows).
 - If uncertain, set uncertain=true and list uncertainty_notes.
 - Return JSON only matching the schema. No markdown fences.
 
@@ -136,35 +144,125 @@ def _sample_rows(table: Dict[str, Any], *, max_rows: int) -> List[List[str]]:
     return out
 
 
+def profile_full_table_grid(table: TablePayload | Dict[str, Any]) -> Dict[str, Any]:
+    """Scan 100% of rows and build deterministic per-column value profiles.
+
+    Returns a dict with ``column_profiles`` (list of serialized
+    ``ColumnValueProfile``) suitable for LLM understanding prompts and
+    table_card indexing. Never invents or rewrites cell values.
+    """
+    data = coerce_table_dict(table)
+    headers = [str(h or "") for h in (data.get("headers") or [])]
+    rows = [list(r) for r in (data.get("rows") or [])]
+    width = max(
+        [len(headers)] + [len(r) for r in rows] + [int(data.get("n_cols") or 0) or 0]
+    )
+    if width <= 0:
+        return {"column_profiles": []}
+    headers = (headers + [""] * width)[:width]
+
+    profiles: List[ColumnValueProfile] = []
+    for col_idx in range(width):
+        values: List[str] = []
+        nulls = 0
+        nums: List[float] = []
+        units: List[str] = []
+        ops: List[str] = []
+        range_hits = 0
+        for row in rows:
+            raw = ""
+            if col_idx < len(row):
+                raw = str(row[col_idx] if row[col_idx] is not None else "").strip()
+            if not raw or raw in {"-", "–", "—", "N/A", "n/a", "NA", "null"}:
+                nulls += 1
+                continue
+            values.append(raw)
+            for m in _NUM_TOKEN_RE.finditer(raw):
+                try:
+                    nums.append(float(m.group(1)))
+                except (TypeError, ValueError):
+                    pass
+            for m in _UNIT_TOKEN_RE.finditer(raw):
+                units.append(m.group(1).lower().replace("iu/ml", "iu/ml"))
+            for m in _BOUND_OP_RE.finditer(raw):
+                ops.append(m.group(1))
+            if re.search(r"\d\s*(?:–|-|—|to)\s*\d", raw, re.I):
+                range_hits += 1
+
+        distinct = list(dict.fromkeys(values))[:30]
+        unit_set = list(dict.fromkeys(units))[:8]
+        op_set = list(dict.fromkeys(ops))[:8]
+        kind = "text"
+        if range_hits >= max(1, len(values) // 3) and values:
+            kind = "range"
+        elif nums and len(nums) >= max(1, len(values) // 2):
+            kind = "numeric"
+        elif distinct and len(distinct) <= min(30, max(3, len(values))):
+            kind = "categorical"
+        elif nums and distinct:
+            kind = "mixed"
+
+        profiles.append(
+            ColumnValueProfile(
+                header=headers[col_idx],
+                col_index=col_idx,
+                kind=kind,
+                min_value=min(nums) if nums else None,
+                max_value=max(nums) if nums else None,
+                units=unit_set,
+                boundary_operators=op_set,
+                distinct_values=distinct,
+                null_or_empty_count=nulls,
+                sample_values=distinct[:5],
+            )
+        )
+
+    serialized = [p.model_dump() for p in profiles]
+    # Attach onto payload when caller passed a mutable dict / TablePayload.
+    if isinstance(table, TablePayload):
+        table.column_profiles = profiles
+    elif isinstance(table, dict):
+        table["column_profiles"] = serialized
+    return {"column_profiles": serialized, "n_rows_scanned": len(rows), "n_cols": width}
+
+
 def build_table_prompt_payload(
-    table: Dict[str, Any],
+    table: Dict[str, Any] | TablePayload,
     *,
     block_id: str = "",
     section_path: str = "",
     surrounding_text: str = "",
-    max_rows: int = 12,
+    max_rows: int = 5,
 ) -> Dict[str, Any]:
     """Compact structured input for the understanding LLM (read-only view)."""
+    data = coerce_table_dict(table)
+    profiles = data.get("column_profiles")
+    if not profiles:
+        profiles = profile_full_table_grid(data).get("column_profiles") or []
     return {
-        "table_id": str(table.get("table_id") or ""),
+        "table_id": str(data.get("table_id") or ""),
         "block_id": block_id,
-        "page": table.get("page"),
+        "page": data.get("page"),
+        "pages": data.get("pages") or [],
         "section_path": section_path,
-        "caption": table.get("caption") or "",
-        "extraction_method": table.get("extraction_method") or "",
-        "headers": list(table.get("headers") or []),
-        "header_rows": [list(r) for r in (table.get("header_rows") or [])][:6],
-        "merged_cells": list(table.get("merged_cells") or [])[:24],
-        "n_rows": table.get("n_rows"),
-        "n_cols": table.get("n_cols"),
-        "sample_rows": _sample_rows(table, max_rows=max_rows),
-        "low_confidence_cells": list(table.get("low_confidence_cells") or [])[:12],
+        "caption": data.get("caption") or "",
+        "extraction_method": data.get("extraction_method") or "",
+        "headers": list(data.get("headers") or []),
+        "header_rows": [list(r) for r in (data.get("header_rows") or [])][:6],
+        "merged_cells": list(data.get("merged_cells") or [])[:24],
+        "n_rows": data.get("n_rows"),
+        "n_cols": data.get("n_cols"),
+        "column_profiles": profiles,
+        "sample_rows": _sample_rows(data, max_rows=max_rows),
+        "low_confidence_cells": list(data.get("low_confidence_cells") or [])[:12],
         "needs_verification": bool(
-            table.get("needs_verification") or table.get("low_confidence_cells")
+            data.get("needs_verification") or data.get("low_confidence_cells")
         ),
         "surrounding_context": (surrounding_text or "")[:800],
         "footnote_hints": [
-            f for f in (table.get("linearized_facts") or []) if "*" in str(f) or "note" in str(f).lower()
+            f
+            for f in (data.get("linearized_facts") or [])
+            if "*" in str(f) or "note" in str(f).lower()
         ][:8],
     }
 
@@ -535,13 +633,18 @@ def understand_document_tables(
 
     max_tables = int(getattr(settings, "TABLE_RAG_LLM_MAX_TABLES", 20) or 20)
     batch_size = int(getattr(settings, "TABLE_RAG_LLM_BATCH_SIZE", 2) or 2)
-    max_rows = int(getattr(settings, "TABLE_RAG_LLM_PROMPT_ROWS", 12) or 12)
+    max_rows = int(getattr(settings, "TABLE_RAG_LLM_PROMPT_ROWS", 5) or 5)
     table_blocks = table_blocks[:max_tables]
 
     payloads: List[Dict[str, Any]] = []
     meta: List[Tuple[Any, Dict[str, Any], str]] = []
     for block in table_blocks:
         table = dict(block.table or {})
+        # Full-grid profiling before any LLM call (100% of rows).
+        try:
+            profile_full_table_grid(table)
+        except Exception as exc:
+            logger.debug("column profiling skipped: %s", exc)
         section_path = _section_path_for_block(nodes, block.block_id) or (
             " > ".join(p for p in (block.section, block.subsection) if p)
         )

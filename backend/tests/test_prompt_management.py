@@ -166,6 +166,69 @@ def test_every_builtin_domain_has_rich_system_default(db_session):
         assert len(tpl.content) >= 400, slug
         assert "DOMAIN FOCUS" in tpl.content
         assert expected[:40] in tpl.content or "Never" in tpl.content or "Prefer" in tpl.content
+        # No fixture-/product-specific band-aids in seeded overlays.
+        for banned in ("CRSwNP", "GSTIN", "8,850.00", "IgE **300**", "wet AMD"):
+            assert banned not in tpl.content, f"{slug} still hardcodes {banned}"
+
+
+def test_medical_system_holds_principles_task_is_slim(db_session):
+    from app.services.prompt_management.defaults import (
+        DOMAIN_SYSTEM_DEFAULTS,
+        DOMAIN_TASK_DEFAULTS,
+    )
+
+    system = DOMAIN_SYSTEM_DEFAULTS["medical"]
+    task = DOMAIN_TASK_DEFAULTS["medical"]["rag"][2]
+    assert "SCOPE LOCK" in system
+    assert "RANGE / BOUNDARY MATCHING" in system
+    assert "EXPOSURE / REGIMEN COMPARISON" in system
+    assert "PHARMACOVIGILANCE" in system
+    assert "TASK FLOW" in task
+    assert "{context}" in task and "{question}" in task
+    assert len(task) < len(system)
+    assert "CRSwNP" not in system and "CRSwNP" not in task
+    assert "150 mg/4 wk" not in system
+
+    domain = db_session.query(PromptDomain).filter_by(slug="medical").one()
+    sys_tpl = (
+        db_session.query(PromptTemplate)
+        .filter(
+            PromptTemplate.domain_id == domain.id,
+            PromptTemplate.prompt_type == "system",
+            PromptTemplate.is_active.is_(True),
+        )
+        .one()
+    )
+    rag_tpl = (
+        db_session.query(PromptTemplate)
+        .filter(
+            PromptTemplate.domain_id == domain.id,
+            PromptTemplate.prompt_type == "rag",
+            PromptTemplate.is_active.is_(True),
+        )
+        .one()
+    )
+    assert "CLINICAL VOICE" in sys_tpl.content
+    assert "TASK FLOW" in rag_tpl.content
+
+
+def test_elevated_domains_have_epistemic_rules():
+    from app.services.prompt_management.defaults import DOMAIN_SYSTEM_DEFAULTS
+
+    markers = {
+        "finance": ("reporting period", "GAAP"),
+        "legal": ("obligations", "not legal advice"),
+        "research": ("p-values", "limitations"),
+        "technical": ("CLI commands", "prerequisites"),
+        "education": ("learner", "formulas"),
+        "general": ("plain-language", "explicitly"),
+        "payment": ("INVOICE / LINE-ITEM", "OCR"),
+    }
+    for slug, needles in markers.items():
+        text = DOMAIN_SYSTEM_DEFAULTS[slug]
+        assert "Epistemic rules:" in text or slug == "payment"
+        for needle in needles:
+            assert needle.lower() in text.lower(), f"{slug} missing {needle}"
 
 
 def test_reset_restores_canonical_medical_content(db_session):

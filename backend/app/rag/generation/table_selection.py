@@ -536,21 +536,13 @@ def select_eligible_table_chunks(
     def _table_of(chunk: Dict[str, Any]) -> Dict[str, Any]:
         if get_table is not None:
             return get_table(chunk) or {}
-        raw = chunk.get("table")
-        if isinstance(raw, dict):
-            return raw
-        import json
+        from app.rag.table_rag.ids import parse_table_payload
 
-        tj = chunk.get("table_json")
-        if isinstance(tj, dict):
-            return tj
-        if isinstance(tj, str) and tj.strip():
-            try:
-                data = json.loads(tj)
-                return data if isinstance(data, dict) else {}
-            except json.JSONDecodeError:
-                return {}
-        return {}
+        raw = chunk.get("table")
+        if isinstance(raw, dict) and (raw.get("rows") is not None or raw.get("headers")):
+            return dict(raw)
+        payload = parse_table_payload(chunk.get("table_json") or raw)
+        return payload.to_dict() if payload else {}
 
     query = extract_query_constraints(question)
     profiles: List[Tuple[Dict[str, Any], Dict[str, Any], TableApplicability]] = []

@@ -15,6 +15,7 @@ from app.rag.generation.structured_lookup import (
     VerifiedCell,
     lookup_from_chunk,
 )
+from app.rag.generation.table_calculator import VerifiedCalculation
 from app.rag.generation.query_constraints import extract_query_constraints
 from app.rag.generation.table_selection import (
     build_table_applicability,
@@ -83,8 +84,16 @@ def _table_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             chunk.get("table_json")
             or chunk.get("table")
             or chunk_type
-            in ("table", "table_summary", "table_interpretation", "table_row")
+            in (
+                "table",
+                "table_card",
+                "table_row_window",
+                "table_summary",
+                "table_interpretation",
+                "table_row",
+            )
             or "table facts:" in text.lower()
+            or "table card" in text.lower()
             or "table interpretation" in text.lower()
         ):
             out.append(chunk)
@@ -92,19 +101,13 @@ def _table_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _parse_table(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    from app.rag.table_rag.ids import parse_table_payload
+
     raw = chunk.get("table")
-    if isinstance(raw, dict):
-        return raw
-    tj = chunk.get("table_json")
-    if isinstance(tj, dict):
-        return tj
-    if isinstance(tj, str) and tj.strip():
-        try:
-            data = json.loads(tj)
-            return data if isinstance(data, dict) else {}
-        except json.JSONDecodeError:
-            return {}
-    return {}
+    if isinstance(raw, dict) and (raw.get("rows") is not None or raw.get("headers")):
+        return dict(raw)
+    payload = parse_table_payload(chunk.get("table_json") or raw)
+    return payload.to_dict() if payload else {}
 
 
 def _dedupe_by_table_id(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -137,22 +140,205 @@ def _dedupe_by_table_id(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [best[tid] for tid in order] + orphans
 
 
+def _interpret_with_llm_selector(
+    question: str,
+    table_chunks: List[Dict[str, Any]],
+) -> Optional[TableInterpretationResult]:
+    """Phase-3 path: LLM coordinates + Python SQL cell verification."""
+    from app.rag.table_rag.telemetry import TimerMs, record_selector_metrics
+
+    timer = TimerMs()
+    try:
+        from app.config import get_settings
+        from app.rag.generation.table_selector import interpret_with_selector
+
+        settings = get_settings()
+        if not bool(getattr(settings, "TABLE_RAG_SELECTOR_ENABLED", True)):
+            record_selector_metrics(
+                status="legacy_fallback",
+                latency_ms=timer.ms(),
+                legacy_fallback_reason="selector_disabled",
+                index_version=str(
+                    getattr(settings, "TABLE_RAG_INDEX_VERSION", "") or ""
+                ),
+            )
+            return None
+        if not table_chunks:
+            return None
+        outcome, decision, candidates = interpret_with_selector(
+            question, table_chunks, settings=settings
+        )
+    except Exception as exc:
+        # Fall through to legacy regex path.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "LLM table selector unavailable, falling back: %s", exc
+        )
+        record_selector_metrics(
+            status="legacy_fallback",
+            latency_ms=timer.ms(),
+            legacy_fallback_reason=f"selector_exception:{type(exc).__name__}",
+        )
+        return None
+
+    latency_ms = timer.ms()
+    candidate_ids = [
+        str(c.get("table_id") or "") for c in candidates if c.get("table_id")
+    ]
+    # Soft-fail to legacy axis matcher when the selector cannot run or finds
+    # no hydrated grids (unit tests / incomplete retrieve).
+    rationale = (decision.rationale or "").lower()
+    if (
+        rationale.startswith("selector_unavailable")
+        or rationale.startswith("selector_error")
+        or rationale.startswith("selector_parse_failed")
+        or rationale.startswith("no candidate tables")
+        or not candidates
+    ):
+        record_selector_metrics(
+            status="legacy_fallback",
+            latency_ms=latency_ms,
+            candidate_table_ids=candidate_ids,
+            legacy_fallback_reason=rationale or "no_candidates",
+        )
+        return None
+
+    index_version = ""
+    document_id = ""
+    for chunk in table_chunks:
+        index_version = index_version or str(chunk.get("index_version") or "")
+        document_id = document_id or str(chunk.get("document_id") or "")
+
+    if isinstance(outcome, VerifiedCell):
+        verified_meta = {
+            "value": outcome.value,
+            "normalized_value": outcome.normalized_value or outcome.value,
+            "row_headers": outcome.row_headers,
+            "col_headers": outcome.col_headers,
+            "row_index": outcome.row_index,
+            "col_index": outcome.col_index,
+            "page": outcome.page,
+            "pages": (outcome.evidence or {}).get("pages") or [],
+            "confidence": outcome.confidence,
+            "status": STATUS_MATCHED,
+            "table_id": outcome.table_id,
+            "evidence": dict(outcome.evidence or {}),
+            "selector_status": decision.status,
+            "selector_rationale": decision.rationale,
+        }
+        record_selector_metrics(
+            status="matched",
+            latency_ms=latency_ms,
+            candidate_table_ids=candidate_ids,
+            index_version=index_version,
+            document_id=document_id,
+        )
+        return TableInterpretationResult(
+            is_structured_lookup=True,
+            result=outcome,
+            prompt_prefix=outcome.to_prompt_block() + "\n\n",
+            sources_update={"verified_cell": verified_meta},
+        )
+
+    if isinstance(outcome, VerifiedCalculation):
+        meta = outcome.to_meta()
+        meta["selector_status"] = "requires_calculation"
+        meta["selector_rationale"] = decision.rationale
+        record_selector_metrics(
+            status="requires_calculation",
+            latency_ms=latency_ms,
+            candidate_table_ids=candidate_ids,
+            index_version=index_version,
+            document_id=document_id,
+        )
+        return TableInterpretationResult(
+            is_structured_lookup=True,
+            result=None,
+            prompt_prefix=outcome.to_prompt_block() + "\n\n",
+            sources_update={"verified_cell": meta, "verified_calculation": meta},
+        )
+
+    insuff = outcome if isinstance(outcome, InsufficientEvidence) else InsufficientEvidence(
+        "selector produced no verified cell",
+        status=STATUS_NOT_FOUND,
+        soft=True,
+    )
+    soft = insuff.status == STATUS_NOT_FOUND and insuff.soft
+    status_label = str(decision.status or insuff.status or "not_in_table")
+    if getattr(insuff, "requires_calculation", False):
+        status_label = "requires_calculation"
+    if insuff.status == STATUS_AMBIGUOUS:
+        status_label = "needs_disambiguation"
+    if str(insuff.status) == "out_of_range":
+        status_label = "out_of_range"
+    record_selector_metrics(
+        status=status_label,
+        latency_ms=latency_ms,
+        candidate_table_ids=candidate_ids,
+        index_version=index_version,
+        document_id=document_id,
+    )
+    prefix = ""
+    fallback_prompt = getattr(insuff, "calculation_fallback_prompt", None)
+    if fallback_prompt:
+        prefix = str(fallback_prompt)
+    else:
+        prefix = insuff.to_prompt_block() + "\n\n"
+    return TableInterpretationResult(
+        is_structured_lookup=True,
+        result=insuff,
+        prompt_prefix=prefix,
+        sources_update={
+            "insufficient_table_evidence": True,
+            "reason": insuff.reason,
+            "status": insuff.status,
+            "soft_insufficient": soft,
+            "missing_dimensions": list(insuff.missing_dimensions or []),
+            "candidate_table_ids": candidate_ids,
+            "selector_status": status_label,
+            "selector_rationale": decision.rationale,
+        },
+    )
+
+
 def interpret_table_question(
     question: str,
     chunks: List[Dict[str, Any]],
 ) -> TableInterpretationResult:
     """Run verified cell lookup when the question looks like a table query.
 
-    Multi-table arbitration rules (domain-agnostic):
-    - Apply hard applicability filters first.
-    - If sibling tables remain distinct and the query lacks differentiating
-      constraints, return ``ambiguous`` (hard) when values would disagree.
-    - Never resolve disagreeing verified values via lexical overlap scores.
+    Preferred path (``TABLE_RAG_SELECTOR_ENABLED``): LLM coordinate selector
+    over indexed hydrated grids, then Python verifies the exact SQL cell.
+
+    Legacy path: applicability filters + regex axis/boundary matching.
     """
     if not is_structured_lookup_question(question):
         return TableInterpretationResult(is_structured_lookup=False)
 
     table_chunks = _dedupe_by_table_id(_table_chunks(chunks))
+    selector_result = _interpret_with_llm_selector(question, table_chunks)
+    if selector_result is not None:
+        return selector_result
+
+    # Explicit legacy fallback telemetry (selector returned None).
+    try:
+        from app.rag.table_rag.telemetry import current_table_rag_trace, record_selector_metrics
+
+        trace = current_table_rag_trace()
+        if trace is None or trace.selector_status != "legacy_fallback":
+            record_selector_metrics(
+                status="legacy_fallback",
+                legacy_fallback_reason="selector_returned_none",
+                candidate_table_ids=[
+                    str(c.get("table_id") or "")
+                    for c in table_chunks
+                    if c.get("table_id")
+                ],
+            )
+    except Exception:
+        pass
+
     if not table_chunks:
         insuff = InsufficientEvidence(
             "no table chunks retrieved for structured lookup",

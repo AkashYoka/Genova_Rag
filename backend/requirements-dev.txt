@@ -5,8 +5,9 @@
 pytest
 pytest-cov
 
-# RAG evaluation
-ragas>=0.3.0
+# RAG evaluation — pin to 0.2.15 (EvaluationDataset API; Vertex AI import shim
+# in app.rag.evaluation.ragas_compat). Avoid upgrading unless shim revalidated.
+ragas==0.2.15
 
 # Local cross-encoder reranker + HF sentence-transformer embeddings
 # (only if RERANKER_ENABLED=true or EMBEDDING_PROVIDER=huggingface)

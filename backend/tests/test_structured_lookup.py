@@ -93,7 +93,11 @@ def test_compare_prompt_does_not_force_takeaway_equals_label():
     interp = interpret_table_question(q, [chunk])
     assert interp.verified is not None
     assert VERIFIED_BLOCK_MARKER in interp.prompt_prefix
-    assert "prescribed" in interp.prompt_prefix.lower() or "administered" in interp.prompt_prefix.lower()
+    assert (
+        "prescribed" in interp.prompt_prefix.lower()
+        or "administered" in interp.prompt_prefix.lower()
+        or "stated amount" in interp.prompt_prefix.lower()
+    )
     assert "MUST state this value verbatim: 300" not in interp.prompt_prefix
 
     ctx, sources = _apply_table_interpretation(q, [chunk], "chunk body", [])

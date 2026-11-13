@@ -8,6 +8,7 @@ python-multipart
 
 # Database — MySQL 8.4 LTS (PyMySQL is pure Python, no build toolchain needed)
 sqlalchemy
+alembic
 aiosqlite
 pymysql
 cryptography
@@ -31,15 +32,16 @@ httpx
 boto3>=1.39.0
 
 # Document Processing
-# PDF table extract order in chunker: Camelot → Docling → pdfplumber → PyMuPDF → OCR
-# Camelot needs Ghostscript system package (apt: ghostscript) for lattice mode.
+# PDF tables (layout-aware): Docling TableFormer Accurate primary;
+# AWS Textract DetectDocumentText geometry fallback. No Camelot.
 PyMuPDF
 pymupdf4llm
 google-genai
 pdfplumber
-camelot-py>=2.0.0
+# Pin: docling 2.150+ currently ImportError (Orientation) vs docling-core 2.107.
+docling>=2.91.0,<2.100.0
+docling-core>=2.73.0,<3.0.0
 opencv-python-headless
-# docling  # optional complex/scanned-table fallback (heavy; may pull Torch) — pip install docling
 python-docx
 pypdf
 reportlab

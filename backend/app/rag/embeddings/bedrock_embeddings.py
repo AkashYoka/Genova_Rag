@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TITAN_EMBED_V2 = "amazon.titan-embed-text-v2:0"
 DEFAULT_TITAN_DIMENSION = 1024
+# Titan V2 enforces both a 50_000 character payload cap and an 8192-token
+# input limit. Truncate conservatively so oversized table cards never fail
+# an entire document ingest.
+DEFAULT_TITAN_MAX_INPUT_CHARS = 24_000
 
 
 class BedrockEmbeddings:
@@ -64,8 +68,16 @@ class BedrockEmbeddings:
         return self._embed_one(text)
 
     def _embed_one(self, text: str) -> List[float]:
+        raw = text or " "
+        if len(raw) > DEFAULT_TITAN_MAX_INPUT_CHARS:
+            logger.warning(
+                "Truncating Titan embed input from %s to %s chars",
+                len(raw),
+                DEFAULT_TITAN_MAX_INPUT_CHARS,
+            )
+            raw = raw[:DEFAULT_TITAN_MAX_INPUT_CHARS]
         payload = {
-            "inputText": text or " ",
+            "inputText": raw,
             "dimensions": self.dimensions,
             "normalize": True,
         }
@@ -138,8 +150,10 @@ class BedrockEmbeddings:
                     else ""
                 )
             )
+        detail = (aws_message or message or "").strip()
+        suffix = f": {detail[:300]}" if detail else ""
         return BedrockProviderError(
-            f"Bedrock Titan embed failed ({code or name}).",
+            f"Bedrock Titan embed failed ({code or name}){suffix}",
             code=code or name,
             http_status=http_status,
             kind="provider_error",

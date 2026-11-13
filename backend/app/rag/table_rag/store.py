@@ -47,6 +47,18 @@ def _row_to_dict(row: Any) -> Dict[str, Any]:
     )
     table_json.setdefault("caption", row.caption or "")
     table_json.setdefault("extraction_method", row.extraction_method or "")
+    pages = _json_load(getattr(row, "pages_json", None), default=None)
+    if not isinstance(pages, list) or not pages:
+        pages = table_json.get("pages") or []
+        if not pages:
+            pages = [
+                p
+                for p in (row.page_start, row.page_end)
+                if p is not None
+            ]
+            pages = sorted(set(int(p) for p in pages)) if pages else []
+    if pages and not table_json.get("pages"):
+        table_json["pages"] = pages
     llm_understanding = _json_load(
         getattr(row, "llm_understanding_json", None), default=None
     )
@@ -63,6 +75,7 @@ def _row_to_dict(row: Any) -> Dict[str, Any]:
         "filename": row.filename or "",
         "page_start": row.page_start,
         "page_end": row.page_end,
+        "pages": pages,
         "section": row.section or "",
         "subsection": row.subsection or "",
         "caption": row.caption or "",
@@ -121,13 +134,30 @@ def persist_document_tables(
 
             headers = list(table.get("headers") or record.get("headers") or [])
             rows = [list(r) for r in (table.get("rows") or record.get("rows") or [])]
+            pages_raw = record.get("pages") or table.get("pages") or []
+            pages: List[int] = []
+            for p in pages_raw:
+                try:
+                    pages.append(int(p))
+                except (TypeError, ValueError):
+                    pass
             page_start = int(
                 record.get("page_start")
+                or (min(pages) if pages else None)
                 or table.get("page")
                 or record.get("page")
                 or 1
             )
-            page_end = int(record.get("page_end") or page_start)
+            page_end = int(
+                record.get("page_end")
+                or (max(pages) if pages else None)
+                or page_start
+            )
+            if not pages:
+                pages = list(range(page_start, page_end + 1)) if page_end >= page_start else [page_start]
+            table["pages"] = pages
+            table["page_start"] = page_start
+            table["page_end"] = page_end
             low_conf = list(
                 table.get("low_confidence_cells")
                 or record.get("low_confidence_cells")
@@ -138,11 +168,31 @@ def persist_document_tables(
                 or record.get("needs_verification")
                 or low_conf
             )
-            confidence = float(
+            # Prefer structure confidence (0–1), then OCR/textract (0–100 or 0–1).
+            conf_raw = (
                 record.get("confidence")
-                or table.get("textract_confidence")
-                or (0.0 if needs_verification else 1.0)
+                if record.get("confidence") is not None
+                else None
             )
+            if conf_raw is None:
+                for key in (
+                    "structure_confidence",
+                    "ocr_confidence",
+                    "textract_confidence",
+                ):
+                    if table.get(key) is not None:
+                        conf_raw = table.get(key)
+                        break
+            try:
+                confidence = float(conf_raw) if conf_raw is not None else (
+                    0.0 if needs_verification else 1.0
+                )
+            except (TypeError, ValueError):
+                confidence = 0.0 if needs_verification else 1.0
+            # Normalize 0–100 OCR scores to 0–1 for SQL storage.
+            if confidence > 1.0:
+                confidence = confidence / 100.0
+            confidence = max(0.0, min(1.0, confidence))
 
             row = DocumentTable(
                 id=f"{document_id}:{table_id}"[:160],
@@ -152,11 +202,13 @@ def persist_document_tables(
                 filename=filename or record.get("filename") or "",
                 page_start=page_start,
                 page_end=page_end,
+                pages_json=_json_dump(pages),
                 section=str(record.get("section") or "")[:512],
                 subsection=str(record.get("subsection") or "")[:512],
                 caption=str(table.get("caption") or record.get("caption") or ""),
                 extraction_method=str(
-                    table.get("extraction_method")
+                    table.get("extraction_engine")
+                    or table.get("extraction_method")
                     or record.get("extraction_method")
                     or ""
                 )[:64],

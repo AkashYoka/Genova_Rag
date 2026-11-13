@@ -9,8 +9,10 @@ from typing import Any, Callable, Iterable, Optional
 
 from app.config import get_settings
 from app.rag.embeddings.embeddings import embed_query
+from app.rag.evaluation.ragas_compat import ensure_ragas_langchain_compat
 from app.rag.vectordb.vectorstore import query_chunks
 
+ensure_ragas_langchain_compat()
 settings = get_settings()
 
 

@@ -122,8 +122,8 @@ def test_pdf_table_detection_separates_table_from_paragraph(monkeypatch):
     assert "| Alpha | $10 |" in chunks[1]["text"]
 
 
-def test_camelot_primary_tables_dedupe_pdfplumber(monkeypatch):
-    """Camelot wins over overlapping pdfplumber tables; metadata is preserved."""
+def test_docling_primary_tables_dedupe_pdfplumber(monkeypatch):
+    """Docling wins over overlapping pdfplumber tables; metadata is preserved."""
 
     class FakeTable:
         bbox = (40, 90, 300, 160)
@@ -158,26 +158,30 @@ def test_camelot_primary_tables_dedupe_pdfplumber(monkeypatch):
     monkeypatch.setattr(chunker, "extract_pdf_images", lambda _filepath: [])
     monkeypatch.setattr(
         chunker,
-        "_extract_tables_with_camelot",
+        "get_settings",
+        lambda: types.SimpleNamespace(PDF_LAYOUT_AWARE_ENABLED=False),
+    )
+    monkeypatch.setattr(
+        chunker,
+        "_extract_tables_with_docling",
         lambda _filepath: [
             chunker._make_table_record(
                 rows=[["Name", "Amount"], ["Alpha", "$10"]],
                 page=1,
-                extractor="camelot",
-                flavor="lattice",
+                extractor="docling",
+                flavor="tableformer_accurate",
                 bbox=[0.1, 0.45, 0.75, 0.8],
                 accuracy=97.5,
             )
         ],
     )
-    monkeypatch.setattr(chunker, "_extract_tables_with_docling", lambda _filepath: [])
 
     chunks = chunk_document("report.pdf")
     table_chunks = [c for c in chunks if c.get("chunk_type") == "table"]
 
     assert len(table_chunks) == 1
-    assert table_chunks[0]["table_extractor"] == "camelot"
-    assert table_chunks[0]["table_flavor"] == "lattice"
+    assert table_chunks[0]["table_extractor"] == "docling"
+    assert table_chunks[0]["table_flavor"] == "tableformer_accurate"
     assert "table_json" in table_chunks[0]
     assert "| Alpha | $10 |" in table_chunks[0]["text"]
     text_chunks = [c for c in chunks if c.get("chunk_type") == "text"]
@@ -367,7 +371,11 @@ def test_pdf_table_index_increments_per_page(monkeypatch):
     fake_pdfplumber = types.SimpleNamespace(open=lambda _: FakePdf())
     monkeypatch.setitem(sys.modules, "pdfplumber", fake_pdfplumber)
     monkeypatch.setattr(chunker, "extract_pdf_images", lambda _: [])
-    monkeypatch.setattr(chunker, "_extract_tables_with_camelot", lambda _: [])
+    monkeypatch.setattr(
+        chunker,
+        "get_settings",
+        lambda: types.SimpleNamespace(PDF_LAYOUT_AWARE_ENABLED=False),
+    )
     monkeypatch.setattr(chunker, "_extract_tables_with_docling", lambda _: [])
 
     chunks = chunk_document("two_tables.pdf")
@@ -519,8 +527,8 @@ def test_pdf_image_captioning_on_the_fly(monkeypatch):
     assert "image_bytes" not in chunks[1]
 
 def test_layout_aware_skips_legacy_table_extractors(monkeypatch):
-    """Layout-aware mode must not run Camelot/Docling/pdfplumber tables."""
-    calls = {"camelot": 0, "docling": 0, "pdfplumber": 0, "pymupdf": 0}
+    """Layout-aware mode must not run legacy Docling/pdfplumber table extractors."""
+    calls = {"docling": 0, "pdfplumber": 0, "pymupdf": 0}
 
     def _fail(name):
         def _inner(_filepath):
@@ -535,7 +543,6 @@ def test_layout_aware_skips_legacy_table_extractors(monkeypatch):
         "get_settings",
         lambda: types.SimpleNamespace(PDF_LAYOUT_AWARE_ENABLED=True),
     )
-    monkeypatch.setattr(chunker, "_extract_tables_with_camelot", _fail("camelot"))
     monkeypatch.setattr(chunker, "_extract_tables_with_docling", _fail("docling"))
     monkeypatch.setattr(chunker, "_extract_tables_with_pdfplumber", _fail("pdfplumber"))
 
@@ -548,7 +555,7 @@ def test_layout_aware_skips_legacy_table_extractors(monkeypatch):
     result = chunker.extract_pdf_with_tables("report.pdf")
 
     assert result == [{"text": "Body paragraph", "page": 1, "chunk_type": "text"}]
-    assert calls == {"camelot": 0, "docling": 0, "pdfplumber": 0, "pymupdf": 1}
+    assert calls == {"docling": 0, "pdfplumber": 0, "pymupdf": 1}
 
 
 def test_pdf_multi_column_layout_parsing_order(monkeypatch):

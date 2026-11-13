@@ -1,6 +1,6 @@
 """Verify production Textract table extraction + Q1 lookup on Xolair pages.
 
-Reindexes pages 5,6,7,11 with native AWS Textract TABLES and runs:
+Reindexes pages 5,6,7,11 with DetectDocumentText + geometry tables and runs:
   - Q1: IgE 350 IU/mL, weight 78 kg (expect structured ~300)
   - Q8: unsupported IgE/weight (expect abstention / no invented dose)
 

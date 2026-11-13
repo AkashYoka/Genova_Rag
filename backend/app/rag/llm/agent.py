@@ -754,7 +754,7 @@ _LEADING_DOSE_RE = re.compile(
 
 def _verified_meta_from_sources(sources: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     for src in sources or []:
-        meta = src.get("verified_cell")
+        meta = src.get("verified_cell") or src.get("verified_calculation")
         if isinstance(meta, dict) and meta.get("value") is not None:
             return meta
     return None
@@ -769,7 +769,10 @@ def _reconcile_answer_with_verified_cell(
     Domain-agnostic: for pure lookups, the leading amount must match the cell.
     For compare-mode (stated administered amount vs label cell), only ensure the
     label cell appears — do not rewrite the takeaway to the label amount.
+    Also pins ``VerifiedCalculation`` results the same way as ``VerifiedCell``.
     """
+    from app.rag.table_rag.telemetry import record_reconcile_action
+
     meta = _verified_meta_from_sources(sources)
     if not meta:
         # Hard insufficient / ambiguous: force abstain framing.
@@ -798,39 +801,70 @@ def _reconcile_answer_with_verified_cell(
             ):
                 if status == "ambiguous" or candidates:
                     dims = hard[0].get("missing_dimensions") or ["applicability"]
-                    return (
-                        "Ambiguous table evidence: multiple applicable tables or "
-                        "cells could answer this lookup. "
-                        f"Missing or conflicting dimensions: {dims}. "
-                        f"Candidate values: {candidates}. "
-                        "Do not invent a single cell value.\n\n"
-                        + (answer or "")
+                    record_reconcile_action("abstain_banner_injected")
+                    # Domain-agnostic note — never dump raw selector jargon first.
+                    note = (
+                        "Ambiguous table evidence — more than one table or cell "
+                        "could apply here"
+                        + (
+                            f" (unclear: {', '.join(str(d) for d in dims[:4])})"
+                            if dims
+                            else ""
+                        )
+                        + ". I am not pinning a single matrix cell without guessing"
+                        + (
+                            f"; values seen include {candidates[:6]}."
+                            if candidates
+                            else "."
+                        )
+                        + " Use the applicability-matched table and state "
+                        "uncertainty plainly.\n\n"
                     )
+                    # Prefer the model's answer first when it already frames
+                    # ambiguity; otherwise prepend the caution banner.
+                    body = (answer or "").strip()
+                    if body and not re.search(
+                        r"(?i)^(ambiguous table evidence|looking at|from the label|"
+                        r"clinical takeaway|\*\*clinical)",
+                        body,
+                    ):
+                        return note + body
+                    return (body + "\n\n" + note.strip()) if body else note.strip()
+                record_reconcile_action("abstain_banner_injected")
                 return (
-                    "Insufficient table evidence to verify a unique row–column "
-                    "intersection. Do not invent a cell value.\n\n"
+                    "I could not verify a unique row–column cell in the retrieved "
+                    "tables, so I am not inventing a matrix value. "
+                    "If the surrounding prose still answers the question, use that; "
+                    "otherwise say the information is insufficient.\n\n"
                     + (answer or "")
                 )
+        record_reconcile_action("none")
         return answer
 
-    # Only pin answers for matched verified cells.
-    if str(meta.get("status") or "matched") not in ("", "matched"):
+    # Only pin answers for matched verified cells / calculations.
+    if str(meta.get("status") or "matched") not in ("", "matched", "calculated"):
+        record_reconcile_action("none")
         return answer
 
     raw_val = str(meta.get("value") or "").strip()
     if not raw_val:
+        record_reconcile_action("none")
         return answer
     compare_mode = bool(
         meta.get("compare_mode")
         or (meta.get("evidence") or {}).get("prescribed_value") is not None
     )
-    m_val = re.search(r"(\d+(?:\.\d+)?)", raw_val)
+    is_calculation = bool(meta.get("calculation"))
+    m_val = re.search(r"(-?\d+(?:\.\d+)?)", raw_val)
     if not m_val:
         # Non-numeric verified token — require verbatim presence.
         if raw_val.lower() in (answer or "").lower():
+            record_reconcile_action("none")
             return answer
+        record_reconcile_action("numeric_pinned")
+        label = "Verified calculation" if is_calculation else "Verified table value"
         return (
-            f"**Verified table value: {raw_val}** "
+            f"**{label}: {raw_val}** "
             f"(Page {meta.get('page')}; "
             f"row {meta.get('row_headers')}; column {meta.get('col_headers')}).\n\n"
             + (answer or "")
@@ -876,6 +910,7 @@ def _reconcile_answer_with_verified_cell(
     if compare_mode:
         # Stated amount may lead the answer; require the label cell somewhere.
         if verified_num in answer_text:
+            record_reconcile_action("none")
             return _with_provenance_pin(answer_text)
         prescribed = meta.get("prescribed_value")
         p_unit = meta.get("prescribed_unit") or ""
@@ -884,6 +919,7 @@ def _reconcile_answer_with_verified_cell(
             if prescribed is not None
             else "the stated amount"
         )
+        record_reconcile_action("numeric_pinned")
         return (
             f"**Verified label table value: {raw_val}** "
             f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
@@ -893,16 +929,24 @@ def _reconcile_answer_with_verified_cell(
             + answer_text
         )
 
+    auth_label = (
+        "Authoritative verified calculation"
+        if is_calculation
+        else "Authoritative verified table value"
+    )
     lead = _LEADING_DOSE_RE.search(answer_text)
     if lead and lead.group(1) == verified_num:
+        record_reconcile_action("none")
         return _with_provenance_pin(answer_text)
     # Also accept if verified value appears early without a conflicting lead dose.
     head = answer_text[:320]
     if verified_num in head and not lead:
+        record_reconcile_action("none")
         return _with_provenance_pin(answer_text)
     if lead and lead.group(1) != verified_num:
+        record_reconcile_action("numeric_pinned")
         correction = (
-            f"**Authoritative verified table value: {raw_val}** "
+            f"**{auth_label}: {raw_val}** "
             f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
             f"column {meta.get('col_headers')}). "
             f"The takeaway value must be {raw_val}, not {lead.group(1)} mg "
@@ -910,12 +954,14 @@ def _reconcile_answer_with_verified_cell(
         )
         return correction + answer_text
     if verified_num not in answer_text:
+        record_reconcile_action("numeric_pinned")
         return (
-            f"**Authoritative verified table value: {raw_val}** "
+            f"**{auth_label}: {raw_val}** "
             f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
             f"column {meta.get('col_headers')}).\n\n"
             + answer_text
         )
+    record_reconcile_action("none")
     return _with_provenance_pin(answer_text)
 
 
@@ -1376,6 +1422,12 @@ def _generate_answer_direct(
         record_answer(answer)
     except Exception:
         pass
+    try:
+        from app.rag.table_rag.telemetry import emit_table_rag_trace
+
+        emit_table_rag_trace()
+    except Exception:
+        pass
     result: Dict[str, Any] = {"answer": answer, "sources": sources}
     usage = getattr(client, "last_usage", None)
     if isinstance(usage, dict) and usage:
@@ -1524,6 +1576,14 @@ def _generate_answer_stream_direct(
         context, sources = _apply_table_interpretation(
             question, chunks, context, sources
         )
+        try:
+            from app.rag.table_rag.telemetry import emit_table_rag_trace
+
+            # Stream path does not post-reconcile tokens; emit selector/rewrite
+            # metrics after interpretation so production traces still land.
+            emit_table_rag_trace()
+        except Exception:
+            pass
 
     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
     resolved = _resolve_runtime_prompts(
@@ -1619,6 +1679,15 @@ def generate_answer(
             begin_rag_debug(question)
         except Exception:
             pass
+    try:
+        from app.rag.table_rag.telemetry import begin_table_rag_trace
+
+        begin_table_rag_trace(
+            question=question,
+            document_id=str(document_id or ""),
+        )
+    except Exception:
+        pass
     provider = normalize_llm_provider(llm_provider)
 
     # ── Interactive quiz (conversation / document / summary) ─
@@ -1766,6 +1835,15 @@ def generate_answer_stream(
             begin_rag_debug(question)
         except Exception:
             pass
+    try:
+        from app.rag.table_rag.telemetry import begin_table_rag_trace
+
+        begin_table_rag_trace(
+            question=question,
+            document_id=str(document_id or ""),
+        )
+    except Exception:
+        pass
     provider = normalize_llm_provider(llm_provider)
 
     # ── Interactive quiz ─────────────────────────────

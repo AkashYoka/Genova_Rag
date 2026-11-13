@@ -330,11 +330,9 @@ def _footnote_candidates_near_bbox(
 
 def _extractor_rank(extractor: str, flavor: str | None = None) -> int:
     """Higher rank wins during cross-extractor dedupe."""
-    flavor = (flavor or "").lower()
-    if extractor == "camelot":
-        return {"lattice": 6, "network": 5, "stream": 4, "hybrid": 5, "auto": 5}.get(flavor, 4)
+    del flavor
     if extractor == "docling":
-        return 3
+        return 5
     if extractor == "pdfplumber":
         return 2
     return 0
@@ -348,23 +346,17 @@ def _is_plausible_table(
     accuracy: float | None = None,
 ) -> bool:
     """Drop obvious false positives (e.g. multi-column prose mistaken as tables)."""
+    del flavor, accuracy, extractor
     if not rows or len(rows) < 2:
         return False
     n_cols = max(len(row) for row in rows)
     if n_cols < 1:
         return False
-    flavor = (flavor or "").lower()
-    # Network/stream frequently wrap narrative text; require real grid shape.
-    if extractor == "camelot" and flavor in {"network", "stream", "hybrid"}:
-        if n_cols < 2:
-            return False
-        if accuracy is not None and accuracy < 60.0:
-            return False
-        # Extremely tall 2-col blocks are usually sidebars / TOC, not tables.
-        if n_cols <= 2 and len(rows) > 25:
-            return False
-        if len(rows) > 60:
-            return False
+    # Extremely tall narrow blocks are usually sidebars / TOC, not tables.
+    if n_cols <= 2 and len(rows) > 25:
+        return False
+    if len(rows) > 60:
+        return False
     return True
 
 
@@ -468,146 +460,32 @@ def _pdf_page_sizes(filepath: str) -> Dict[int, tuple[float, float]]:
         return {}
 
 
-def _extract_tables_with_camelot(filepath: str) -> List[Dict[str, Any]]:
-    """Primary table extractor: Camelot Lattice + Network/Stream."""
-    try:
-        import camelot
-    except Exception as exc:
-        raise ImportError("camelot-py is not installed") from exc
+def _extract_tables_with_docling(filepath: str) -> List[Dict[str, Any]]:
+    """Legacy-chunker Docling path — TableFormer Accurate via docling_tables."""
+    from app.rag.ingestion.pdf_layout.docling_tables import extract_tables_from_pdf
 
     page_sizes = _pdf_page_sizes(filepath)
     records: List[Dict[str, Any]] = []
-    # Lattice for ruled tables; network then stream for borderless layouts.
-    flavor_passes = ("lattice", "network", "stream")
-    for flavor in flavor_passes:
-        try:
-            tables = camelot.read_pdf(
-                filepath,
-                pages="all",
-                flavor=flavor,
-                suppress_stdout=True,
-            )
-        except TypeError:
-            # Older camelot builds may not accept suppress_stdout / network.
-            try:
-                tables = camelot.read_pdf(filepath, pages="all", flavor=flavor)
-            except Exception as exc:
-                logger.warning("Camelot flavor=%s failed: %s", flavor, exc)
-                continue
-        except Exception as exc:
-            logger.warning("Camelot flavor=%s failed: %s", flavor, exc)
-            continue
-
-        for table in tables or []:
-            try:
-                df = table.df
-                rows = df.values.tolist()
-                # Camelot keeps headers in row 0 of the DataFrame.
-                page = int(getattr(table, "page", 1) or 1)
-                report = getattr(table, "parsing_report", None) or {}
-                accuracy = None
-                try:
-                    if report.get("accuracy") is not None:
-                        accuracy = float(report["accuracy"])
-                    if report.get("page") is not None:
-                        page = int(report["page"])
-                except Exception:
-                    pass
-                bbox = getattr(table, "_bbox", None) or getattr(table, "bbox", None)
-                width_height = page_sizes.get(page)
-                record = _make_table_record(
-                    rows=rows,
-                    page=page,
-                    extractor="camelot",
-                    flavor=flavor,
-                    bbox=bbox,
-                    page_width=width_height[0] if width_height else None,
-                    page_height=width_height[1] if width_height else None,
-                    accuracy=accuracy,
-                    pdf_origin=True,
-                )
-                if record:
-                    records.append(record)
-            except Exception as exc:
-                logger.debug("Skipping Camelot table (%s): %s", flavor, exc)
-    return records
-
-
-def _extract_tables_with_docling(filepath: str) -> List[Dict[str, Any]]:
-    """Fallback table extractor for complex / scanned layouts via Docling."""
-    try:
-        from docling.document_converter import DocumentConverter
-    except Exception as exc:
-        raise ImportError("docling is not installed") from exc
-
-    records: List[Dict[str, Any]] = []
-    try:
-        converter = DocumentConverter()
-        result = converter.convert(filepath)
-        document = getattr(result, "document", result)
-    except Exception as exc:
-        logger.warning("Docling conversion failed: %s", exc)
-        return records
-
-    # Iterate table items when available; fall back to export dict walk.
-    tables = []
-    if hasattr(document, "tables") and document.tables:
-        tables = list(document.tables)
-    elif hasattr(document, "iterate_items"):
-        try:
-            tables = [
-                item for item, _path in document.iterate_items()
-                if item.__class__.__name__.lower().endswith("table")
-                or getattr(item, "label", "") == "table"
-            ]
-        except Exception:
-            tables = []
-
-    for table in tables:
-        try:
-            rows: List[List[Any]] = []
-            if hasattr(table, "export_to_dataframe"):
-                df = table.export_to_dataframe()
-                rows = [list(df.columns)] + df.values.tolist()
-            elif hasattr(table, "data") and getattr(table.data, "grid", None):
-                grid = table.data.grid
-                for row in grid:
-                    rows.append([
-                        getattr(cell, "text", None) or str(getattr(cell, "content", "") or "")
-                        for cell in row
-                    ])
-            elif hasattr(table, "to_markdown"):
-                # Last resort: parse markdown pipes back into rows.
-                md = table.to_markdown()
-                for line in str(md).splitlines():
-                    if not line.strip().startswith("|"):
-                        continue
-                    if re.match(r"^\s*\|?\s*:?-{3,}", line.strip()):
-                        continue
-                    cells = [c.strip() for c in line.strip().strip("|").split("|")]
-                    rows.append(cells)
-            else:
-                continue
-
-            page = 1
-            prov = getattr(table, "prov", None) or []
-            if prov:
-                page = int(getattr(prov[0], "page_no", None) or getattr(prov[0], "page", 1) or 1)
-            bbox = None
-            if prov and hasattr(prov[0], "bbox"):
-                bbox = prov[0].bbox
-
-            record = _make_table_record(
-                rows=rows,
-                page=page,
-                extractor="docling",
-                flavor="docling",
-                bbox=bbox,
-            )
-            if record:
-                records.append(record)
-        except Exception as exc:
-            logger.debug("Skipping Docling table: %s", exc)
+    for table in extract_tables_from_pdf(filepath, page_sizes=page_sizes):
+        rows = (
+            [list(table.headers)] + [list(r) for r in table.rows]
+            if table.headers
+            else [list(r) for r in table.rows]
+        )
+        width_height = page_sizes.get(int(table.page))
+        record = _make_table_record(
+            rows=rows,
+            page=int(table.page),
+            extractor="docling",
+            flavor="tableformer_accurate",
+            bbox=list(table.bbox.as_tuple()) if table.bbox else None,
+            page_width=width_height[0] if width_height else None,
+            page_height=width_height[1] if width_height else None,
+            accuracy=(float(table.structure_confidence or 0) * 100.0) or None,
+            pdf_origin=True,
+        )
+        if record:
+            records.append(record)
     return records
 
 
@@ -661,10 +539,9 @@ def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
     """Extract PDF text while preserving tables as separate chunks.
 
     Extraction order:
-    1. Camelot 2.x (Lattice + Network/Stream) primary tables + pdfplumber text/coords
-    2. Docling fallback for complex / sparse table layouts
-    3. PyMuPDF native text
-    4. OCR fallback for image-only pages
+    1. Docling TableFormer Accurate + pdfplumber text/coords (legacy path only)
+    2. PyMuPDF native text
+    3. OCR fallback for image-only pages
     """
     pages: List[Dict[str, Any]] = []
 
@@ -762,23 +639,22 @@ def extract_pdf_with_pymupdf(filepath: str) -> List[Dict[str, Any]]:
 def extract_pdf_with_tables(filepath: str) -> List[Dict[str, Any]]:
     """Extract PDF text + tables for RAG chunking.
 
-    Pipeline:
-    1. pdfplumber — paragraph text + coordinate-based tables (validation/bbox)
-    2. Camelot 2.x — primary tables (Lattice for bordered, Network/Stream for borderless)
-    3. Docling — fallback when Camelot yields little/nothing (complex/scanned layouts)
-    4. Deduplicate overlapping tables across extractors (prefer Camelot > Docling > pdfplumber)
+    Pipeline (legacy only; layout-aware uses Docling+Textract in parse_pdf):
+    1. pdfplumber — paragraph text + coordinate-based tables
+    2. Docling TableFormer Accurate — structured tables
+    3. Deduplicate overlapping tables (prefer Docling > pdfplumber)
 
     Each table record includes Markdown text, structured JSON, page, bbox, footnotes,
     and extractor metadata suitable for chunking and retrieval.
 
     When the layout-aware pipeline is enabled, this legacy path returns PyMuPDF
     body text only: AWS Textract owns table extraction in ``parse_pdf``, so
-    running Camelot/Docling/pdfplumber here would duplicate tables.
+    running Docling/pdfplumber here would duplicate tables.
     """
     if bool(getattr(get_settings(), "PDF_LAYOUT_AWARE_ENABLED", True)):
         logger.info(
             "Layout-aware PDF enabled: legacy chunker returns body text only "
-            "for '%s' (Camelot/Docling/pdfplumber tables disabled; Textract owns tables)",
+            "for '%s' (legacy Docling/pdfplumber tables disabled; Docling+Textract owns tables in parse_pdf)",
             filepath,
         )
         return extract_pdf_with_pymupdf(filepath)
@@ -795,64 +671,19 @@ def extract_pdf_with_tables(filepath: str) -> List[Dict[str, Any]]:
     all_tables: List[Dict[str, Any]] = []
 
     try:
-        camelot_tables = _extract_tables_with_camelot(filepath)
-        all_tables.extend(camelot_tables)
+        docling_tables = _extract_tables_with_docling(filepath)
+        all_tables.extend(docling_tables)
         logger.info(
-            "Camelot extracted %d table candidate(s) from '%s'",
-            len(camelot_tables),
+            "Docling extracted %d table candidate(s) from '%s'",
+            len(docling_tables),
             filepath,
         )
     except ImportError as exc:
-        logger.info("Camelot unavailable (%s); continuing with other extractors", exc)
+        logger.info("Docling unavailable (%s); continuing without it", exc)
     except Exception as exc:
-        logger.warning("Camelot table extraction failed: %s", exc)
+        logger.warning("Docling table extraction failed: %s", exc)
 
-    # Docling fallback when primary extractors found few tables.
-    need_docling = len(all_tables) == 0
-    if need_docling:
-        try:
-            docling_tables = _extract_tables_with_docling(filepath)
-            all_tables.extend(docling_tables)
-            logger.info(
-                "Docling extracted %d table candidate(s) from '%s'",
-                len(docling_tables),
-                filepath,
-            )
-        except ImportError as exc:
-            logger.info("Docling unavailable (%s); continuing without it", exc)
-        except Exception as exc:
-            logger.warning("Docling table extraction failed: %s", exc)
-
-    # Validate borderless Camelot hits against pdfplumber coordinates when available.
-    plumber_by_page: Dict[int, List[Dict[str, Any]]] = {}
-    for rec in plumber_tables:
-        plumber_by_page.setdefault(int(rec.get("page", 0)), []).append(rec)
-
-    validated: List[Dict[str, Any]] = []
-    for rec in all_tables:
-        flavor = (rec.get("table_flavor") or "").lower()
-        if (
-            rec.get("table_extractor") == "camelot"
-            and flavor in {"network", "stream", "hybrid"}
-        ):
-            page = int(rec.get("page", 0))
-            plumber_peers = plumber_by_page.get(page) or []
-            if plumber_peers:
-                if not any(
-                    _bbox_iou(rec.get("_bbox"), peer.get("_bbox")) >= 0.25
-                    for peer in plumber_peers
-                ):
-                    # No spatial support from coordinate extractor — drop FP.
-                    continue
-            else:
-                # No plumber tables on this page: keep only stronger borderless hits.
-                rows = rec.get("_rows") or []
-                n_cols = max((len(r) for r in rows), default=0)
-                accuracy = rec.get("_accuracy")
-                if n_cols < 3 and (accuracy is None or float(accuracy) < 80.0):
-                    continue
-        validated.append(rec)
-
+    validated: List[Dict[str, Any]] = list(all_tables)
     validated.extend(plumber_tables)
     deduped = _dedupe_table_records(validated)
     logger.info(

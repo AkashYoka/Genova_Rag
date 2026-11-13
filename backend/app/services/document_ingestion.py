@@ -226,28 +226,41 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         try:
             from app.rag.table_rag import expand_table_rag_chunks, persist_document_tables
 
+            # Table cards/windows + document_tables use TABLE_RAG_INDEX_VERSION
+            # (independent of the semantic text chunking version).
+            table_index_version = str(
+                getattr(settings, "TABLE_RAG_INDEX_VERSION", "") or ""
+            ).strip() or (chunk_index_version or "")
+
             store_chunk_list, table_records = expand_table_rag_chunks(
                 chunks,
                 document_id=document_id,
                 filename=original_name,
-                index_version=chunk_index_version or "",
+                index_version=table_index_version,
                 enabled=bool(getattr(settings, "TABLE_RAG_ENABLED", True)),
                 max_rows_per_table=int(
                     getattr(settings, "TABLE_RAG_MAX_ROWS_PER_TABLE", 200) or 200
                 ),
             )
+            # Always replace SQL tables — empty list clears stale rows on re-ingest
+            # when extraction finds no tables (or after a prior partial failure).
+            persist_document_tables(
+                document_id=document_id,
+                user_id=user_id,
+                filename=original_name,
+                tables=table_records or [],
+                index_version=table_index_version,
+                db=db,
+            )
             if table_records:
-                persist_document_tables(
-                    document_id=document_id,
-                    user_id=user_id,
-                    filename=original_name,
-                    tables=table_records,
-                    index_version=chunk_index_version or "",
-                    db=db,
-                )
                 logger.info(
                     "TableRAG stored %d structured tables for document %s",
                     len(table_records),
+                    document_id,
+                )
+            else:
+                logger.info(
+                    "TableRAG cleared document_tables for document %s (no tables)",
                     document_id,
                 )
         except Exception as exc:
@@ -258,6 +271,17 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             )
             store_chunk_list = list(chunks)
             table_records = []
+            # Still clear stale SQL grids so re-ingest cannot leave orphan tables.
+            try:
+                from app.rag.table_rag.store import delete_document_tables
+
+                delete_document_tables(document_id, db=db)
+            except Exception as clear_exc:
+                logger.warning(
+                    "Failed to clear stale document_tables for %s: %s",
+                    document_id,
+                    clear_exc,
+                )
 
         def _on_embed_progress(stored: int, total: int) -> None:
             if total <= 0:
@@ -274,12 +298,18 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             on_progress=_on_embed_progress,
         )
 
-        # Navigation hierarchy uses content chunks only (not table_row index rows).
+        # Navigation hierarchy uses content chunks only (not TableRAG index rows).
         hierarchy_chunks = [
             c
             for c in store_chunk_list
             if str(c.get("chunk_type") or "")
-            not in ("table_summary", "table_interpretation", "table_row")
+            not in (
+                "table_summary",
+                "table_interpretation",
+                "table_row",
+                "table_card",
+                "table_row_window",
+            )
         ]
 
         # ── Hierarchical navigation index ──────────────────────────────────

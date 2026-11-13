@@ -1,7 +1,13 @@
-"""Textual representations for table-level and row-level embeddings."""
+"""Textual representations for table-card and row-window embeddings."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Union
+
+from app.rag.table_rag.schema import TablePayload, coerce_table_dict
+
+
+def _as_dict(table: Union[Dict[str, Any], TablePayload]) -> Dict[str, Any]:
+    return coerce_table_dict(table)
 
 
 def _cell(value: Any) -> str:
@@ -28,6 +34,21 @@ def _row_line(headers: Sequence[str], row: Sequence[Any]) -> str:
     return " | ".join(paired) if paired else " | ".join(_cell(c) for c in cells)
 
 
+def _leaf_headers(table: Dict[str, Any]) -> List[str]:
+    paths = table.get("normalized_header_paths") or []
+    headers = [str(h or "") for h in (table.get("headers") or [])]
+    if paths and len(paths) >= len(headers) and headers:
+        leaves: List[str] = []
+        for path in paths[: len(headers)]:
+            if isinstance(path, (list, tuple)) and path:
+                leaves.append(str(path[-1] or ""))
+            else:
+                leaves.append(str(path or ""))
+        if any(leaves):
+            return leaves
+    return headers
+
+
 def _understanding_index_text(table: Dict[str, Any]) -> str:
     """Append LLM interpretation metadata when present (never cell values)."""
     raw = table.get("llm_understanding")
@@ -41,7 +62,6 @@ def _understanding_index_text(table: Dict[str, Any]) -> str:
         if isinstance(raw, dict):
             return TableUnderstanding.model_validate(raw).to_index_text()
     except Exception:
-        # Best-effort plain dump of search phrases only.
         if isinstance(raw, dict):
             phrases = raw.get("semantic_search_phrases") or []
             desc = str(raw.get("description") or "").strip()
@@ -50,37 +70,85 @@ def _understanding_index_text(table: Dict[str, Any]) -> str:
                 bits.append(f"description: {desc}")
             if phrases:
                 bits.append("search_phrases: " + "; ".join(str(p) for p in phrases[:8]))
+            dims = raw.get("differentiating_dimensions") or []
+            if dims:
+                bits.append(
+                    "differentiating_dimensions: "
+                    + "; ".join(str(d) for d in dims[:8])
+                )
+            footnotes = raw.get("footnotes") or []
+            if footnotes:
+                bits.append(
+                    "footnotes: "
+                    + "; ".join(
+                        f"{f.get('marker', '')} {f.get('explanation', '')}".strip()
+                        for f in footnotes[:6]
+                        if isinstance(f, dict)
+                    )
+                )
             if bits:
                 return "LLM TABLE INTERPRETATION (not cell ground truth):\n" + "\n".join(bits)
     return ""
 
 
-def table_summary_text(
-    table: Dict[str, Any],
+def _column_profile_lines(table: Dict[str, Any], *, max_cols: int = 24) -> List[str]:
+    profiles = table.get("column_profiles") or []
+    lines: List[str] = []
+    for profile in profiles[:max_cols]:
+        if not isinstance(profile, dict):
+            try:
+                profile = profile.model_dump()  # type: ignore[attr-defined]
+            except Exception:
+                continue
+        header = _cell(profile.get("header") or f"col{profile.get('col_index', '?')}")
+        kind = str(profile.get("kind") or "text")
+        bits = [f"{header}[{kind}]"]
+        if profile.get("min_value") is not None or profile.get("max_value") is not None:
+            bits.append(f"min={profile.get('min_value')} max={profile.get('max_value')}")
+        units = profile.get("units") or []
+        if units:
+            bits.append("units=" + ",".join(str(u) for u in units[:4]))
+        ops = profile.get("boundary_operators") or []
+        if ops:
+            bits.append("bounds=" + ",".join(str(o) for o in ops[:6]))
+        distinct = profile.get("distinct_values") or []
+        if distinct:
+            bits.append(
+                "values=" + " | ".join(_cell(v) for v in distinct[:8])
+            )
+        nulls = int(profile.get("null_or_empty_count") or 0)
+        if nulls:
+            bits.append(f"nulls={nulls}")
+        lines.append("  - " + "; ".join(bits))
+    return lines
+
+
+def table_card_text(
+    table: Union[Dict[str, Any], TablePayload],
     *,
     filename: str = "",
     section: str = "",
     subsection: str = "",
-    include_llm: bool = False,
 ) -> str:
-    """Dense table-level text for semantic + BM25 matching.
-
-    By default this is *original-structure only* (identity, caption, headers,
-    shape, merges, facts). LLM interpretation is a separate embedding when
-    ``TABLE_RAG_SEPARATE_INTERPRETATION_EMBEDDING`` is enabled; pass
-    ``include_llm=True`` only for legacy combined summaries.
-    """
-    headers = [str(h or "") for h in (table.get("headers") or [])]
-    rows = table.get("rows") or []
-    caption = _cell(table.get("caption") or "")
-    page = table.get("page") or "?"
-    facts = [str(f) for f in (table.get("linearized_facts") or []) if str(f).strip()]
-    merged = table.get("merged_cells") or []
-    low_conf = table.get("low_confidence_cells") or []
-    needs_verification = bool(table.get("needs_verification") or low_conf)
+    """Single table-card embedding: structure + understanding + column profiles."""
+    data = _as_dict(table)
+    headers = _leaf_headers(data)
+    rows = data.get("rows") or []
+    caption = _cell(data.get("caption") or "")
+    pages = data.get("pages") or []
+    page = data.get("page") or (pages[0] if pages else "?")
+    page_label = (
+        ",".join(str(p) for p in pages)
+        if pages and len(pages) > 1
+        else str(page)
+    )
+    facts = [str(f) for f in (data.get("linearized_facts") or []) if str(f).strip()]
+    merged = data.get("merged_cells") or []
+    low_conf = data.get("low_confidence_cells") or []
+    needs_verification = bool(data.get("needs_verification") or low_conf)
 
     parts: List[str] = [
-        f"TABLE SUMMARY | page {page}",
+        f"TABLE CARD | pages {page_label}",
     ]
     if filename:
         parts.append(f"document: {filename}")
@@ -93,8 +161,12 @@ def table_summary_text(
     if headers:
         parts.append(f"headers: {_header_line(headers)}")
     parts.append(
-        f"shape: {len(rows)} data rows x {int(table.get('n_cols') or len(headers) or 0)} cols"
+        f"shape: {len(rows)} data rows x {int(data.get('n_cols') or len(headers) or 0)} cols"
     )
+    profile_lines = _column_profile_lines(data)
+    if profile_lines:
+        parts.append("column_profiles:")
+        parts.extend(profile_lines)
     if merged:
         merge_bits = []
         for item in merged[:8]:
@@ -116,64 +188,35 @@ def table_summary_text(
         parts.append("table facts:")
         parts.extend(f"- {fact}" for fact in facts[:24])
     else:
-        # Fall back to a few paired row previews for lexical recall.
         for idx, row in enumerate(rows[:6]):
             parts.append(f"row[{idx}]: {_row_line(headers, row)}")
 
-    if include_llm:
-        llm_text = _understanding_index_text(table)
-        if llm_text:
-            parts.append("")
-            parts.append(llm_text)
-    return "\n".join(parts).strip()
-
-
-def table_interpretation_text(
-    table: Dict[str, Any],
-    *,
-    filename: str = "",
-    section: str = "",
-    subsection: str = "",
-) -> str:
-    """Separate embedding text for LLM interpretation metadata only."""
-    page = table.get("page") or "?"
-    caption = _cell(table.get("caption") or "")
-    parts: List[str] = [
-        f"TABLE INTERPRETATION | page {page}",
-    ]
-    if filename:
-        parts.append(f"document: {filename}")
-    if section:
-        parts.append(f"section: {section}")
-    if subsection:
-        parts.append(f"subsection: {subsection}")
-    if caption:
-        parts.append(f"caption: {caption}")
-    llm_text = _understanding_index_text(table)
+    llm_text = _understanding_index_text(data)
     if llm_text:
+        parts.append("")
         parts.append(llm_text)
-    else:
-        parts.append(
-            "LLM TABLE INTERPRETATION (not cell ground truth): "
-            "unavailable; use extracted table_json for values."
-        )
     return "\n".join(parts).strip()
 
 
-def table_row_text(
-    table: Dict[str, Any],
-    row_index: int,
-    row: Sequence[Any],
+def table_row_window_text(
+    table: Union[Dict[str, Any], TablePayload],
+    row_indices: Sequence[int],
+    rows: Sequence[Sequence[Any]],
     *,
     filename: str = "",
     section: str = "",
 ) -> str:
-    """Row-level text optimized for exact value / multi-constraint lookup."""
-    headers = [str(h or "") for h in (table.get("headers") or [])]
-    caption = _cell(table.get("caption") or "")
-    page = table.get("page") or "?"
+    """Sliding/grouped row-window text prefixed with reconstructed leaf headers."""
+    data = _as_dict(table)
+    headers = _leaf_headers(data)
+    caption = _cell(data.get("caption") or "")
+    pages = data.get("pages") or []
+    page = data.get("page") or (pages[0] if pages else "?")
+    indices = [int(i) for i in row_indices]
+    start = indices[0] if indices else 0
+    end = indices[-1] if indices else start
     parts: List[str] = [
-        f"TABLE ROW | page {page} | row_index {row_index}",
+        f"TABLE ROW WINDOW | page {page} | rows {start}-{end}",
     ]
     if filename:
         parts.append(f"document: {filename}")
@@ -183,13 +226,12 @@ def table_row_text(
         parts.append(f"caption: {caption}")
     if headers:
         parts.append(f"headers: {_header_line(headers)}")
-    parts.append(f"values: {_row_line(headers, row)}")
-    # Flat cell dump helps BM25 exact matches on numeric cells.
-    flat_cells = [_cell(c) for c in (row or []) if _cell(c)]
-    if flat_cells:
-        parts.append("cells: " + " ".join(flat_cells))
-    # Header-aware retrieval cues from LLM metadata (no cell rewriting).
-    raw = table.get("llm_understanding")
+    for idx, row in zip(indices, rows):
+        parts.append(f"row[{idx}]: {_row_line(headers, row)}")
+        flat_cells = [_cell(c) for c in (row or []) if _cell(c)]
+        if flat_cells:
+            parts.append(f"cells[{idx}]: " + " ".join(flat_cells))
+    raw = data.get("llm_understanding")
     if isinstance(raw, dict):
         phrases = [str(p) for p in (raw.get("semantic_search_phrases") or [])[:4] if p]
         axes = [
@@ -203,22 +245,183 @@ def table_row_text(
     return "\n".join(parts).strip()
 
 
+def render_indexed_table_for_selector(
+    table: Union[Dict[str, Any], TablePayload, Any],
+) -> str:
+    """Render a SQL-hydrated table with explicit [row_idx, col_idx] coordinates.
+
+    Accepts ``DocumentTable``-like records (``.table`` / dict) or raw payloads.
+    """
+    data: Dict[str, Any]
+    meta: Dict[str, Any] = {}
+    if hasattr(table, "table") and not isinstance(table, dict):
+        # DocumentTable ORM or store dict-like record
+        nested = getattr(table, "table", None)
+        if isinstance(nested, dict):
+            data = dict(nested)
+        else:
+            data = _as_dict(nested) if nested is not None else {}
+        meta = {
+            "table_id": getattr(table, "table_id", None) or data.get("table_id"),
+            "pages": getattr(table, "pages", None),
+            "page_start": getattr(table, "page_start", None),
+            "page_end": getattr(table, "page_end", None),
+            "section": getattr(table, "section", None),
+            "caption": getattr(table, "caption", None),
+        }
+    elif isinstance(table, dict) and "table" in table and isinstance(table.get("table"), dict):
+        data = dict(table["table"])
+        meta = {
+            "table_id": table.get("table_id") or data.get("table_id"),
+            "pages": table.get("pages") or data.get("pages"),
+            "page_start": table.get("page_start"),
+            "page_end": table.get("page_end"),
+            "section": table.get("section"),
+            "caption": table.get("caption") or data.get("caption"),
+        }
+    else:
+        data = _as_dict(table)
+        meta = {}
+
+    headers = _leaf_headers(data)
+    rows = [list(r) for r in (data.get("rows") or [])]
+    table_id = str(meta.get("table_id") or data.get("table_id") or "")
+    pages = meta.get("pages") or data.get("pages") or []
+    if not pages:
+        for key in ("page_start", "page", "page_end"):
+            val = meta.get(key) if key in meta else data.get(key)
+            if val is not None:
+                try:
+                    pages.append(int(val))
+                except (TypeError, ValueError):
+                    pass
+        pages = sorted(set(pages))
+    section = str(
+        meta.get("section")
+        or data.get("section")
+        or ""
+    )
+    caption = _cell(meta.get("caption") or data.get("caption") or "")
+    understanding = data.get("llm_understanding") or {}
+    dims = []
+    footnotes = []
+    if isinstance(understanding, dict):
+        dims = [str(d) for d in (understanding.get("differentiating_dimensions") or []) if d]
+        footnotes = understanding.get("footnotes") or []
+
+    lines: List[str] = [
+        f"table_id: {table_id or 'unknown'}",
+        f"pages: {pages or [data.get('page')]}",
+    ]
+    if section:
+        lines.append(f"section_path: {section}")
+    if caption:
+        lines.append(f"caption: {caption}")
+    if dims:
+        lines.append("differentiating_dimensions: " + "; ".join(dims))
+    if footnotes:
+        bits = []
+        for item in footnotes[:8]:
+            if isinstance(item, dict):
+                bits.append(
+                    f"{item.get('marker', '')} {item.get('explanation', '')}".strip()
+                )
+            else:
+                bits.append(str(item))
+        if bits:
+            lines.append("footnotes: " + " | ".join(bits))
+    if headers:
+        lines.append("headers: " + " | ".join(headers))
+    lines.append("grid (each data cell shows [row_idx, col_idx]=value):")
+    # Markdown header row for readability.
+    if headers:
+        lines.append("| row | " + " | ".join(headers) + " |")
+        lines.append("| --- | " + " | ".join("---" for _ in headers) + " |")
+    for r_idx, row in enumerate(rows):
+        cells = list(row or [])
+        width = max(len(headers), len(cells))
+        cells = (cells + [""] * width)[:width]
+        rendered = []
+        for c_idx, cell in enumerate(cells):
+            rendered.append(f"[{r_idx},{c_idx}]={_cell(cell)}")
+        lines.append(f"| {r_idx} | " + " | ".join(rendered) + " |")
+    return "\n".join(lines)
+
+
+# ── Legacy aliases (tests / older callers) ───────────────────────────────────
+
+
+def table_summary_text(
+    table: Union[Dict[str, Any], TablePayload],
+    *,
+    filename: str = "",
+    section: str = "",
+    subsection: str = "",
+    include_llm: bool = False,
+) -> str:
+    """Backward-compatible alias → ``table_card_text`` (always includes LLM)."""
+    _ = include_llm  # card always embeds understanding when present
+    return table_card_text(
+        table, filename=filename, section=section, subsection=subsection
+    )
+
+
+def table_interpretation_text(
+    table: Union[Dict[str, Any], TablePayload],
+    *,
+    filename: str = "",
+    section: str = "",
+    subsection: str = "",
+) -> str:
+    """Deprecated separate interpretation embedding — folded into table_card."""
+    return table_card_text(
+        table, filename=filename, section=section, subsection=subsection
+    )
+
+
+def table_row_text(
+    table: Union[Dict[str, Any], TablePayload],
+    row_index: int,
+    row: Sequence[Any],
+    *,
+    filename: str = "",
+    section: str = "",
+) -> str:
+    """Backward-compatible single-row window."""
+    return table_row_window_text(
+        table,
+        [int(row_index)],
+        [row],
+        filename=filename,
+        section=section,
+    )
+
+
 def compact_table_prompt_block(
-    table: Dict[str, Any],
+    table: Union[Dict[str, Any], TablePayload],
     *,
     max_rows: int = 20,
     relevant_row_indices: Optional[Sequence[int]] = None,
 ) -> str:
     """Structured prompt appendix with headers, rows, spans, and warnings."""
-    headers = [str(h or "") for h in (table.get("headers") or [])]
-    rows = [list(r) for r in (table.get("rows") or [])]
-    page = table.get("page") or "?"
-    caption = _cell(table.get("caption") or "")
-    merged = table.get("merged_cells") or []
-    low_conf = table.get("low_confidence_cells") or []
-    table_id = str(table.get("table_id") or "")
+    data = _as_dict(table)
+    headers = [str(h or "") for h in (data.get("headers") or [])]
+    rows = [list(r) for r in (data.get("rows") or [])]
+    pages = data.get("pages") or []
+    page = data.get("page") or (pages[0] if pages else "?")
+    caption = _cell(data.get("caption") or "")
+    merged = data.get("merged_cells") or []
+    low_conf = data.get("low_confidence_cells") or []
+    table_id = str(data.get("table_id") or "")
 
-    lines = [f"Structured table (page {page}" + (f", id={table_id}" if table_id else "") + "):"]
+    page_label = (
+        ",".join(str(p) for p in pages) if pages and len(pages) > 1 else str(page)
+    )
+    lines = [
+        f"Structured table (page {page_label}"
+        + (f", id={table_id}" if table_id else "")
+        + "):"
+    ]
     if caption:
         lines.append(f"caption: {caption}")
     if headers:
@@ -252,7 +455,7 @@ def compact_table_prompt_block(
                 f"span={item.get('row_span', 1)}x{item.get('col_span', 1)} "
                 f"text={_cell(item.get('text'))!r}"
             )
-    if low_conf or table.get("needs_verification"):
+    if low_conf or data.get("needs_verification"):
         lines.append(
             "WARNING: table extraction has low-confidence cells; "
             "treat numeric values cautiously."
@@ -264,7 +467,7 @@ def compact_table_prompt_block(
                     f"{_cell(item.get('text'))!r} "
                     f"(conf={item.get('confidence')})"
                 )
-    llm_block = _understanding_index_text(table)
+    llm_block = _understanding_index_text(data)
     if llm_block:
         lines.append("")
         lines.append(llm_block)

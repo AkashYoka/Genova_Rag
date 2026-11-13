@@ -184,13 +184,25 @@ class Settings(BaseSettings):
     PDF_OCR_TESSDATA_DIR: str = ""  # blank → TESSDATA_PREFIX / system tessdata
     PDF_TABLE_MAX_CHARS: int = 4000
     PDF_TABLE_SPLIT_ROWS: int = 40
-    # Sole production PDF table extractor: AWS Textract AnalyzeDocument TABLES.
-    # IAM: textract:AnalyzeDocument. Cost ~$0.015/page analyzed when enabled.
-    # Set PDF_TEXTRACT_TABLES_ENABLED=false for offline/local without AWS
-    # (tables will be empty; failures are reported explicitly — no img2table
-    # or Tesseract table fallback).
-    # When PDF_TEXTRACT_TABULAR_ONLY=true (default), Textract runs only on pages
-    # that look tabular — never on ordinary text-only pages.
+    # Primary PDF table extractor: Docling + TableFormer Accurate.
+    # Fallback: AWS Textract DetectDocumentText + geometry reconstruction.
+    # IAM (fallback): textract:DetectDocumentText. Cost ~$0.0015/page fallback.
+    # No Camelot / AnalyzeDocument / img2table table extractors.
+    PDF_DOCLING_TABLES_ENABLED: bool = True
+    PDF_DOCLING_TABLEFORMER_MODE: str = "accurate"  # accurate | fast
+    PDF_DOCLING_DO_OCR: bool = True
+    # Convert large PDFs in page batches to avoid Docling/torch std::bad_alloc.
+    # 0 = single full-document convert (legacy). Recommended: 4–8 on Windows CPU.
+    PDF_DOCLING_PAGE_BATCH_SIZE: int = 4
+    # Quality gate: failed Docling pages/regions fall back to DetectDocumentText.
+    PDF_TABLE_QUALITY_MIN_COLS: int = 2
+    PDF_TABLE_QUALITY_MIN_ROWS: int = 1
+    PDF_TABLE_QUALITY_MAX_EMPTY_CELL_RATIO: float = 0.65
+    PDF_TABLE_QUALITY_MIN_STRUCTURE_CONFIDENCE: float = 0.35
+    # Master switch for DetectDocumentText fallback. False = Docling-only phase
+    # (no AWS Textract API calls). Keep Textract code for future reactivation.
+    PDF_TEXTRACT_FALLBACK_ENABLED: bool = False
+    # Legacy alias; both FALLBACK_ENABLED and TABLES_ENABLED must be true to run.
     PDF_TEXTRACT_TABLES_ENABLED: bool = True
     PDF_TEXTRACT_TABULAR_ONLY: bool = True
     PDF_TEXTRACT_REGION: str = ""  # blank → BEDROCK_REGION / AWS_REGION
@@ -198,6 +210,10 @@ class Settings(BaseSettings):
     PDF_TEXTRACT_TIMEOUT_SECONDS: int = 60
     PDF_TEXTRACT_MAX_WORKERS: int = 4
     PDF_TEXTRACT_MIN_CONFIDENCE: float = 50.0
+    # RAGAS evaluation (scripts/evaluate_ragas.py)
+    RAGAS_ENABLED: bool = True
+    RAGAS_REPORT_DIR: str = "data/evals/ragas/reports"
+    RAGAS_DATASET_DIR: str = "data/evals/ragas/datasets"
 
     # ── Hybrid Search / RRF ───────────────────────────────
     USE_HYBRID_SEARCH: bool = True   # set to False to fall back to vector-only
@@ -205,19 +221,32 @@ class Settings(BaseSettings):
     # Pull neighboring chunks when a hit is a table or references Table N.
     RAG_EXPAND_ADJACENT_CHUNKS: bool = True
     RAG_ADJACENT_CHUNK_WINDOW: int = 1
-    # TableRAG: structured SQL storage + table/row index chunks in Chroma/BM25.
+    # TableRAG: structured SQL storage + table_card / row_window index chunks.
     TABLE_RAG_ENABLED: bool = True
     TABLE_RAG_MAX_ROWS_PER_TABLE: int = 200
     TABLE_RAG_HYDRATE_ON_RETRIEVE: bool = True
+    TABLE_RAG_INDEX_VERSION: str = "v2_card_window"
     # LLM table understanding during semantic chunking (interpretation only).
     TABLE_RAG_LLM_UNDERSTANDING_ENABLED: bool = True
     TABLE_RAG_LLM_BATCH_SIZE: int = 2
     TABLE_RAG_LLM_MAX_TABLES: int = 20
-    TABLE_RAG_LLM_PROMPT_ROWS: int = 12
+    # Sample rows passed to understanding LLM (full grid is covered by profiles).
+    TABLE_RAG_LLM_PROMPT_ROWS: int = 5
     TABLE_RAG_LLM_MAX_OUTPUT_TOKENS: int = 2048
-    # Emit a separate Chroma/BM25 chunk for LLM interpretation (not merged into
-    # table_summary). Keep summary/row/interpretation as distinct embeddings.
-    TABLE_RAG_SEPARATE_INTERPRETATION_EMBEDDING: bool = True
+    # Deprecated: interpretation is folded into table_card (kept for env compat).
+    TABLE_RAG_SEPARATE_INTERPRETATION_EMBEDDING: bool = False
+    # Row windows for tables larger than TABLE_RAG_ROW_WINDOW_THRESHOLD.
+    TABLE_RAG_ROW_WINDOW_THRESHOLD: int = 10
+    TABLE_RAG_ROW_WINDOW_SIZE: int = 8
+    TABLE_RAG_MAX_ROW_WINDOWS: int = 40
+    # LLM query rewrite is OFF by default; only used as low-confidence fallback.
+    TABLE_RAG_QUERY_REWRITE_ENABLED: bool = False
+    # RRF scale with k=60 → scores ≈ 1/(60+rank) ∈ ~0.015–0.033 (not cosine 0–1).
+    # Default ~P15–P20 of typical weak matches; calibrate via scripts/calibrate_table_rag.py.
+    TABLE_RAG_REWRITE_FALLBACK_THRESHOLD: float = 0.018
+    # Coordinate selector: top-K hydrated tables sent to the LLM.
+    TABLE_RAG_SELECTOR_TOP_K: int = 4
+    TABLE_RAG_SELECTOR_ENABLED: bool = True
     # Per-query RAG debug payload (redacted by default).
     RAG_DEBUG_ENABLED: bool = False
     RAG_DEBUG_REDACT: bool = True

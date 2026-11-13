@@ -217,7 +217,7 @@ def test_verified_compare_prompt_marks_equal_amount_as_match():
     )
     block = cell.to_prompt_block()
     assert "EQUALS the verified label cell" in block
-    assert "Do NOT call it an intentional deviation" in block
+    assert "Do NOT invent a deviation solely because a stated amount was mentioned" in block
     assert "Page 5" in block
     assert "cite THIS page and table only" in block
 

@@ -7,7 +7,9 @@ import pytest
 
 from app.rag.table_rag.ids import ensure_table_id, make_table_id, parse_table_payload
 from app.rag.table_rag.indexing import (
+    CHUNK_TYPE_TABLE_CARD,
     CHUNK_TYPE_TABLE_ROW,
+    CHUNK_TYPE_TABLE_ROW_WINDOW,
     CHUNK_TYPE_TABLE_SUMMARY,
     expand_table_rag_chunks,
     extract_tables_from_chunks,
@@ -120,16 +122,51 @@ def test_expand_creates_summary_and_row_chunks():
     )
     assert len(records) == 1
     assert records[0]["table_id"] == "t_dosing"
-    summaries = [c for c in expanded if c["chunk_type"] == CHUNK_TYPE_TABLE_SUMMARY]
-    rows = [c for c in expanded if c["chunk_type"] == CHUNK_TYPE_TABLE_ROW]
-    assert len(summaries) == 1
-    assert len(rows) == 3
-    assert all(c.get("table_id") == "t_dosing" for c in summaries + rows)
+    cards = [
+        c
+        for c in expanded
+        if c["chunk_type"] in (CHUNK_TYPE_TABLE_CARD, CHUNK_TYPE_TABLE_SUMMARY)
+    ]
+    # Small tables (≤10 rows) emit card only — no row windows.
+    windows = [
+        c
+        for c in expanded
+        if c["chunk_type"] in (CHUNK_TYPE_TABLE_ROW_WINDOW, CHUNK_TYPE_TABLE_ROW)
+    ]
+    assert len(cards) == 1
+    assert len(windows) == 0
+    assert cards[0].get("table_id") == "t_dosing"
     # Contiguous indexes for Chroma ids.
     assert [c["chunk_index"] for c in expanded] == list(range(len(expanded)))
-    assert "TABLE SUMMARY" in summaries[0]["text"]
-    assert "row_index 1" in rows[1]["text"]
-    assert "300" in rows[1]["text"]
+    assert "TABLE CARD" in cards[0]["text"] or "TABLE SUMMARY" in cards[0]["text"]
+
+
+def test_expand_creates_row_windows_for_large_tables(monkeypatch):
+    monkeypatch.setattr(
+        "app.rag.table_rag.indexing.get_settings",
+        lambda: type(
+            "S",
+            (),
+            {
+                "TABLE_RAG_ROW_WINDOW_THRESHOLD": 10,
+                "TABLE_RAG_ROW_WINDOW_SIZE": 5,
+                "TABLE_RAG_MAX_ROW_WINDOWS": 40,
+                "TABLE_RAG_SEPARATE_INTERPRETATION_EMBEDDING": False,
+            },
+        )(),
+    )
+    table = _dosing_table()
+    table["rows"] = [[f"r{i}", "Every 4 weeks", "150", "225", "300"] for i in range(12)]
+    table["n_rows"] = 13
+    expanded, records = expand_table_rag_chunks(
+        [_table_chunk(table)], document_id="doc-big", filename="label.pdf"
+    )
+    windows = [
+        c for c in expanded if c["chunk_type"] == CHUNK_TYPE_TABLE_ROW_WINDOW
+    ]
+    assert len(records) == 1
+    assert len(windows) >= 1
+    assert "TABLE ROW WINDOW" in windows[0]["text"]
 
 
 def test_extract_prefers_complete_table_over_split_part():
@@ -289,7 +326,9 @@ def test_parse_table_payload_roundtrip():
     table = _dosing_table()
     raw = json.dumps(table)
     parsed = parse_table_payload(raw)
-    assert parsed["headers"] == table["headers"]
+    assert parsed is not None
+    assert parsed.headers == table["headers"]
+    assert parsed.to_dict()["headers"] == table["headers"]
     assert parse_table_payload(None) is None
 
 

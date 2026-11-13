@@ -220,6 +220,28 @@ def _ensure_fk_on_delete_set_null(
         )
 
 
+def _run_alembic_migrations() -> None:
+    """Apply Alembic migrations for TableRAG schema (document_tables, …)."""
+    try:
+        from pathlib import Path
+
+        from alembic import command
+        from alembic.config import Config
+
+        backend_root = Path(__file__).resolve().parent.parent
+        ini_path = backend_root / "alembic.ini"
+        if not ini_path.exists():
+            logger.warning("Alembic config missing at %s", ini_path)
+            return
+        cfg = Config(str(ini_path))
+        cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+        cfg.set_main_option("script_location", str(backend_root / "alembic_migrations"))
+        command.upgrade(cfg, "head")
+        logger.info("Alembic migrations applied (head)")
+    except Exception as exc:
+        logger.warning("Alembic migration skipped/failed: %s", exc)
+
+
 def _migrate_schema():
     """Apply schema migrations for existing databases (SQLite and MySQL).
 
@@ -833,74 +855,11 @@ def _migrate_schema():
         "document_id, chunk_index",
     )
 
-    # ── TableRAG structured table store ────────────────────────────────────
-    existing_tables = set(inspector.get_table_names())
-    if "document_tables" not in existing_tables:
-        try:
-            with engine.begin() as conn:
-                conn.execute(text(f"""
-                    CREATE TABLE document_tables (
-                        id                   VARCHAR(160)  PRIMARY KEY,
-                        document_id          CHAR(36)      NOT NULL,
-                        user_id              CHAR(36)      NOT NULL,
-                        table_id             VARCHAR(128)  NOT NULL,
-                        filename             VARCHAR(255),
-                        page_start           INTEGER,
-                        page_end             INTEGER,
-                        section              VARCHAR(512),
-                        subsection           VARCHAR(512),
-                        caption              {text_type},
-                        extraction_method    VARCHAR(64),
-                        n_rows               INTEGER,
-                        n_cols               INTEGER,
-                        headers_json         {text_type},
-                        rows_json            {text_type},
-                        bbox_json            {text_type},
-                        merged_cells_json    {text_type},
-                        cells_json           {text_type},
-                        header_rows_json     {text_type},
-                        low_confidence_json  {text_type},
-                        table_json           {text_type},
-                        summary_text         {text_type},
-                        llm_understanding_json {text_type},
-                        needs_verification   BOOLEAN       NOT NULL DEFAULT 0,
-                        confidence           FLOAT,
-                        index_version        VARCHAR(32),
-                        ordinal              INTEGER       NOT NULL DEFAULT 0,
-                        created_at           {timestamp_type},
-                        CONSTRAINT fk_document_tables_document
-                            FOREIGN KEY (document_id) REFERENCES documents (id) ON DELETE CASCADE,
-                        CONSTRAINT uq_document_tables_document_table_id
-                            UNIQUE (document_id, table_id)
-                    )
-                """))
-            logger.info("Migration: created table document_tables")
-        except Exception as exc:
-            logger.warning("Migration skipped document_tables: %s", exc)
-
-    # Additive column for LLM interpretation metadata on existing installs.
-    try:
-        existing_tables = set(inspector.get_table_names())
-        if "document_tables" in existing_tables:
-            table_cols = {
-                c["name"] for c in inspector.get_columns("document_tables")
-            }
-            if "llm_understanding_json" not in table_cols:
-                with engine.begin() as conn:
-                    conn.execute(
-                        text(
-                            f"ALTER TABLE document_tables "
-                            f"ADD COLUMN llm_understanding_json {text_type}"
-                        )
-                    )
-                logger.info(
-                    "Migration: added column document_tables.llm_understanding_json"
-                )
-    except Exception as exc:
-        logger.warning(
-            "Migration skipped document_tables.llm_understanding_json: %s", exc
-        )
-
+    # ── TableRAG structured table store (Alembic-managed) ─────────────────
+    # document_tables CREATE / additive columns (pages_json,
+    # llm_understanding_json) live in alembic_migrations/versions/. Keep indexes here so
+    # older installs still get them even if alembic stamp is ahead.
+    _run_alembic_migrations()
     _ensure_index(
         "document_tables",
         "ix_document_tables_document_id",

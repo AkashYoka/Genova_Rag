@@ -1,0 +1,243 @@
+{
+  "document_id": "43ae024f-3c0d-40f5-aa49-83e9f3682641",
+  "session_id": "b876ed5c-97f5-46f8-bafa-3555be7ee654",
+  "passed": 2,
+  "total": 12,
+  "results": [
+    {
+      "id": 1,
+      "elapsed_s": 11.13,
+      "status": 200,
+      "score": {
+        "pass": 5,
+        "total": 6,
+        "ok": false,
+        "checks": {
+          "label_dose": true,
+          "freq_2w": true,
+          "ae_no": true,
+          "off_label_yes": true,
+          "ss_yes": false,
+          "med_error_no": true
+        }
+      },
+      "question": "A 35-year-old patient with allergic asthma, body weight 78 kg and pretreatment IgE 350 IU/mL was intentionally prescribed Xolair 150 mg every 4 weeks. No adverse event was reported. Identify any adverse event, special situation, or off-label usage.",
+      "ans_head": "### Case Summary\n- **Patient**: 35-year-old with allergic asthma  \n- **Body weight**: 78 kg  \n- **Pretreatment IgE**: 350 IU/mL  \n- **Prescribed regimen**: Xolair 150 mg every 4 weeks (intentional)  \n- **Adverse event reported**: None  \n\n### Labeled Recommendation (Indication: Asthma, Age ≥12 years)\nFor a patient weighing **>70–90 kg** with pretreatment IgE **>300–400 IU/mL**, the labeled dose is **300 mg every 2 weeks** [Source: xolair_prescribing.pdf, Page 5, Table 1].  \n\n### Comparison to Prescribed Regimen\n| Parameter          | Labeled Recommendation                     | Prescribed Regimen            |\n|---------------------|--------------------------------------------|------------------------------|\n| Dose                | 300 mg                                     | 150 mg                       |\n| Frequency           | Every 2 weeks                              | Every 4 weeks                |\n| Route               | Subcutaneous (autoinjector)                | Subcutaneous (assumed)       |\n\n### Classification\n\n**Adverse Event**  \n- **No** – No clinical event or reaction was reported [Source: User input].\n\n**Off-Label Use**  \n- **Yes** – The prescribed dose (150 mg every 4 weeks) differs from the labeled dose (300 mg every 2 weeks) for this weight/IgE range. This represents intentional under-dosing and a less frequent administration schedule [Source: xolair_prescribing.pdf, Page 5, Table 1].\n\n**Special Situation**  \n- **Yes** – The off-label dosing regimen qualifies as a special situation because it deviates from the approved label [Source: FDA guidance on off-lab",
+      "error": null
+    },
+    {
+      "id": 2,
+      "elapsed_s": 9.32,
+      "status": 200,
+      "score": {
+        "pass": 4,
+        "total": 6,
+        "ok": false,
+        "checks": {
+          "label_dose": false,
+          "freq_4w": true,
+          "ae_no": true,
+          "off_label_yes": false,
+          "ss_yes": true,
+          "med_error_no": true
+        }
+      },
+      "question": "Adult allergic asthma, weight 80 kg, pretreatment IgE 250 IU/mL. Intentionally prescribed Xolair 75 mg every 4 weeks. No AE reported. Classify AE, off-label use, special situation, and medication error.",
+      "ans_head": "**Authoritative verified table value: 225** (Page 5; row ['>200-300']; column ['>70-90 kg']). The takeaway value must be 225, not 300 mg from a neighboring cell or another table.\n\n**Clinical Takeaway:**  \nFor an adult with allergic asthma weighing **80 kg** and a pretreatment IgE of **250 IU/mL**, the labeled XOLAIR dosing recommendation is **300 mg every 4 weeks** based on Table 1 in the prescribing information [Source: xolair_prescribing.pdf, Page 5]. The patient was intentionally prescribed **75 mg every 4 weeks**, which is a **dose reduction** from the recommended dose.\n\n---\n\n### Classification\n\n| Category | Determination | Rationale |\n|----------|---------------|-----------|\n| **Adverse Event (AE)** | **No AE reported** | The question states “No AE reported.” Dosing deviation alone does not constitute an adverse event. |\n| **Off‑label Use** | **Yes** | The prescribed dose (75 mg) is **lower** than the labeled recommendation of 300 mg for this weight/IgE combination. This constitutes off‑label use because the regimen differs from the approved dosing schedule. |\n| **Special Situation** | **Yes** | The off‑label use (dose reduction) qualifies as a special situation per the classification rules. |\n| **Medication Error** | **No** | There is no evidence of an *unintended* prescribing, dispensing, or administration mistake. The dose reduction was intentional, so it is classified as off‑label use rather than a medication error. |\n\n**PV Bottom Line:**  \n- The prescribed regimen (75 mg every 4 weeks) is **off‑label** for this patient’s weight/IgE profile.  \n- No adverse event wa",
+      "error": null
+    },
+    {
+      "id": 3,
+      "elapsed_s": 9.38,
+      "status": 200,
+      "score": {
+        "pass": 3,
+        "total": 5,
+        "ok": false,
+        "checks": {
+          "label_dose": false,
+          "ae_no": true,
+          "off_label_yes": false,
+          "ss_yes": true,
+          "med_error_no": true
+        }
+      },
+      "question": "A 40-year-old with allergic asthma, 50 kg, IgE 350 IU/mL received 600 mg every 2 weeks intentionally. No adverse event. Identify AE / special situation / off-label use / medication error.",
+      "ans_head": "**Authoritative verified table value: 225** (Page 5; row ['>300-400']; column ['30-60 kg']). The takeaway value must be 225, not 600 mg from a neighboring cell or another table.\n\n**Clinical Takeaway**  \nThe patient received **600 mg every 2 weeks** intentionally. This dosing regimen is **off‑label** for this patient’s weight‑IgE combination and therefore constitutes a **special situation**. No adverse event was reported.\n\n**Step‑by‑step classification**\n\n| Item | Determination | Rationale |\n|------|----------------|-----------|\n| **Adverse Event (AE)** | **No** | No clinical event or reaction was reported. Dosing deviation alone does not qualify as an AE. |\n| **Off‑label use** | **Yes** | The labeled dose for a 50‑kg patient with IgE 350 IU/mL is **300 mg every 2 weeks** (see Table 1, row “>300‑400”, column “30‑60 kg”). The prescribed 600 mg every 2 weeks exceeds the recommended dose. |\n| **Special Situation** | **Yes** | The intentional use of a higher-than‑recommended dose qualifies as a special situation (off‑label dosing). |\n| **Medication Error** | **No** | The higher dose was given intentionally, not as an unintended prescribing, dispensing, or administration mistake. |\n\n**Labeled recommendation (for reference)**  \n- **Indication**: Allergic asthma, ≥12 years  \n- **Weight‑IgE match**: >300‑400 IU/mL, 30‑60 kg  \n- **Recommended dose**: **300 mg** administered **every 2 weeks** [Source: xolair_prescribing.pdf, Page 5, Table 1]  \n\n**PV Bottom line**  \n- **Off‑label dosing** (600 mg vs. recommended 300 mg) → **Special situation**.  \n- No AE reported.  \n- No medication err",
+      "error": null
+    },
+    {
+      "id": 4,
+      "elapsed_s": 9.22,
+      "status": 200,
+      "score": {
+        "pass": 3,
+        "total": 4,
+        "ok": false,
+        "checks": {
+          "ae_no": true,
+          "off_label_yes": false,
+          "ss_yes": true,
+          "med_error_no": true
+        }
+      },
+      "question": "Adult asthma, IgE 350 IU/mL, weight 80 kg. Label supports 300 mg every 2 weeks but they intentionally got 300 mg every 4 weeks. No AE. Classify AE, off-label, special situation, medication error.",
+      "ans_head": "**Clinical Takeaway:**  \nFor an adult with asthma, IgE 350 IU/mL, and weight 80 kg, the label recommends **300 mg every 2 weeks** [Source: xolair_prescribing.pdf, Page 5, Table 1]. The patient intentionally received **300 mg every 4 weeks**, which is a dosing schedule not listed as a recommended regimen for this indication/population.\n\n**Classification:**\n\n| Category | Determination | Rationale |\n|----------|---------------|-----------|\n| **Adverse Event (AE)** | **No AE reported** | The question states “No AE.” Dosing deviation alone does not constitute an AE. |\n| **Off‑label use** | **Yes** | The prescribed regimen (300 mg every 4 weeks) differs from the label‑recommended schedule (300 mg every 2 weeks) for this adult asthma patient with IgE 350 IU/mL and weight 80 kg. |\n| **Special Situation** | **Yes** | The off‑label dosing schedule qualifies as a special situation (non‑recommended regimen). |\n| **Medication Error** | **No** | The deviation was intentional (patient “intentionally got 300 mg every 4 weeks”), not an unintended prescribing/dispensing/administration mistake. |\n\n**PV Bottom Line:**  \nThe patient is receiving an off‑label, less frequent dosing schedule than recommended. No adverse event was reported, and the deviation was intentional, so it is not a medication error. This regimen should be reviewed by the treating clinician for safety and efficacy considerations.",
+      "error": null
+    },
+    {
+      "id": 5,
+      "elapsed_s": 11.87,
+      "status": 200,
+      "score": {
+        "pass": 3,
+        "total": 4,
+        "ok": false,
+        "checks": {
+          "ae_no": true,
+          "off_label_yes": false,
+          "ss_yes": true,
+          "med_error_no": true
+        }
+      },
+      "question": "COPD patient (not asthma), IgE 200 IU/mL, weight 70 kg, Xolair 300 mg every 4 weeks intentionally. No AE. Off-label / special situation / AE / medication error?",
+      "ans_head": "**Clinical Takeaway:**  \nThe patient is receiving Xolair 300 mg every 4 weeks for COPD (not asthma), with a serum IgE of 200 IU/mL and a weight of 70 kg. This regimen is **off‑label** and constitutes a **special situation**, but there is **no adverse event reported** and **no medication error** identified.\n\n**Step‑by‑step rationale:**\n\n1. **Indication mismatch:**  \n   - Xolair (omalizumab) is **approved only for asthma** (both pediatric and adult) and for chronic rhinosinusitis with nasal polyps (CRSwNP) in adults.  \n   - **COPD is not an approved indication** for Xolair [Source: xolair_prescribing.pdf, prescribing information throughout].\n\n2. **Dose/frequency assessment (for the approved asthma indication):**  \n   - For **adult asthma** with **IgE 200 IU/mL** and **weight 70 kg**, the approved dosing table (Table 1, page 5) recommends **300 mg every 4 weeks** in the **>60‑70 kg** weight band for the **>100‑200 IU/mL** IgE range.  \n   - The patient’s prescribed dose **matches the labeled asthma recommendation** for this IgE/weight combination [Source: xolair_prescribing.pdf, Page 5, Table 1].\n\n3. **Off‑label use:**  \n   - Because the patient has **COPD**, not asthma, the use of Xolair is **off‑label**. The fact that the dose/frequency matches the asthma label does **not** make the regimen on‑label for COPD.  \n   - **Off‑label use = Yes** (wrong indication).\n\n4. **Special situation:**  \n   - Any off‑label use automatically qualifies as a **special situation** (use outside the approved labeling).  \n   - **Special situation = Yes** (off‑label use for COPD).\n\n5. **Adverse event",
+      "error": null
+    },
+    {
+      "id": 6,
+      "elapsed_s": 9.03,
+      "status": 200,
+      "score": {
+        "pass": 4,
+        "total": 4,
+        "ok": true,
+        "checks": {
+          "label_dose": true,
+          "ae_no": true,
+          "off_label_no": true,
+          "concordant": true
+        }
+      },
+      "question": "8-year-old with asthma, 30 kg, IgE 300 IU/mL received the pediatric table dose of 150 mg every 4 weeks as labeled. No AE. Any off-label use or special situation?",
+      "ans_head": "**Clinical takeaway:** The prescribed regimen of 150 mg every 4 weeks for this 8-year-old with asthma, weight 30 kg, and IgE 300 IU/mL **matches the labeled recommendation** and is **not off-label**. No adverse event was reported.\n\n**Why this is concordant with the label**\n\n- **Indication & population:** Pediatric patients with asthma, ages 6 to <12 years (the patient is 8 years old) – this matches the indication in Table 2 of the prescribing information.\n- **Weight band:** 30 kg falls in the **>25‑30 kg** column.\n- **IgE band:** 300 IU/mL falls in the **>200‑300 IU/mL** row.\n- **Labeled dose & frequency:** Table 2 specifies **150 mg every 4 weeks** for the >200‑300 IU/mL IgE band and >25‑30 kg weight band [Source: xolair_prescribing.pdf, Page 6, Table 2].\n\n**Pharmacovigilance classification**\n\n| Item | Determination | Rationale |\n|------|----------------|-----------|\n| **Adverse event (AE)** | **No AE reported** | The case states “No AE.” |\n| **Off‑label use** | **No** | The prescribed dose (150 mg) and frequency (every 4 weeks) exactly match the labeled recommendation for this age, weight, and IgE range. |\n| **Special situation** | **No** | No special situation (e.g., pregnancy, overdose, intentional dose reduction) is identified. |\n| **Medication error** | **No** | The regimen was intentionally prescribed at the labeled dose; there is no evidence of an unintended prescribing, dispensing, or administration mistake. |\n\n**Bottom line:** The patient’s therapy is **on-label and appropriate** based on the product’s dosing table. No further action is required from a prescribing",
+      "error": null
+    },
+    {
+      "id": 7,
+      "elapsed_s": 10.75,
+      "status": 200,
+      "score": {
+        "pass": 3,
+        "total": 4,
+        "ok": false,
+        "checks": {
+          "ae_no": true,
+          "off_label_yes": false,
+          "ss_yes": true,
+          "med_error_no": true
+        }
+      },
+      "question": "An 8-year-old with asthma, 30 kg, IgE 300 IU/mL was intentionally given an adult Table 1 regimen of 300 mg every 2 weeks. No AE. Classify AE / off-label / special situation / medication error.",
+      "ans_head": "**Clinical Takeaway**  \nThe patient is an 8‑year‑old with asthma, weight 30 kg, and pre‑treatment IgE 300 IU/mL. The label provides a pediatric dosing table for patients beginning XOLAIR between the ages of 6 to <12 years (Table 2, page 6). The prescribed regimen (300 mg every 2 weeks) does **not** match the recommended pediatric dose for this weight/IgE combination.\n\n**Step‑by‑step classification**\n\n| Item | Details |\n|------|---------|\n| **Indication & Population** | Pediatric asthma, age 6‑<12 years, weight 30 kg, IgE 300 IU/mL |\n| **Labeled recommendation (Table 2, page 6)** | For **>200‑300 IU/mL** and **>25‑30 kg**, the recommended dose is **150 mg every 4 weeks** (row “>200‑300”, column “>25‑30 kg”, frequency “Every 4 weeks”). |\n| **Prescribed regimen** | 300 mg every 2 weeks (intentional adult Table 1 regimen) |\n| **Dose/frequency mismatch** | • **Amount**: 300 mg vs. 150 mg (double the labeled amount) <br>• **Frequency**: every 2 weeks vs. every 4 weeks (twice as frequent) |\n| **Adverse event (AE)** | None reported – “No AE” per the case statement. |\n| **Off‑label use** | **Yes** – The dose (300 mg) and frequency (every 2 weeks) differ from the pediatric label recommendation for this weight/IgE group. This is intentional off‑label dosing. |\n| **Special situation** | **Yes** – The off‑label dosing constitutes a special situation (non‑recommended regimen). |\n| **Medication error** | **No** – The deviation was intentional (prescriber chose an adult regimen knowingly); there is no evidence of an unintended prescribing, dispensing, or administration mistake. |\n\n**PV Bot",
+      "error": null
+    },
+    {
+      "id": 8,
+      "elapsed_s": 12.34,
+      "status": 200,
+      "score": {
+        "pass": 3,
+        "total": 4,
+        "ok": false,
+        "checks": {
+          "ae_no": true,
+          "off_label_yes": false,
+          "ss_yes": true,
+          "med_error_no": true
+        }
+      },
+      "question": "Patient with chronic spontaneous urticaria (CSU), weight 80 kg, IgE 350 IU/mL was intentionally dosed using the asthma IgE/weight table. No AE. Is that off-label? Classify AE / special situation / medication error.",
+      "ans_head": "**Authoritative verified table value: 300** (Page 6; row ['>300-400']; column ['>70-80 kg']; table t_p6_i0_4903d50d5f). Cite this page/table only for the matrix value — not a sibling table.\n\n**Clinical Takeaway**\n\n- **Indication:** Chronic Spontaneous Urticaria (CSU) – this is **not** an approved indication for XOLAIR (omalizumab) per the label.\n- **Patient:** 80 kg, IgE 350 IU/mL.\n- **Prescribed regimen:** Intentionally dosed using the asthma IgE/weight table (i.e., using the dosing matrix intended for asthma, not CSU).\n\n**Label Review**\n\n- The label provides separate dosing tables for **asthma** and for **chronic spontaneous urticaria (CSU)**.  \n- For CSU, the dosing is based on **body weight only** (not IgE), and the recommended dose is **300 mg every 4 weeks** for patients ≥ 60 kg [Source: xolair_prescribing.pdf, Page 7, Table 3].  \n- The asthma dosing table (Table 1, Page 5) is **not** intended for CSU.\n\n**Classification**\n\n| Category | Determination | Rationale |\n|----------|---------------|-----------|\n| **Adverse Event (AE)** | **No** | No clinical event or reaction was reported. |\n| **Off‑label Use** | **Yes** | The patient was treated for CSU with a regimen derived from the asthma dosing table. This is a use outside the labeled indication. |\n| **Special Situation** | **Yes** | The off‑label use qualifies as a special situation (use of an approved drug for an unlabeled indication). |\n| **Medication Error** | **No** | The dosing was intentional (the prescriber deliberately used the asthma table). There is no evidence of an unintended prescribing, dispensing, or admi",
+      "error": null
+    },
+    {
+      "id": 9,
+      "elapsed_s": 12.67,
+      "status": 200,
+      "score": {
+        "pass": 3,
+        "total": 5,
+        "ok": false,
+        "checks": {
+          "label_dose": true,
+          "freq_4w": true,
+          "ae_no": true,
+          "off_label_no": false,
+          "concordant": false
+        }
+      },
+      "question": "Asthma patient >=12 years, IgE 300 IU/mL, weight 70 kg was intentionally prescribed Xolair 225 mg every 4 weeks. No AE. Does this match the label? Classify AE / off-label / special situation / medication error.",
+      "ans_head": "### Case Summary\n- **Patient:** Asthma, ≥12 years old  \n- **IgE:** 300 IU/mL  \n- **Weight:** 70 kg  \n- **Prescribed regimen:** Xolair 225 mg every 4 weeks (intentional)  \n- **Adverse event reported:** None  \n\n### Labeled Recommendation (from Table 1, Page 5)\n\n| Pretreatment Serum IgE (IU/mL) | Dosing Freq. | >60-70 kg |\n|-------------------------------|--------------|-----------|\n| >200-300                      | Every 4 weeks| 225 mg    |\n\n**Source:** Table 1. Subcutaneous XOLAIR Doses Every 2 or 4 Weeks* for Patients 12 Years of Age and Older with Asthma, Page 5 [Source: xolair_prescribing.pdf, Page 5]\n\n### Classification\n\n| Category                | Determination | Rationale |\n|-------------------------|---------------|-----------|\n| **Adverse Event**       | No            | No clinical event or reaction reported. |\n| **Off-label use**       | **Yes**       | The prescribed dose (225 mg every 4 weeks) matches the **labeled dose** for this IgE/weight group, **but** the indication is **asthma**, and the label specifically recommends **every 2 weeks** for patients with IgE >300 IU/mL, regardless of weight. The patient’s IgE (300 IU/mL) falls into the **>300-400 IU/mL** range, which calls for **every 2 weeks** dosing. |\n| **Special Situation**   | **Yes**       | The regimen is off-label because the dosing interval does not follow the label’s recommended schedule for this IgE range. |\n| **Medication Error**    | No            | The deviation is intentional (prescriber chose a less frequent schedule), not an unintended mistake. |\n\n### Clinical Takeaway\n- The **dose amount (22",
+      "error": null
+    },
+    {
+      "id": 10,
+      "elapsed_s": 10.7,
+      "status": 200,
+      "score": {
+        "pass": 6,
+        "total": 6,
+        "ok": true,
+        "checks": {
+          "label_dose": true,
+          "freq_4w": true,
+          "ae_no": true,
+          "off_label_yes": true,
+          "ss_yes": true,
+          "med_error_no": true
+        }
+      },
+      "question": "A 28-year-old with allergic asthma, weight 55 kg, pretreatment IgE 150 IU/mL was intentionally prescribed Xolair 150 mg every 4 weeks. No AE. Identify AE, special situation, or off-label usage.",
+      "ans_head": "**Clinical Takeaway:**  \nThe patient is receiving **off-label use** of Xolair because the prescribed dose/frequency does not match the label recommendation for this patient’s weight and IgE level.\n\n**Case Summary**  \n- **Indication:** Allergic asthma  \n- **Age:** 28 years (adult)  \n- **Weight:** 55 kg (falls in the **30–60 kg** weight range)  \n- **Pretreatment IgE:** 150 IU/mL (falls in the **>100–200 IU/mL** range)  \n- **Prescribed regimen:** 150 mg every 4 weeks  \n- **Adverse event reported:** None\n\n**Labeled Recommendation**  \nFor adult patients ≥12 years with asthma, weight **30–60 kg** and pretreatment IgE **>100–200 IU/mL**, the label recommends **300 mg every 4 weeks** [Source: xolair_prescribing.pdf, Page 5, Table 1].\n\n**Classification**  \n\n| Category | Determination | Rationale |\n|----------|---------------|-----------|\n| **Adverse Event** | **No** | No clinical event or reaction was reported. |\n| **Off-label Use** | **Yes** | The prescribed dose (150 mg) and frequency (every 4 weeks) do not match the label‑recommended dose of 300 mg every 4 weeks for this weight/IgE combination. |\n| **Special Situation** | **Yes** | The off‑label dosing constitutes a special situation that should be reviewed. |\n| **Medication Error** | **No** | The non‑recommended regimen was intentional, not an unintended prescribing or dispensing mistake. |\n\n**PV Bottom Line**  \n- The current regimen is **off-label** and represents a **special situation** due to dose/frequency mismatch.  \n- No adverse event was reported.  \n- This discrepancy should be reviewed by the prescribing clinician to det",
+      "error": null
+    },
+    {
+      "id": 11,
+      "elapsed_s": 10.8,
+      "status": 200,
+      "score": {
+        "pass": 3,
+        "total": 4,
+        "ok": false,
+        "checks": {
+          "label_dose": true,
+          "ae_no": true,
+          "off_label_no": false,
+          "concordant": true
+        }
+      },
+      "question": "Adult allergic asthma, 90 kg, IgE 450 IU/mL intentionally prescribed Xolair 375 mg every 2 weeks. No AE. Classify AE / off-label / special situation / medication error.",
+      "ans_head": "I could not verify a unique row–column cell in the retrieved tables, so I am not inventing a matrix value. If the label prose still answers the question, use that; otherwise say the information is insufficient.\n\n**Clinical Takeaway**  \nFor an adult with allergic asthma (CRSwNP indication is not specified, but the dosing tables are for asthma), weighing **90 kg** and with a pretreatment serum IgE of **450 IU/mL**, the labeled XOLAIR dosing recommendation is **450 mg every 4 weeks** (Table 3 on page 7 of the prescribing information). The prescribed regimen of **375 mg every 2 weeks** therefore **differs from the label**.\n\n**Classification**  \n\n| Category | Determination | Rationale |\n|----------|---------------|-----------|\n| **Adverse Event (AE)** | **No AE reported** | The case states “No AE.” An AE requires a clinical event/reaction; dosing deviation alone does not qualify. |\n| **Off‑label use** | **Yes** | The patient is receiving **375 mg every 2 weeks**, which is **not the recommended dose/frequency** for this weight/IgE combination (the label recommends 450 mg every 4 weeks). This constitutes off‑label dosing. |\n| **Special Situation** | **Yes** | The off‑label dosing regimen qualifies as a special situation (non‑recommended regimen). |\n| **Medication Error** | **No** | There is no evidence of an *unintended* prescribing, dispensing, or administration mistake; the deviation appears intentional. |\n\n**Bottom line for PV review**  \n- The regimen is **off‑label** (dose and frequency differ from the label).  \n- No adverse event is reported.  \n- This should be flagged for cl",
+      "error": null
+    },
+    {
+      "id": 12,
+      "elapsed_s": 12.53,
+      "status": 200,
+      "score": {
+        "pass": 1,
+        "total": 3,
+        "ok": false,
+        "checks": {
+          "ae_yes": true,
+          "off_label_no": false,
+          "concordant": false
+        }
+      },
+      "question": "A 45-year-old with allergic asthma, weight 78 kg, IgE 350 IU/mL developed anaphylaxis after an injection while on the labeled 300 mg every 2 weeks regimen. Classify AE / off-label / special situation / medication error.",
+      "ans_head": "**Clinical Takeaway**  \nThe patient is a 45‑year‑old adult with allergic asthma, weight 78 kg, and pre‑treatment IgE 350 IU/mL who experienced anaphylaxis after receiving a 300 mg subcutaneous omalizumab (XOLAIR) dose every 2 weeks – the labeled regimen for this weight/IgE range.\n\n**Label‑matched dosing**  \n- **Indication**: Asthma (≥12 years) – matches.  \n- **Weight/IgE bracket**: >70‑90 kg and >300‑400 IU/mL – matches the row “>300‑400” and column “>70‑90 kg” in Table 1 (page 5).  \n- **Labeled dose**: **300 mg** every **2 weeks** – exactly what was administered [Source: xolair_prescribing.pdf, Page 5, Table 1].\n\n**Pharmacovigilance classification**\n\n| Category | Determination | Rationale |\n|----------|---------------|-----------|\n| **Adverse Event (AE)** | **Yes** – anaphylaxis reported after injection. | Anaphylaxis is a serious clinical event occurring after administration. |\n| **Off‑label use** | **No** | The patient’s indication (asthma), weight/IgE bracket, dose (300 mg), and frequency (every 2 weeks) all align with the FDA‑approved labeling. |\n| **Special Situation** | **No** | No special situation (e.g., pregnancy, overdose, occupational exposure) is described beyond the reported AE. |\n| **Medication Error** | **No** | The dosing regimen was intentional and matched the label; there is no evidence of an unintended prescribing, dispensing, or administration mistake. |\n\n**PV Bottom Line**  \n- **AE**: Anaphylaxis – a true adverse reaction that requires immediate clinical attention and reporting to pharmacovigilance.  \n- **Regimen**: On‑label, appropriate dosing per wei",
+      "error": null
+    }
+  ]
+}

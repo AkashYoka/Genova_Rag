@@ -1,11 +1,11 @@
-"""Pydantic schemas for LLM table understanding metadata.
+"""Pydantic schemas for TableRAG payloads, understanding, and lookup decisions.
 
 LLM output is interpretation metadata only. Original extracted cell values,
 headers, merged cells, and bboxes remain the source of truth elsewhere.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -220,3 +220,152 @@ class TableUnderstandingBatch(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     tables: List[TableUnderstanding] = Field(default_factory=list)
+
+
+class ColumnValueProfile(BaseModel):
+    """Deterministic full-grid profile for one column (never invented by LLM)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    header: str = ""
+    col_index: int = 0
+    kind: str = "text"  # numeric | range | categorical | text | mixed
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+    units: List[str] = Field(default_factory=list)
+    boundary_operators: List[str] = Field(default_factory=list)
+    distinct_values: List[str] = Field(default_factory=list)
+    null_or_empty_count: int = 0
+    sample_values: List[str] = Field(default_factory=list)
+
+
+class TablePayload(BaseModel):
+    """Canonical parsed ``table_json`` shape used across TableRAG.
+
+    Extra keys from extraction are preserved (``extra=\"allow\"``) so ingest
+    metadata is not silently dropped. Grid fields remain the SQL source of
+    truth after hydration.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    table_id: str = ""
+    page: Optional[int] = None
+    pages: List[int] = Field(default_factory=list)
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    headers: List[str] = Field(default_factory=list)
+    rows: List[List[Any]] = Field(default_factory=list)
+    n_rows: Optional[int] = None
+    n_cols: Optional[int] = None
+    caption: str = ""
+    extraction_method: str = ""
+    extraction_engine: str = ""  # docling | textract_detect | native | …
+    bbox: Optional[Any] = None
+    merged_cells: List[Any] = Field(default_factory=list)
+    cells: List[Any] = Field(default_factory=list)
+    header_rows: List[List[Any]] = Field(default_factory=list)
+    low_confidence_cells: List[Any] = Field(default_factory=list)
+    linearized_facts: List[str] = Field(default_factory=list)
+    normalized_header_paths: List[List[str]] = Field(default_factory=list)
+    header_reconstruction: Dict[str, Any] = Field(default_factory=dict)
+    structure_validation: Optional[Dict[str, Any]] = None
+    needs_verification: bool = False
+    textract_confidence: float = 0.0
+    ocr_confidence: float = 0.0
+    structure_confidence: float = 0.0
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+    continuation_of: str = ""
+    stitch_confidence: float = 0.0
+    llm_understanding: Optional[Dict[str, Any]] = None
+    column_profiles: List[ColumnValueProfile] = Field(default_factory=list)
+    markdown: str = ""
+    part: Optional[int] = None
+    part_row_start: Optional[int] = None
+    part_row_count: Optional[int] = None
+    row_index: Optional[int] = None  # present on row-window index payloads
+    row_indices: List[int] = Field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.model_dump(mode="python")
+
+    def leaf_headers(self) -> List[str]:
+        """Prefer reconstructed leaf header labels when available."""
+        paths = self.normalized_header_paths or []
+        if paths and len(paths) >= len(self.headers or []):
+            leaves: List[str] = []
+            for path in paths[: len(self.headers) or len(paths)]:
+                if isinstance(path, (list, tuple)) and path:
+                    leaves.append(str(path[-1] or ""))
+                else:
+                    leaves.append(str(path or ""))
+            if any(leaves):
+                return leaves
+        return [str(h or "") for h in (self.headers or [])]
+
+
+TableLookupStatus = Literal[
+    "matched",
+    "needs_disambiguation",
+    "not_in_table",
+    "requires_calculation",
+]
+
+
+class TableLookupOperand(BaseModel):
+    """Operand cell coordinate for ``requires_calculation`` decisions."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    row_index: int
+    col_index: int
+
+
+class TableLookupDecision(BaseModel):
+    """Structured LLM coordinate selection over indexed candidate tables."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    status: TableLookupStatus = "not_in_table"
+    table_id: Optional[str] = None
+    row_index: Optional[int] = None
+    col_index: Optional[int] = None
+    missing_dimensions: List[str] = Field(default_factory=list)
+    rationale: str = ""
+    # Optional operand cells for multi-row arithmetic / comparison.
+    operands: List[TableLookupOperand] = Field(default_factory=list)
+    operation: str = ""  # sum | difference | ratio | product | average | ...
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: Any) -> str:
+        text = str(value or "not_in_table").strip().lower()
+        aliases = {
+            "ambiguous": "needs_disambiguation",
+            "disambiguation": "needs_disambiguation",
+            "not_found": "not_in_table",
+            "missing": "not_in_table",
+            "calculation": "requires_calculation",
+            "calc": "requires_calculation",
+            "match": "matched",
+        }
+        text = aliases.get(text, text)
+        if text not in {
+            "matched",
+            "needs_disambiguation",
+            "not_in_table",
+            "requires_calculation",
+        }:
+            return "not_in_table"
+        return text
+
+
+def coerce_table_dict(value: Union["TablePayload", Dict[str, Any], None]) -> Dict[str, Any]:
+    """Normalize TablePayload / dict into a plain mutable dict."""
+    if value is None:
+        return {}
+    if isinstance(value, TablePayload):
+        return value.to_dict()
+    if isinstance(value, dict):
+        return dict(value)
+    return {}

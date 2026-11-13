@@ -201,10 +201,21 @@ class TableData:
     header_rows: List[List[str]] = field(default_factory=list)
     # merged_cells: [{row_index, col_index, row_span, col_span, text}]
     merged_cells: List[Dict[str, Any]] = field(default_factory=list)
-    textract_confidence: float = 0.0
+    textract_confidence: float = 0.0  # legacy; prefer ocr_confidence
+    # Canonical provenance (domain-agnostic). Prefer extraction_engine over
+    # free-form extraction_method when both are set.
+    # Values: docling | textract_detect | native | ocr_ruled | ocr_alignment
+    extraction_engine: str = ""
+    ocr_confidence: float = 0.0
+    structure_confidence: float = 0.0
+    provenance: Dict[str, Any] = field(default_factory=dict)
     # Geometry-aware header reconstruction (paths, hierarchy, confidence).
     header_reconstruction: Dict[str, Any] = field(default_factory=dict)
     normalized_header_paths: List[List[str]] = field(default_factory=list)
+    # Multipage stitch: ordered page numbers covered by this table.
+    pages: List[int] = field(default_factory=list)
+    continuation_of: str = ""
+    stitch_confidence: float = 0.0
 
     @property
     def n_cols(self) -> int:
@@ -248,13 +259,22 @@ class TableData:
         return "\n".join(lines)
 
     def to_json(self, include_markdown: bool = True) -> Dict[str, Any]:
+        pages = list(self.pages or [])
+        if not pages and self.page:
+            pages = [int(self.page)]
         data: Dict[str, Any] = {
             "page": self.page,
+            "pages": pages,
+            "page_start": min(pages) if pages else self.page,
+            "page_end": max(pages) if pages else self.page,
             "headers": self.headers,
             "rows": self.rows,
             "n_rows": self.n_rows,
             "n_cols": self.n_cols,
             "extraction_method": self.extraction_method,
+            "extraction_engine": self.extraction_engine
+            or self.extraction_method
+            or "",
             "bbox": list(self.bbox.as_tuple()),
             "caption": self.caption,
             "low_confidence_cells": self.low_confidence_cells,
@@ -264,10 +284,17 @@ class TableData:
             "header_rows": [list(r) for r in (self.header_rows or [])],
             "merged_cells": list(self.merged_cells or []),
             "textract_confidence": float(self.textract_confidence or 0.0),
+            "ocr_confidence": float(
+                self.ocr_confidence or self.textract_confidence or 0.0
+            ),
+            "structure_confidence": float(self.structure_confidence or 0.0),
+            "provenance": dict(self.provenance or {}),
             "header_reconstruction": dict(self.header_reconstruction or {}),
             "normalized_header_paths": [
                 list(p) for p in (self.normalized_header_paths or [])
             ],
+            "continuation_of": self.continuation_of or "",
+            "stitch_confidence": float(self.stitch_confidence or 0.0),
         }
         try:
             from app.rag.ingestion.pdf_layout.table_structure import (

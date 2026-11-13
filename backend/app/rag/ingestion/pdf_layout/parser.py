@@ -52,9 +52,24 @@ class PdfLayoutError(RuntimeError):
     """Raised when the layout pipeline cannot produce usable content."""
 
 
+def _textract_fallback_allowed(settings: Any = None) -> bool:
+    """True only when both master fallback and tables flags are enabled.
+
+    ``PDF_TEXTRACT_FALLBACK_ENABLED=false`` (Docling-only testing phase) blocks
+    every DetectDocumentText call regardless of quality-gate failure.
+    """
+    if settings is None:
+        settings = get_settings()
+    return bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)) and bool(
+        getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)
+    )
+
+
 def _table_engine() -> str:
-    """Production table extractor is always AWS Textract TABLES."""
-    return "textract"
+    """Active table engine label for diagnostics."""
+    if _textract_fallback_allowed():
+        return "docling+textract_fallback"
+    return "docling_only"
 
 
 def _page_area(page: fitz.Page) -> float:
@@ -136,7 +151,7 @@ def _page_looks_tabular(
     fallback_tables: Sequence[TableData],
     page_text: str = "",
 ) -> Tuple[bool, str]:
-    """Cheap gate: should Textract TABLES run on this page?
+    """Cheap gate: should Textract DetectDocumentText run on this page?
 
     Textract is for tabular data only — not narrative pages that merely mention
     a table. Strong signals (extracted grids / find_tables) always qualify.
@@ -442,10 +457,14 @@ def _table_extraction_report(
     failures = [
         {
             "page": page.page_number,
-            "error": str(page.metrics.get("textract_error") or ""),
+            "error": str(
+                page.metrics.get("textract_error")
+                or page.metrics.get("docling_error")
+                or ""
+            ),
         }
         for page in pages
-        if page.metrics.get("textract_error")
+        if page.metrics.get("textract_error") or page.metrics.get("docling_error")
     ]
 
     table_entries: List[Dict[str, Any]] = []
@@ -456,6 +475,8 @@ def _table_extraction_report(
                     "page": page.page_number,
                     "index": index,
                     "extraction_method": table.extraction_method,
+                    "extraction_engine": getattr(table, "extraction_engine", "")
+                    or table.extraction_method,
                     "bbox": [round(value, 2) for value in table.bbox.as_tuple()],
                     "n_rows": table.n_rows,
                     "n_cols": table.n_cols,
@@ -466,11 +487,17 @@ def _table_extraction_report(
                     "merged_cells": list(table.merged_cells or []),
                     "cell_count": len(table.cells or []),
                     "caption": table.caption,
+                    "structure_confidence": float(
+                        getattr(table, "structure_confidence", 0) or 0
+                    ),
+                    "ocr_confidence": float(getattr(table, "ocr_confidence", 0) or 0),
                 }
             )
 
     elapsed = sum(
-        float(page.metrics.get("textract_elapsed_s") or 0) for page in pages
+        float(page.metrics.get("textract_elapsed_s") or 0)
+        + float(page.metrics.get("docling_elapsed_s") or 0)
+        for page in pages
     )
     return {
         "engine": engine,
@@ -562,9 +589,20 @@ def parse_pdf(
         raise FileNotFoundError(f"PDF file not found: {filepath}")
 
     engine = _table_engine()
+    fallback_on = _textract_fallback_allowed(settings)
     engine_info: Dict[str, Any] = {
-        "engine": "textract",
-        "tables_enabled": bool(getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)),
+        "engine": engine,
+        "docling_enabled": bool(getattr(settings, "PDF_DOCLING_TABLES_ENABLED", True)),
+        "docling_tableformer_mode": (
+            getattr(settings, "PDF_DOCLING_TABLEFORMER_MODE", "accurate") or "accurate"
+        ),
+        "textract_fallback_enabled": fallback_on,
+        "pdf_textract_fallback_enabled": bool(
+            getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)
+        ),
+        "pdf_textract_tables_enabled": bool(
+            getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)
+        ),
         "tabular_only": bool(getattr(settings, "PDF_TEXTRACT_TABULAR_ONLY", True)),
         "region": (
             (getattr(settings, "PDF_TEXTRACT_REGION", "") or "").strip()
@@ -573,13 +611,44 @@ def parse_pdf(
         ),
     }
     logger.info(
-        "PDF table engine: AWS Textract TABLES (enabled=%s, tabular_only=%s, region=%s)",
-        engine_info["tables_enabled"],
+        "PDF table engine: %s "
+        "(docling=%s, textract_fallback=%s, tabular_only=%s, region=%s)",
+        engine,
+        engine_info["docling_enabled"],
+        engine_info["textract_fallback_enabled"],
         engine_info["tabular_only"],
         engine_info["region"],
     )
 
     doc = fitz.open(str(path))
+    page_sizes: Dict[int, Tuple[float, float]] = {
+        i + 1: (float(p.rect.width), float(p.rect.height)) for i, p in enumerate(doc)
+    }
+    docling_tables_all: List[TableData] = []
+    docling_error = ""
+    if bool(getattr(settings, "PDF_DOCLING_TABLES_ENABLED", True)):
+        try:
+            from app.rag.ingestion.pdf_layout.docling_tables import (
+                extract_tables_from_pdf,
+            )
+
+            docling_tables_all = extract_tables_from_pdf(
+                str(path), page_sizes=page_sizes
+            )
+        except Exception as exc:
+            docling_error = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "Docling table extraction failed for %s: %s — "
+                "%s",
+                path.name,
+                exc,
+                (
+                    "Textract fallback per page"
+                    if _textract_fallback_allowed(settings)
+                    else "Docling-only mode (no Textract)"
+                ),
+            )
+
     pages: List[PageExtraction] = []
     figures_by_page: Dict[int, List[DocumentElement]] = {}
     margin_report: Dict[str, Any] = {}
@@ -613,7 +682,9 @@ def parse_pdf(
 
             try:
                 table_source = "none"
-                page_ext.metrics["table_engine"] = "textract"
+                page_ext.metrics["table_engine"] = engine
+                if docling_error:
+                    page_ext.metrics["docling_error"] = docling_error
                 hint_tables: List[TableData] = []
                 if strategy == "none":
                     page_ext.status = "empty"
@@ -668,10 +739,16 @@ def parse_pdf(
                                 image_coverage=coverage,
                             )
 
-                    # Sole production table path: AWS Textract TABLES.
-                    textract_started = time.perf_counter()
-                    textract_tables: List[TableData] = []
-                    textract_error = ""
+                    # Hybrid tables: Docling Accurate primary → quality gate →
+                    # DetectDocumentText geometry fallback for failed pages.
+                    from app.rag.ingestion.pdf_layout.extraction_quality import (
+                        filter_quality_tables,
+                    )
+                    from app.rag.ingestion.pdf_layout.textract_tables import (
+                        extract_tables_from_page,
+                        usable_textract_tables,
+                    )
+
                     tabular_only = bool(
                         getattr(settings, "PDF_TEXTRACT_TABULAR_ONLY", True)
                     )
@@ -682,34 +759,116 @@ def parse_pdf(
                     )
                     page_ext.metrics["tabular_candidate"] = looks_tabular
                     page_ext.metrics["tabular_reason"] = tabular_reason
-                    tables_enabled = bool(
-                        getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)
+
+                    page_docling = [
+                        t for t in docling_tables_all if int(t.page) == int(page_number)
+                    ]
+                    accepted, rejected, quality_reports = filter_quality_tables(
+                        page_docling
                     )
-                    run_textract = tables_enabled and (
-                        looks_tabular or not tabular_only
+                    page_ext.metrics["docling_tables_raw"] = len(page_docling)
+                    page_ext.metrics["docling_tables"] = len(accepted)
+                    page_ext.metrics["docling_rejected"] = len(rejected)
+                    page_ext.metrics["table_quality"] = quality_reports
+
+                    final_tables: List[TableData] = list(accepted)
+                    table_source = "docling" if accepted else "none"
+
+                    # Fallback when Docling produced nothing usable on a page
+                    # that looks tabular, rejected all candidates, or crashed.
+                    need_fallback = (not accepted) and (
+                        looks_tabular
+                        or not tabular_only
+                        or bool(rejected)
+                        or bool(docling_error)
                     )
-                    if tables_enabled and tabular_only and not looks_tabular:
+                    # Non-tabular pages skip Textract unless Docling already
+                    # produced rejected grids that need a second opinion.
+                    if tabular_only and not looks_tabular and not rejected and not docling_error:
+                        need_fallback = False
                         page_ext.metrics["textract_skipped"] = "non_tabular_page"
-                    elif not tables_enabled:
+                    # Prefer validated Textract over unvalidated Docling rejects:
+                    # never keep rejected Docling grids when fallback runs.
+                    if need_fallback:
+                        page_ext.metrics["textract_fallback_reason"] = (
+                            "docling_error"
+                            if docling_error
+                            else "rejected"
+                            if rejected
+                            else "empty"
+                            if not page_docling
+                            else "quality_gate"
+                        )
+
+                    textract_enabled = _textract_fallback_allowed(settings)
+                    textract_tables: List[TableData] = []
+                    textract_error = ""
+                    textract_started = time.perf_counter()
+                    run_textract = bool(need_fallback and textract_enabled)
+                    if need_fallback and not textract_enabled:
                         page_ext.metrics["textract_skipped"] = "disabled"
+                        page_ext.metrics["docling_only_mode"] = True
+                        # Explicit Docling-only failure — never invent a grid.
+                        fail_reason = page_ext.metrics.get("textract_fallback_reason") or (
+                            "docling_error"
+                            if docling_error
+                            else "rejected"
+                            if rejected
+                            else "empty"
+                        )
+                        page_ext.metrics["docling_extraction_failed_reason"] = fail_reason
+                        if rejected:
+                            page_ext.metrics["docling_reject_reasons"] = [
+                                list(
+                                    ((t.provenance or {}).get("quality") or {}).get(
+                                        "reasons"
+                                    )
+                                    or []
+                                )
+                                for t in rejected
+                            ]
                         page_ext.warnings.append(
-                            "Textract TABLES disabled (PDF_TEXTRACT_TABLES_ENABLED=false); "
-                            "no table extraction fallback is configured"
+                            f"docling_only: extraction failed ({fail_reason}); "
+                            "Textract fallback disabled"
                         )
                     if run_textract:
                         try:
-                            from app.rag.ingestion.pdf_layout.textract_tables import (
-                                extract_tables_from_page,
-                                usable_textract_tables,
-                            )
-
                             textract_tables = usable_textract_tables(
                                 extract_tables_from_page(page, page_number)
                             )
+                            fb_accepted, _fb_rej, fb_reports = filter_quality_tables(
+                                textract_tables
+                            )
+                            page_ext.metrics["textract_quality"] = fb_reports
+                            if fb_accepted:
+                                final_tables = list(fb_accepted)
+                                table_source = "textract_fallback"
+                            elif textract_tables:
+                                # Keep best-effort fallback only when the grid
+                                # has a usable body; drop empty/narrow rejects.
+                                usable_uncertain = []
+                                for t in textract_tables:
+                                    reasons = list(
+                                        ((t.provenance or {}).get("quality") or {}).get(
+                                            "reasons"
+                                        )
+                                        or []
+                                    )
+                                    if any(
+                                        r in reasons
+                                        for r in ("too_few_rows", "too_few_columns")
+                                    ):
+                                        continue
+                                    usable_uncertain.append(t)
+                                if usable_uncertain:
+                                    final_tables = list(usable_uncertain)
+                                    table_source = "textract_fallback"
+                                else:
+                                    page_ext.metrics["textract_rejected_empty"] = True
                         except Exception as exc:
                             textract_error = f"{type(exc).__name__}: {exc}"
                             logger.error(
-                                "Textract TABLES failed on page %s of %s: %s",
+                                "Textract DetectDocumentText fallback failed on page %s of %s: %s",
                                 page_number,
                                 path.name,
                                 exc,
@@ -719,19 +878,41 @@ def parse_pdf(
                         time.perf_counter() - textract_started, 3
                     )
                     page_ext.metrics["textract_invoked"] = bool(run_textract)
+                    page_ext.metrics["textract_tables"] = len(textract_tables)
                     if textract_error:
                         page_ext.metrics["textract_error"] = textract_error
-                    page_ext.metrics["textract_tables"] = len(textract_tables)
-                    if textract_tables:
-                        page_ext.tables = list(textract_tables)
-                        table_source = "textract"
-                    else:
-                        page_ext.tables = []
-                        table_source = "none"
-                        if run_textract and not textract_error:
-                            page_ext.metrics["textract_empty"] = True
+                    if run_textract and not textract_tables and not textract_error:
+                        page_ext.metrics["textract_empty"] = True
 
-                    # Exclude Textract table regions from body lines when present.
+                    # Explicit failure (never silently invent a grid).
+                    if need_fallback and not final_tables:
+                        page_ext.metrics["table_extraction_failed"] = True
+                        if not textract_enabled:
+                            page_ext.metrics.setdefault(
+                                "docling_only_mode", True
+                            )
+                        else:
+                            page_ext.warnings.append(
+                                "table_extraction_failed: Docling quality gate and "
+                                "DetectDocumentText fallback produced no usable table"
+                            )
+                    elif (
+                        table_source == "textract_fallback"
+                        and final_tables
+                        and any(
+                            (t.provenance or {}).get("quality", {}).get("ok") is False
+                            for t in final_tables
+                        )
+                    ):
+                        page_ext.metrics["table_extraction_uncertain"] = True
+                        for t in final_tables:
+                            prov = dict(t.provenance or {})
+                            prov["extraction_uncertain"] = True
+                            t.provenance = prov
+
+                    page_ext.tables = list(final_tables)
+
+                    # Exclude table regions from body lines when present.
                     if page_ext.tables and page_ext.lines:
                         table_boxes = [
                             table.bbox
@@ -794,6 +975,14 @@ def parse_pdf(
     )
     for page in pages:
         page.lines = cleaned.get(page.page_number, page.lines)
+
+    # Multipage table stitch (after Textract + header reconstruction/repair).
+    try:
+        from app.rag.ingestion.pdf_layout.table_normalize import stitch_multipage_tables
+
+        stitch_multipage_tables(pages)
+    except Exception as exc:
+        logger.warning("Multipage table stitch skipped: %s", exc)
 
     body_size = body_font_size(pages)
     state = StructureState()

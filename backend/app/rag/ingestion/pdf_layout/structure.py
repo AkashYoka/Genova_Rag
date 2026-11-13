@@ -317,21 +317,29 @@ def build_page_elements(
             if caption:
                 obj.caption = caption.text
             table_payload = obj.to_json()
-            # Stable id so TableRAG SQL + row/summary index chunks can
+            pages = list(getattr(obj, "pages", None) or table_payload.get("pages") or [])
+            if not pages:
+                pages = [int(obj.page or 1)]
+            page_start = min(pages)
+            page_end = max(pages)
+            # Stable id so TableRAG SQL + card/window index chunks can
             # reference the same extracted grid across split parts.
             table_payload["table_id"] = make_table_id(
-                page=int(obj.page or 1),
+                page=int(page_start or obj.page or 1),
                 ordinal=table_ordinal,
                 bbox=obj.bbox.as_tuple() if obj.bbox else None,
                 headers=obj.headers or [],
             )
+            table_payload["pages"] = pages
+            table_payload["page_start"] = page_start
+            table_payload["page_end"] = page_end
             table_ordinal += 1
             elements.append(
                 DocumentElement(
                     element_type="table",
                     text=obj.markdown,
-                    page_start=obj.page,
-                    page_end=obj.page,
+                    page_start=page_start,
+                    page_end=page_end,
                     bbox=obj.bbox,
                     section=state.section,
                     subsection=state.subsection,
@@ -343,6 +351,7 @@ def build_page_elements(
                         "columns": obj.n_cols,
                         "caption": obj.caption,
                         "table_id": table_payload["table_id"],
+                        "pages": pages,
                     },
                 )
             )

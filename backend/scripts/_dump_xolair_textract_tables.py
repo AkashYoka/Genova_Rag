@@ -1,4 +1,4 @@
-"""Dump Textract TABLES grids for docs/xolair_prescribing.pdf (inspection only).
+"""Dump DetectDocumentText geometry tables for xolair_prescribing.pdf.
 
 Uses the same tabular-page gate + extract_tables_from_page path as ingest.
 Writes scripts/_e2e_xolair_textract_tables.json — no index mutation.
@@ -19,7 +19,7 @@ from app.rag.ingestion.pdf_layout.textract_tables import (
 
 PDF = Path(__file__).resolve().parents[2] / "docs" / "xolair_prescribing.pdf"
 OUT = Path(__file__).with_name("_e2e_xolair_textract_tables.json")
-COST_PER_PAGE = 0.015
+COST_PER_PAGE = 0.0015
 
 
 def main() -> None:
