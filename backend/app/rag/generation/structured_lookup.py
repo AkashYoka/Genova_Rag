@@ -103,6 +103,9 @@ STATUS_AMBIGUOUS = "ambiguous"
 STATUS_NOT_FOUND = "not_found"
 STATUS_OUT_OF_RANGE = "out_of_range"
 STATUS_INVALID_TABLE_STRUCTURE = "invalid_table_structure"
+STATUS_SELECTOR_FAILED = "selector_failed"
+STATUS_VERIFICATION_FAILED = "verification_failed"
+STATUS_EMPTY_CELL = "empty_cell"
 
 _EMPTY_OR_UNSUPPORTED_CELL_RE = re.compile(
     r"(?i)^\s*(?:[-–—]+|n/?a|none|null|empty|"
@@ -138,7 +141,9 @@ class VerifiedCell:
     col_index: int
     page: Optional[int] = None
     filename: str = ""
-    confidence: float = 100.0
+    # 0.0 means "no scored confidence claimed" — coordinate verification is
+    # represented by ``status`` / ``evidence["verification"]``, not a fake 100.
+    confidence: float = 0.0
     table_headers: List[str] = field(default_factory=list)
     evidence: Dict[str, Any] = field(default_factory=dict)
     status: str = STATUS_MATCHED
@@ -201,8 +206,12 @@ class VerifiedCell:
                 f"- Row: {row_s}\n"
                 f"- Column: {col_s}\n"
                 f"{provenance}"
-                f"- Confidence: {self.confidence:.1f}\n"
-                f"{match_rule}"
+                + (
+                    f"- Confidence: {self.confidence:.1f}\n"
+                    if self.confidence and self.confidence > 0
+                    else "- Coordinate verification: python_sql_hydrate\n"
+                )
+                + f"{match_rule}"
                 "Do NOT claim the stated amount equals the label cell when it "
                 "differs. Do NOT replace the label cell with a neighboring cell "
                 "or another table.\n"
@@ -211,6 +220,11 @@ class VerifiedCell:
                 "the same time window (or comparable basis) and state that ratio. "
                 "Do not substitute informal fractions for the normalized comparison."
             )
+        conf_line = (
+            f"- Confidence: {self.confidence:.1f}"
+            if self.confidence and self.confidence > 0
+            else "- Coordinate verification: python_sql_hydrate"
+        )
         return (
             f"{VERIFIED_BLOCK_MARKER}\n"
             "Your final answer MUST use this exact cell value. "
@@ -222,7 +236,7 @@ class VerifiedCell:
             f"- Column: {col_s}\n"
             f"{provenance}"
             f"- Status: {self.status}\n"
-            f"- Confidence: {self.confidence:.1f}"
+            f"{conf_line}"
         )
 
 
@@ -244,15 +258,19 @@ class InsufficientEvidence:
                 else "applicability / population / period / category"
             )
             return (
-                "AMBIGUOUS table evidence — do not invent a single cell value.\n"
+                "AMBIGUOUS table evidence — HARD ABSTAIN.\n"
                 f"- Reason: {self.reason}\n"
                 f"- Status: {self.status}\n"
-                f"- Missing or conflicting dimensions: {dims}\n"
-                f"- Candidate values seen: {self.candidate_values or []}\n"
+                f"- Missing or conflicting applicability dimensions: {dims}\n"
+                f"- Candidate values (NOT verified — do not treat as facts): "
+                f"{self.candidate_values or []}\n"
                 f"- Candidate tables: {self.candidate_table_ids or []}\n"
-                "- Ask for the missing constraint or present the candidates with provenance.\n"
-                "- Do not pick an arbitrary table when candidates disagree.\n"
-                "- Do not promote one candidate into a definitive answer."
+                "- Your entire answer must be inconclusive/clarification only.\n"
+                "- Do NOT state a labeled dose, frequency, regimen, on-label, "
+                "off-label, or dosing-deviation conclusion.\n"
+                "- Do NOT invent a Clinical Takeaway that picks one candidate.\n"
+                "- Ask for the missing applicability constraint or list candidates "
+                "with provenance without choosing one."
             )
         if self.soft:
             return (

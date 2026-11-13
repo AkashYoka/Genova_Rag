@@ -285,6 +285,7 @@ def _interpret_with_llm_selector(
         prefix = str(fallback_prompt)
     else:
         prefix = insuff.to_prompt_block() + "\n\n"
+    cand_ids = list(insuff.candidate_table_ids or candidate_ids)
     return TableInterpretationResult(
         is_structured_lookup=True,
         result=insuff,
@@ -295,7 +296,9 @@ def _interpret_with_llm_selector(
             "status": insuff.status,
             "soft_insufficient": soft,
             "missing_dimensions": list(insuff.missing_dimensions or []),
-            "candidate_table_ids": candidate_ids,
+            "candidate_values": list(insuff.candidate_values or []),
+            "candidate_table_ids": cand_ids,
+            "verification_status": str(insuff.status or status_label),
             "selector_status": status_label,
             "selector_rationale": decision.rationale,
         },

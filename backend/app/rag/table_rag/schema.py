@@ -336,6 +336,16 @@ class TableLookupDecision(BaseModel):
     operands: List[TableLookupOperand] = Field(default_factory=list)
     operation: str = ""  # sum | difference | ratio | product | average | ...
 
+    @field_validator("missing_dimensions", "operands", mode="before")
+    @classmethod
+    def _none_to_empty_list(cls, value: Any) -> Any:
+        return [] if value is None else value
+
+    @field_validator("operation", mode="before")
+    @classmethod
+    def _none_operation_to_empty(cls, value: Any) -> str:
+        return "" if value is None else str(value)
+
     @field_validator("status", mode="before")
     @classmethod
     def _normalize_status(cls, value: Any) -> str:

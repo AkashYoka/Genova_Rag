@@ -117,8 +117,40 @@ def evaluate_table_case(
     if verified and verified.get("value") is not None:
         verified_value = verified.get("value")
 
+    expect_ambiguous = bool(
+        case.get("expect_ambiguous")
+        or case.get("expect_abstain")
+        or "ambiguous" in {str(t).lower() for t in (case.get("tags") or [])}
+    )
+    status_vals = [
+        str(s.get("status") or s.get("selector_status") or "").lower()
+        for s in (sources or [])
+    ]
+    ambiguous_detected = any(
+        s in {"ambiguous", "needs_disambiguation"} for s in status_vals
+    ) or bool(
+        re.search(
+            r"(?i)ambiguous table evidence|needs_disambiguation|missing.*dimension",
+            str(answer or ""),
+        )
+    )
+    # Wrong applicability table with a numeric match counts as false-confident.
+    table_ok = table_id_selected(
+        case.get("expected_table") or case.get("expected_table_id"),
+        sources,
+        chunks=chunks,
+    )
+    numeric_ok = numeric_answer_match(reference, answer)
+    false_confident = None
+    if expect_ambiguous:
+        false_confident = bool(verified) and not ambiguous_detected
+    elif table_ok is False and numeric_ok is True:
+        false_confident = True
+    elif table_ok is True or numeric_ok is False:
+        false_confident = False
+
     return {
-        "numeric_answer_correct": numeric_answer_match(reference, answer),
+        "numeric_answer_correct": numeric_ok,
         "verified_cell_correct": (
             numeric_answer_match(reference, verified_value)
             if reference is not None and verified_value is not None
@@ -126,11 +158,7 @@ def evaluate_table_case(
         ),
         "unit_preserved": unit_preserved(reference, answer),
         "page_attribution_ok": page_attribution_ok(case.get("expected_page"), sources),
-        "table_id_selected": table_id_selected(
-            case.get("expected_table") or case.get("expected_table_id"),
-            sources,
-            chunks=chunks,
-        ),
+        "table_id_selected": table_ok,
         "selector_status": next(
             (
                 str(s.get("selector_status"))
@@ -140,5 +168,10 @@ def evaluate_table_case(
             None,
         ),
         "has_verified_cell": bool(verified),
+        "ambiguity_detected": ambiguous_detected if expect_ambiguous else None,
+        "ambiguity_correct": (
+            (ambiguous_detected is True) if expect_ambiguous else None
+        ),
+        "false_confident_selection": false_confident,
         "tags": list(case.get("tags") or []),
     }

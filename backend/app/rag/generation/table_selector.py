@@ -14,9 +14,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from app.config import get_settings
 from app.rag.generation.structured_lookup import (
     STATUS_AMBIGUOUS,
+    STATUS_EMPTY_CELL,
     STATUS_MATCHED,
     STATUS_NOT_FOUND,
     STATUS_OUT_OF_RANGE,
+    STATUS_SELECTOR_FAILED,
+    STATUS_VERIFICATION_FAILED,
     InsufficientEvidence,
     VerifiedCell,
 )
@@ -158,10 +161,11 @@ def collect_candidate_tables(
     return ordered[: max(1, int(top_k or 4))]
 
 
-# Age/cohort words are scored via ``_age_prior`` only. Including them in
-# distinctive caption hits lets "Adult X" questions prefer an unrelated
-# sibling whose caption merely says "Adult …" over the indication-matched table.
-_AGE_COHORT_TOKENS = frozenset(
+# Cohort lexicon excluded from *content* token ranking. Bound compatibility is
+# scored separately via query duration bounds vs table applicability ranges —
+# including these words as distinctive caption hits lets "Adult X" promote an
+# unrelated sibling that merely says "Adult …".
+_COHORT_LEXICON_TOKENS = frozenset(
     {
         "adult",
         "adults",
@@ -186,17 +190,47 @@ _AGE_COHORT_TOKENS = frozenset(
         "younger",
     }
 )
+# Opposing cohort families for hard soft-rank drops (domain-agnostic lexicon,
+# not a numeric age pivot).
+_COHORT_ADULTISH = frozenset(
+    {"adult", "adults", "adolescent", "adolescents", "geriatric", "elderly"}
+)
+_COHORT_PEDISH = frozenset(
+    {
+        "pediatric",
+        "paediatric",
+        "child",
+        "children",
+        "infant",
+        "infants",
+        "neonate",
+        "neonates",
+        "neonatal",
+    }
+)
+
+# Soft ranking weights (eligibility/conflict always wins over these).
+# Documented signals only — no domain-specific priors.
+_SCOPE_RANK_WEIGHTS = {
+    "caption_content_hit": 3.0,  # distinctive caption/attr tokens ∩ question
+    "caption_overlap": 0.5,  # shared content tokens ∩ question
+    "axis_unit_overlap": 5.0,  # query axis units present in headers
+    "bound_compatible": 2.0,  # query duration bound fits table ranges
+    "retrieval_score": 1.0,  # upstream retrieval score
+    "page_ordinal": -0.1,  # weak earlier-page tie-break
+}
 
 
 def scope_rank_candidates(
     question: str,
     candidates: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Rank/filter sibling tables by caption·purpose·age scope vs the question.
+    """Soft-rank eligibility-approved tables by generic evidence signals.
 
-    Domain-agnostic: prefers axis-unit overlap, then soft-boosts distinctive
-    caption/purpose tokens that appear in the question. Hard-drops only
-    age-incompatible cohorts when the question states a calendar age.
+    Hard filters: cited Table-N match; incompatible applicability bounds.
+    Soft signals (see ``_SCOPE_RANK_WEIGHTS``): caption content overlap,
+    axis-unit overlap, bound compatibility, retrieval score, page ordinal.
+    Empty after hard filters → empty list (fail closed).
     """
     from app.rag.generation.table_selection import (
         _tokens,
@@ -217,7 +251,7 @@ def scope_rank_candidates(
         return items
 
     q = question or ""
-    q_tokens = _tokens(q) - _AGE_COHORT_TOKENS
+    q_tokens = _tokens(q) - _COHORT_LEXICON_TOKENS
     age_bounds = question_age_constraints(q)
     table_num = question_table_number(q)
     axis_units = {
@@ -225,6 +259,7 @@ def scope_rank_candidates(
         for c in extract_numeric_constraints(q)
         if c.role == ROLE_AXIS and c.unit
     }
+    w = _SCOPE_RANK_WEIGHTS
 
     # Hard preference: when the question cites Table N and at least one candidate
     # caption matches, drop non-matching siblings (domain-agnostic).
@@ -249,7 +284,7 @@ def scope_rank_candidates(
         ranges = profile.bound_ranges or profile.age_ranges
         if age_bounds and ranges:
             if not any(_bound_compatible(b, ranges) for b in age_bounds):
-                continue  # hard drop incompatible age cohort
+                continue  # hard drop incompatible bound cohort
         header_units = profile.header_units or _header_units(table)
         axis_overlap = len(axis_units & header_units) if axis_units else 0
         caption = str(table.get("caption") or chunk.get("caption") or "")
@@ -257,39 +292,25 @@ def scope_rank_candidates(
         scope_tokens |= set(profile.cue_tokens or set())
         for val in (profile.attributes or {}).values():
             scope_tokens |= _tokens(str(val))
-        dosing_like = 1.0 if re.search(
-            r"(?i)\b(dose|doses|dosing|dosage|recommended|schedule|regimen)\b",
-            caption + " " + " ".join(profile.cues[:4]),
-        ) else 0.0
-        age_prior = 0.0
-        cap_low = caption.lower()
-        q_low = q.lower()
-        pediatric_q = bool(
-            re.search(r"(?i)\b(pediatric|child|children|infant)\b", q_low)
-            or any(b < 12 for b in age_bounds)
-        )
-        adult_q = bool(
-            re.search(r"(?i)\b(adult|adolescents?|12 years|≥\s*12|>=\s*12)\b", q_low)
-            or any(b >= 12 for b in age_bounds)
-        )
-        pediatric_t = bool(
-            re.search(r"(?i)\b(pediatric|child|6\s*to\s*<\s*12|<12)\b", cap_low)
-        )
-        adult_t = bool(
-            re.search(
-                r"(?i)\b(12 years|≥\s*12|>=\s*12|and older|adult)\b",
-                cap_low,
-            )
-        )
-        if pediatric_q and pediatric_t:
-            age_prior += 1.0
-        if adult_q and adult_t and not pediatric_t:
-            age_prior += 1.0
-        if adult_q and pediatric_t and not pediatric_q:
-            age_prior -= 1.5
-        if pediatric_q and adult_t and not pediatric_t:
-            age_prior -= 1.0
-        # Prefer earlier pages among otherwise equal siblings (primary tables).
+        # Opposing cohort lexicon in question vs table → hard drop.
+        q_cohort = _tokens(q) & _COHORT_LEXICON_TOKENS
+        t_cohort = scope_tokens & _COHORT_LEXICON_TOKENS
+        if (q_cohort & _COHORT_ADULTISH) and (t_cohort & _COHORT_PEDISH) and not (
+            t_cohort & _COHORT_ADULTISH
+        ):
+            continue
+        if (q_cohort & _COHORT_PEDISH) and (t_cohort & _COHORT_ADULTISH) and not (
+            t_cohort & _COHORT_PEDISH
+        ):
+            continue
+        bound_compat = 0.0
+        if age_bounds and ranges:
+            if any(_bound_compatible(b, ranges) for b in age_bounds):
+                bound_compat = 1.0
+        elif age_bounds and not ranges:
+            bound_compat = 0.0
+        if q_cohort & t_cohort:
+            bound_compat = max(bound_compat, 1.0)
         try:
             page_key = int(
                 table.get("page")
@@ -299,24 +320,20 @@ def scope_rank_candidates(
             )
         except (TypeError, ValueError):
             page_key = 10_000
-        indication_prior = 0.0
-        if scope_tokens & q_tokens:
-            indication_prior += 0.5
         enriched.append(
             {
                 **item,
                 "_scope_tokens": scope_tokens,
                 "_axis_overlap": axis_overlap,
-                "_dosing_like": dosing_like,
-                "_age_prior": age_prior,
-                "_indication_prior": indication_prior,
+                "_bound_compat": bound_compat,
                 "_page_key": page_key,
                 "_caption": caption,
             }
         )
 
+    # Fail closed: hard bound filter removed every candidate.
     if not enriched:
-        return list(items)  # age filter emptied — keep original rather than fail closed
+        return []
 
     for item in enriched:
         others: set = set()
@@ -324,9 +341,8 @@ def scope_rank_candidates(
             if other is item:
                 continue
             others |= other["_scope_tokens"]
-        # Content tokens only — age/cohort handled by ``_age_prior``.
-        distinctive = (item["_scope_tokens"] - others) - _AGE_COHORT_TOKENS
-        content_scope = item["_scope_tokens"] - _AGE_COHORT_TOKENS
+        distinctive = (item["_scope_tokens"] - others) - _COHORT_LEXICON_TOKENS
+        content_scope = item["_scope_tokens"] - _COHORT_LEXICON_TOKENS
         item["_q_hit"] = distinctive & q_tokens
         item["_q_overlap"] = content_scope & q_tokens
 
@@ -335,20 +351,12 @@ def scope_rank_candidates(
         if with_axes:
             enriched = with_axes
 
-    for item in enriched:
-        hit = len(item.get("_q_hit") or ())
-        if hit:
-            item["_indication_prior"] = float(item.get("_indication_prior") or 0) + min(
-                2.0, float(hit)
-            )
     ranked = sorted(
         enriched,
         key=lambda item: (
-            float(item.get("_indication_prior") or 0),
-            float(item.get("_age_prior") or 0),
-            float(item.get("_axis_overlap") or 0),
-            float(item.get("_dosing_like") or 0),
             len(item.get("_q_hit") or ()),
+            float(item.get("_bound_compat") or 0),
+            float(item.get("_axis_overlap") or 0),
             len(item.get("_q_overlap") or ()),
             float(item.get("score") or 0),
             -float(item.get("_page_key") or 10_000),
@@ -362,14 +370,14 @@ def scope_rank_candidates(
                 "chunk": item.get("chunk"),
                 "table": item.get("table"),
                 "table_id": item.get("table_id"),
-                "score": float(item.get("score") or 0)
-                + 6.0 * float(item.get("_indication_prior") or 0)
-                + 5.0 * float(item.get("_axis_overlap") or 0)
-                + 4.0 * float(item.get("_dosing_like") or 0)
-                + 3.0 * float(item.get("_age_prior") or 0)
-                + 3.0 * len(item.get("_q_hit") or ())
-                + 0.5 * len(item.get("_q_overlap") or ())
-                - 0.1 * float(item.get("_page_key") or 0),
+                "score": (
+                    w["retrieval_score"] * float(item.get("score") or 0)
+                    + w["caption_content_hit"] * len(item.get("_q_hit") or ())
+                    + w["caption_overlap"] * len(item.get("_q_overlap") or ())
+                    + w["axis_unit_overlap"] * float(item.get("_axis_overlap") or 0)
+                    + w["bound_compatible"] * float(item.get("_bound_compat") or 0)
+                    + w["page_ordinal"] * float(item.get("_page_key") or 0)
+                ),
             }
         )
     return out
@@ -479,6 +487,38 @@ def select_table_coordinates_llm(
         )
 
 
+def _probe_candidate_axis_values(
+    question: str,
+    chunks: Sequence[Dict[str, Any]],
+) -> List[str]:
+    """Best-effort axis lookups per candidate for ambiguity payloads."""
+    from app.rag.generation.structured_lookup import lookup_cell_in_table
+
+    values: List[str] = []
+    seen: set = set()
+    for chunk in chunks or []:
+        table = coerce_table_dict(
+            chunk.get("table") if isinstance(chunk.get("table"), dict) else _table_dict_from_chunk(chunk)
+        )
+        if not table.get("rows"):
+            continue
+        try:
+            out = lookup_cell_in_table(
+                table,
+                question,
+                filename=str(chunk.get("filename") or ""),
+                page=table.get("page") or chunk.get("page"),
+            )
+        except Exception:
+            continue
+        if isinstance(out, VerifiedCell):
+            raw = str(out.value or "").strip()
+            if raw and raw not in seen:
+                seen.add(raw)
+                values.append(raw)
+    return values
+
+
 def verify_lookup_decision(
     decision: TableLookupDecision,
     candidates: Sequence[Dict[str, Any]],
@@ -488,15 +528,22 @@ def verify_lookup_decision(
     """Python gate: hydrate cell from SQL grid; never trust LLM values."""
     status = decision.status
     if status == "needs_disambiguation":
+        cand_ids = [
+            str(c.get("table_id") or "") for c in candidates if c.get("table_id")
+        ]
+        probe_chunks = [
+            (c.get("chunk") or c) for c in candidates if c.get("table_id") or c.get("table")
+        ]
         return InsufficientEvidence(
             decision.rationale
             or "multiple applicable tables; missing differentiating dimensions",
             status=STATUS_AMBIGUOUS,
             soft=False,
             missing_dimensions=list(decision.missing_dimensions or []),
-            candidate_table_ids=[
-                str(c.get("table_id") or "") for c in candidates if c.get("table_id")
-            ],
+            candidate_table_ids=cand_ids,
+            candidate_values=_probe_candidate_axis_values(question, probe_chunks)
+            if question
+            else [],
         )
     if status == "requires_calculation":
         table_id = str(decision.table_id or "").strip()
@@ -559,7 +606,7 @@ def verify_lookup_decision(
     if record is None:
         return InsufficientEvidence(
             f"selector returned unknown table_id={table_id!r}",
-            status=STATUS_NOT_FOUND,
+            status=STATUS_VERIFICATION_FAILED,
             soft=False,
         )
 
@@ -571,7 +618,7 @@ def verify_lookup_decision(
     if row_index is None or col_index is None:
         return InsufficientEvidence(
             "selector matched without row/col coordinates",
-            status=STATUS_NOT_FOUND,
+            status=STATUS_VERIFICATION_FAILED,
             soft=False,
         )
     try:
@@ -580,20 +627,20 @@ def verify_lookup_decision(
     except (TypeError, ValueError):
         return InsufficientEvidence(
             "selector coordinates are not integers",
-            status=STATUS_NOT_FOUND,
+            status=STATUS_VERIFICATION_FAILED,
             soft=False,
         )
     if r_i < 0 or r_i >= len(rows):
         return InsufficientEvidence(
             f"selector row_index={r_i} out of bounds (n_rows={len(rows)})",
-            status=STATUS_NOT_FOUND,
+            status=STATUS_VERIFICATION_FAILED,
             soft=False,
         )
     row = list(rows[r_i] or [])
     if c_i < 0 or c_i >= max(len(row), len(headers)):
         return InsufficientEvidence(
             f"selector col_index={c_i} out of bounds",
-            status=STATUS_NOT_FOUND,
+            status=STATUS_VERIFICATION_FAILED,
             soft=False,
         )
     # Pad short rows.
@@ -603,7 +650,7 @@ def verify_lookup_decision(
     if not raw_val or _EMPTY_OR_UNSUPPORTED_CELL_RE.match(raw_val):
         return InsufficientEvidence(
             f"matched cell is empty/unsupported: {raw_val!r}",
-            status=STATUS_OUT_OF_RANGE,
+            status=STATUS_EMPTY_CELL,
             soft=False,
             candidate_table_ids=[table_id],
         )
@@ -687,7 +734,7 @@ def verify_lookup_decision(
         col_index=c_i,
         page=int(page) if page is not None else None,
         filename=filename,
-        confidence=100.0,
+        confidence=0.0,
         table_headers=headers,
         evidence=evidence,
         status=STATUS_MATCHED,
@@ -845,24 +892,104 @@ def interpret_with_selector(
     TableLookupDecision,
     List[Dict[str, Any]],
 ]:
-    """End-to-end: scope-rank candidates → LLM decision → Python verify/calc."""
+    """Eligibility gate → soft rank → LLM coords → Python verify/calc.
+
+    Applicability/conflict detection (``select_eligible_table_chunks``) is the
+    authoritative decision. Soft ranking and deterministic lookup never revive
+    an excluded sibling, and a successful cell lookup alone does not prove
+    applicability when multiple conflicting classes remain.
+    """
+    from app.rag.generation.table_selection import select_eligible_table_chunks
+    from app.rag.generation.structured_lookup import (
+        STATUS_INVALID_TABLE_STRUCTURE,
+        lookup_cell_in_table,
+    )
+
     settings = settings or get_settings()
     top_k = int(getattr(settings, "TABLE_RAG_SELECTOR_TOP_K", 4) or 4)
     expanded = expand_document_sibling_chunks(chunks)
-    # Rank the full expanded sibling pool before truncating by retrieval score.
-    pool_k = max(len(expanded), top_k * 8, 32)
-    raw = collect_candidate_tables(expanded, top_k=pool_k, question="")
+
+    eligibility = select_eligible_table_chunks(
+        question,
+        expanded,
+        get_table=_table_dict_from_chunk,
+    )
+    eligible_chunks = list(eligibility.eligible_chunks or [])
+    eligible_ids = [
+        str(c.get("table_id") or "").strip()
+        for c in eligible_chunks
+        if str(c.get("table_id") or "").strip()
+    ]
+
+    if eligibility.requires_disambiguation:
+        decision = TableLookupDecision(
+            status="needs_disambiguation",
+            missing_dimensions=list(eligibility.missing_dimensions or []),
+            rationale=eligibility.reason or "ambiguous_applicability",
+        )
+        probe_pool = eligible_chunks or list(expanded)
+        outcome = InsufficientEvidence(
+            eligibility.reason
+            or "multiple applicable tables; missing differentiating dimensions",
+            status=STATUS_AMBIGUOUS,
+            soft=False,
+            missing_dimensions=list(eligibility.missing_dimensions or []),
+            candidate_table_ids=eligible_ids
+            or [
+                str(c.get("table_id") or "")
+                for c in expanded
+                if c.get("table_id")
+            ],
+            candidate_values=_probe_candidate_axis_values(question, probe_pool),
+        )
+        # Soft-ranked view of the conflicting set for telemetry / prompts.
+        pool_k = max(len(probe_pool), top_k * 8, 32)
+        raw = collect_candidate_tables(probe_pool, top_k=pool_k, question="")
+        candidates = scope_rank_candidates(question, raw)[: max(1, top_k)]
+        return outcome, decision, candidates
+
+    if not eligible_chunks:
+        structure_only = bool(eligibility.structure_blocked) and not any(
+            e.get("reason") != "unreliable_table_structure"
+            for e in (eligibility.excluded or [])
+        )
+        status = (
+            STATUS_INVALID_TABLE_STRUCTURE
+            if structure_only
+            else STATUS_NOT_FOUND
+        )
+        decision = TableLookupDecision(
+            status="not_in_table",
+            rationale=eligibility.reason or "no_eligible_tables",
+            missing_dimensions=list(eligibility.missing_dimensions or []),
+        )
+        outcome = InsufficientEvidence(
+            eligibility.reason or "no eligible tables after applicability filtering",
+            status=status,
+            soft=status == STATUS_NOT_FOUND,
+            missing_dimensions=list(eligibility.missing_dimensions or []),
+            candidate_table_ids=[
+                str(e.get("table_id") or "")
+                for e in (eligibility.excluded or [])
+                if e.get("table_id")
+            ],
+        )
+        return outcome, decision, []
+
+    # Soft-rank only inside the eligibility-approved set.
+    pool_k = max(len(eligible_chunks), top_k * 8, 32)
+    raw = collect_candidate_tables(eligible_chunks, top_k=pool_k, question="")
     candidates = scope_rank_candidates(question, raw)[: max(1, top_k)]
     if not candidates:
         candidates = collect_candidate_tables(
-            expanded, top_k=top_k, question=question
+            eligible_chunks, top_k=top_k, question=question
         )
-    # When the top caption-scoped table already yields a unique axis cell,
-    # prefer Python over the LLM sibling choice.
-    if candidates:
-        try:
-            from app.rag.generation.structured_lookup import lookup_cell_in_table
 
+    unique_eligible = len(eligible_ids) == 1 or len(eligible_chunks) == 1
+    # Deterministic axis lookup is safe only when eligibility already unique.
+    # A successful cell match must not silently pick among conflicting classes.
+    if unique_eligible and candidates:
+        try:
             scoped = candidates[0]
             deterministic = lookup_cell_in_table(
                 coerce_table_dict(scoped.get("table")),
@@ -876,61 +1003,62 @@ def interpret_with_selector(
                     table_id=str(scoped.get("table_id") or ""),
                     row_index=deterministic.row_index,
                     col_index=deterministic.col_index,
-                    rationale="deterministic_scope_rank_axis_lookup",
+                    rationale="deterministic_unique_eligible_axis_lookup",
                 )
                 evidence = dict(deterministic.evidence or {})
-                evidence["verification"] = "python_scope_rank_deterministic"
+                evidence["verification"] = "python_unique_eligible_deterministic"
                 deterministic.evidence = evidence
                 return deterministic, decision, candidates
         except Exception as exc:
-            logger.warning("Deterministic scope-rank lookup failed: %s", exc)
+            logger.warning("Deterministic unique-eligible lookup failed: %s", exc)
+
     decision = select_table_coordinates_llm(
         question, candidates, client=client, settings=settings
     )
-    # If the LLM still picks an out-of-scope sibling, force the top scoped table.
+    # LLM may only choose among eligibility-approved table ids.
+    eligible_id_set = set(eligible_ids)
     if (
         decision.status == "matched"
         and decision.table_id
-        and candidates
-        and str(decision.table_id) != str(candidates[0].get("table_id") or "")
-        and not _table_in_scope(question, decision.table_id, candidates)
+        and eligible_id_set
+        and str(decision.table_id) not in eligible_id_set
     ):
         logger.info(
-            "Selector table %s out of scope; preferring %s",
+            "Selector table %s not eligible; preferring %s",
             decision.table_id,
-            candidates[0].get("table_id"),
+            candidates[0].get("table_id") if candidates else None,
         )
-        # Keep coordinates only if same table; otherwise clear for axis correction
-        # / deterministic lookup on the preferred table via verify path.
+        preferred_id = str(
+            (candidates[0].get("table_id") if candidates else "")
+            or (eligible_ids[0] if eligible_ids else "")
+        )
         decision = TableLookupDecision(
             status="matched",
-            table_id=str(candidates[0].get("table_id") or ""),
+            table_id=preferred_id,
             row_index=None,
             col_index=None,
             rationale=(
                 (decision.rationale or "")
-                + " [scope-lock overridden to indication-matched table]"
+                + " [eligibility-lock overridden to applicability-matched table]"
             ).strip(),
         )
-        # Deterministic axis lookup on the scoped table.
-        try:
-            from app.rag.generation.structured_lookup import lookup_cell_in_table
-
-            scoped = candidates[0]
-            corrected = lookup_cell_in_table(
-                coerce_table_dict(scoped.get("table")),
-                question,
-                filename=str((scoped.get("chunk") or {}).get("filename") or ""),
-                page=(scoped.get("table") or {}).get("page"),
-            )
-            if isinstance(corrected, VerifiedCell):
-                evidence = dict(corrected.evidence or {})
-                evidence["verification"] = "python_scope_lock_override"
-                evidence["selector_rationale"] = decision.rationale
-                corrected.evidence = evidence
-                return corrected, decision, candidates
-        except Exception as exc:
-            logger.warning("Scope-lock override lookup failed: %s", exc)
+        if candidates:
+            try:
+                scoped = candidates[0]
+                corrected = lookup_cell_in_table(
+                    coerce_table_dict(scoped.get("table")),
+                    question,
+                    filename=str((scoped.get("chunk") or {}).get("filename") or ""),
+                    page=(scoped.get("table") or {}).get("page"),
+                )
+                if isinstance(corrected, VerifiedCell):
+                    evidence = dict(corrected.evidence or {})
+                    evidence["verification"] = "python_eligibility_lock_override"
+                    evidence["selector_rationale"] = decision.rationale
+                    corrected.evidence = evidence
+                    return corrected, decision, candidates
+            except Exception as exc:
+                logger.warning("Eligibility-lock override lookup failed: %s", exc)
 
     outcome = verify_lookup_decision(decision, candidates, question=question)
     return outcome, decision, candidates
@@ -941,8 +1069,8 @@ def _table_in_scope(
     table_id: str,
     candidates: Sequence[Dict[str, Any]],
 ) -> bool:
-    """True only for the top scoped candidate — no sibling near-ties."""
+    """True when ``table_id`` is among the ranked candidates (eligibility set)."""
     tid = str(table_id or "").strip()
     if not tid or not candidates:
         return False
-    return tid == str(candidates[0].get("table_id") or "")
+    return any(tid == str(c.get("table_id") or "") for c in candidates)

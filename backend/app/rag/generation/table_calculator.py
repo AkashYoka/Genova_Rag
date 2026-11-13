@@ -92,7 +92,8 @@ class VerifiedCalculation:
             "col_headers": ["result"],
             "row_index": None,
             "col_index": None,
-            "confidence": 100.0,
+            "confidence": 0.0,
+            "coordinate_verified": True,
             "operands": [
                 {
                     "row_index": o.row_index,
@@ -212,9 +213,47 @@ def compute_from_operands(
                 f"[{c.row_index},{c.col_index}]={c.raw_value!r}" for c in cells
             )
         )
+    units_present = [c.unit for c in cells if c.unit]
+    if units_present and len(set(units_present)) > 1:
+        raise ValueError(
+            "incompatible operand units: "
+            + ", ".join(
+                f"[{c.row_index},{c.col_index}]={c.unit or '∅'}" for c in cells
+            )
+        )
     assert all(n is not None for n in nums)
     values = [float(n) for n in nums]  # type: ignore[arg-type]
     op = (operation or _infer_operation(question) or "sum").lower().strip()
+    if op in {"percentage", "percent", "%"}:
+        if len(values) < 2 or values[1] == 0:
+            raise ValueError("percentage requires ≥2 operands and non-zero base")
+        # Treat as (a/b)*100 when operation is percentage.
+        result = float(values[0] / values[1] * 100.0)
+        used_expr = f"({values[0]} / {values[1]}) * 100"
+        units = [c.unit for c in cells if c.unit]
+        unit = "%"
+        pages = list(table.get("pages") or [])
+        page = pages[0] if pages else table.get("page")
+        display: Union[float, int, str]
+        if abs(result - round(result)) < 1e-9:
+            display = int(round(result))
+        else:
+            display = round(result, 6)
+        return VerifiedCalculation(
+            value=display,
+            operation="percentage",
+            operands=cells,
+            table_id=table_id or str(table.get("table_id") or ""),
+            page=int(page) if page is not None else None,
+            pages=[int(p) for p in pages] if pages else [],
+            filename=filename,
+            expression=used_expr,
+            unit=unit,
+            evidence={
+                "question": question,
+                "verification": "python_sql_calculation",
+            },
+        )
 
     if expression.strip():
         # Map $0, $1 … to numeric values inside a sandboxed expression.

@@ -167,13 +167,24 @@ def test_reconcile_does_not_pin_on_ambiguous():
             "soft_insufficient": False,
             "status": STATUS_AMBIGUOUS,
             "candidate_values": ["300", "600"],
+            "candidate_table_ids": ["t_a", "t_b"],
             "missing_dimensions": ["age_band"],
+            "reason": "ambiguous_applicability",
+            "verification_status": "ambiguous",
         }
     ]
-    answer = "The recommended dose is 600 mg every 2 weeks."
+    answer = (
+        "**Clinical Takeaway**\n"
+        "The label recommends **150 mg every 4 weeks**. Off-label use: No.\n"
+    )
     out = _reconcile_answer_with_verified_cell(answer, sources)
-    assert out.startswith("Ambiguous table evidence")
-    assert "600" in out  # original prose retained after banner
+    assert out.startswith("Inconclusive")
+    # Definitive clinical conclusions must not survive under an ambiguity warning.
+    assert "Clinical Takeaway" not in out
+    assert "Off-label use: No" not in out
+    assert "150 mg every 4 weeks" not in out
+    assert "t_a" in out and "t_b" in out
+    assert "age_band" in out
 
 
 def test_reconcile_pins_provenance_when_answer_cites_other_page():
@@ -239,7 +250,9 @@ def test_soft_insufficient_prompt_allows_prose_fallback():
         soft=False,
         candidate_values=["225", "450"],
     )
-    assert "do not invent a single cell value" in hard.to_prompt_block().lower()
+    hard_block = hard.to_prompt_block().lower()
+    assert "hard abstain" in hard_block
+    assert "do not state a labeled dose" in hard_block
 
 
 def test_out_of_range_unsupported_cell():

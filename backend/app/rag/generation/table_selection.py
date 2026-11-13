@@ -381,20 +381,51 @@ def _extract_bound_ranges_from_text(cue: str) -> List[ParsedRange]:
     return ranges
 
 
+_COHORT_YEAR_PHRASE_RE = re.compile(
+    r"(?i)(?:>=?\s*|≤\s*|<=\s*|>\s*|<\s*)?(\d+(?:\.\d+)?)\s*"
+    r"(?:years?(?:\s+of\s+age)?|yrs?|yo)\b"
+    r"(?:\s+and\s+older|\s+and\s+above|\s+or\s+older)?"
+)
+
+
 def question_age_constraints(question: str) -> List[float]:
-    """Back-compat: calendar-duration ROLE_EXCLUDE numerics from the question."""
+    """Calendar-duration cohort numerics from the question (domain-agnostic).
+
+    Includes classic ``N-year-old`` ROLE_EXCLUDE tokens and phrases such as
+    ``>=12 years``, ``12 years and older`` that extractors may label as axis.
+    """
     bounds: List[float] = []
     q = question or ""
     for c in extract_numeric_constraints(q):
-        if c.role != ROLE_EXCLUDE:
-            continue
-        pattern = (
+        if c.role == ROLE_EXCLUDE:
+            pattern = (
+                rf"(?i){re.escape(str(int(c.value) if float(c.value).is_integer() else c.value))}"
+                rf"\s*-?\s*(?:year|yr|yo)"
+            )
+            if re.search(pattern, q) or (c.unit or "").lower() in _DURATION_UNIT_HINTS:
+                bounds.append(float(c.value))
+                continue
+        # Duration-unit numerics used as cohort bounds (not matrix axes).
+        if (c.unit or "").lower() in _DURATION_UNIT_HINTS and re.search(
             rf"(?i){re.escape(str(int(c.value) if float(c.value).is_integer() else c.value))}"
-            rf"\s*-?\s*(?:year|yr|yo)"
-        )
-        if re.search(pattern, q) or c.unit.lower() in _DURATION_UNIT_HINTS:
+            rf".{{0,12}}(?:year|yr|yo).{{0,16}}(?:older|above|younger|under|age)",
+            q,
+        ):
             bounds.append(float(c.value))
-    return bounds
+    for m in _COHORT_YEAR_PHRASE_RE.finditer(q):
+        try:
+            bounds.append(float(m.group(1)))
+        except ValueError:
+            continue
+    # Deduplicate while preserving order.
+    out: List[float] = []
+    seen: set = set()
+    for b in bounds:
+        if b in seen:
+            continue
+        seen.add(b)
+        out.append(b)
+    return out
 
 
 def _bound_compatible(value: float, ranges: Sequence[ParsedRange]) -> Optional[bool]:
@@ -411,14 +442,104 @@ def jaccard(a: Set[str], b: Set[str]) -> float:
     return len(a & b) / float(len(a | b))
 
 
-def _range_midpoint(parsed: ParsedRange) -> Optional[float]:
-    if parsed.low is not None and parsed.high is not None:
-        return (parsed.low + parsed.high) / 2.0
-    if parsed.low is not None:
-        return parsed.low + 1.0
-    if parsed.high is not None:
-        return max(0.0, parsed.high - 1.0)
-    return None
+def _normalize_bound_unit(unit: str) -> str:
+    u = (unit or "").strip().lower().replace(" ", "")
+    aliases = {
+        "yr": "years",
+        "yrs": "years",
+        "year": "years",
+        "yo": "years",
+        "y": "years",
+    }
+    return aliases.get(u, u)
+
+
+def _bound_units_compatible(left: str, right: str) -> bool:
+    a = _normalize_bound_unit(left)
+    b = _normalize_bound_unit(right)
+    if not a or not b:
+        # Unknown unit on either side → comparable only when both unknown.
+        return not a and not b
+    return a == b
+
+
+def _range_endpoints(
+    parsed: ParsedRange,
+) -> Tuple[Optional[float], Optional[float], bool, bool]:
+    """Return (low, high, inclusive_low, inclusive_high) with open ends as None."""
+    return (
+        parsed.low,
+        parsed.high,
+        bool(parsed.inclusive_low),
+        bool(parsed.inclusive_high),
+    )
+
+
+def ranges_are_equivalent(left: ParsedRange, right: ParsedRange) -> bool:
+    """True when two bounds describe the same interval (unit + endpoints)."""
+    if not _bound_units_compatible(left.unit, right.unit):
+        return False
+    return _range_endpoints(left) == _range_endpoints(right)
+
+
+def ranges_overlap(left: ParsedRange, right: ParsedRange) -> bool:
+    """Proper interval overlap respecting inclusive/exclusive bounds.
+
+    Different / unknown-incompatible units never overlap.
+    """
+    if not _bound_units_compatible(left.unit, right.unit):
+        return False
+    # Disjoint if left entirely below right.
+    if left.high is not None and right.low is not None:
+        if left.high < right.low:
+            return False
+        if left.high == right.low and not (
+            left.inclusive_high and right.inclusive_low
+        ):
+            return False
+    # Disjoint if right entirely below left.
+    if right.high is not None and left.low is not None:
+        if right.high < left.low:
+            return False
+        if right.high == left.low and not (
+            right.inclusive_high and left.inclusive_low
+        ):
+            return False
+    return True
+
+
+def bound_sets_are_distinct(
+    left_ranges: Sequence[ParsedRange],
+    right_ranges: Sequence[ParsedRange],
+) -> bool:
+    """True when bound sets represent different applicability classes.
+
+    - No compatible-unit pair → distinct (incomparable units / empty).
+    - Any equivalent interval pair → not distinct on bounds alone.
+    - Partial overlap or containment with unequal endpoints → distinct.
+    - Fully disjoint compatible ranges → distinct.
+    """
+    if not left_ranges or not right_ranges:
+        return False
+    comparable = False
+    any_equivalent = False
+    any_partial_or_disjoint = False
+    for a in left_ranges:
+        for b in right_ranges:
+            if not _bound_units_compatible(a.unit, b.unit):
+                continue
+            comparable = True
+            if ranges_are_equivalent(a, b):
+                any_equivalent = True
+                continue
+            # Unequal intervals: overlapping or disjoint both mean different classes.
+            any_partial_or_disjoint = True
+    if not comparable:
+        # Units never aligned — treat as distinct applicability conditions.
+        return True
+    if any_equivalent and not any_partial_or_disjoint:
+        return False
+    return any_partial_or_disjoint or not any_equivalent
 
 
 def profiles_are_distinct(
@@ -430,20 +551,8 @@ def profiles_are_distinct(
     """True when two tables look like different applicability classes."""
     left_ranges = left.bound_ranges or left.age_ranges
     right_ranges = right.bound_ranges or right.age_ranges
-    if left_ranges and right_ranges:
-        shared = False
-        for a in left_ranges:
-            mid = _range_midpoint(a)
-            if mid is None:
-                continue
-            if any(
-                range_contains(b, mid, unit=b.unit or a.unit or "years")
-                for b in right_ranges
-            ):
-                shared = True
-                break
-        if not shared:
-            return True
+    if left_ranges and right_ranges and bound_sets_are_distinct(left_ranges, right_ranges):
+        return True
     # One side declares bounds and the other does not → different classes when
     # cue tokens also diverge (missing metadata is not a wildcard).
     if bool(left_ranges) != bool(right_ranges):
@@ -455,41 +564,130 @@ def profiles_are_distinct(
     overlap = jaccard(left.cue_tokens, right.cue_tokens)
     if overlap <= max_overlap and (left.cue_tokens or right.cue_tokens):
         return True
-    shared_keys = set(left.attributes) & set(right.attributes)
+    shared_keys = {
+        k
+        for k in (set(left.attributes) & set(right.attributes))
+        if dimension_kind(k) != "provenance"
+    }
     for key in shared_keys:
         if left.attributes[key].lower() != right.attributes[key].lower():
             return True
-    # Asymmetric attributes with non-trivial unique tokens.
-    only_left = set(left.attributes) - set(right.attributes)
-    only_right = set(right.attributes) - set(left.attributes)
+    # Asymmetric applicability attributes with non-trivial unique tokens.
+    only_left = {
+        k
+        for k in (set(left.attributes) - set(right.attributes))
+        if dimension_kind(k) != "provenance"
+    }
+    only_right = {
+        k
+        for k in (set(right.attributes) - set(left.attributes))
+        if dimension_kind(k) != "provenance"
+    }
     if (only_left or only_right) and (left.attributes or right.attributes):
         if left.cue_tokens and right.cue_tokens and overlap <= 0.6:
             return True
     return False
 
 
+# Provenance / document-layout dims are not patient-applicability constraints.
+# They must not alone force hard disambiguation of dosing/lookup matrices.
+_PROVENANCE_DIMENSIONS = frozenset(
+    {
+        "section",
+        "subsection",
+        "section_path",
+        "caption",
+        "title",
+        "trial_name",
+        "trial",
+        "study",
+        "study_name",
+        "document",
+        "source",
+        "page",
+        "pages",
+        "filename",
+        "extraction_method",
+        "provenance",
+        "applicability_class",  # generic placeholder, not a real split key
+    }
+)
+
+
+def dimension_kind(dim: str) -> str:
+    """Classify a dimension as applicability vs provenance vs other."""
+    key = str(dim or "").strip().lower().replace(" ", "_")
+    if not key:
+        return "other"
+    if key in _PROVENANCE_DIMENSIONS or key.startswith("trial_") or key.startswith(
+        "study_"
+    ):
+        return "provenance"
+    if "section" in key or key in {"caption", "title"}:
+        return "provenance"
+    return "applicability"
+
+
+def applicability_dimensions(dims: Sequence[str]) -> List[str]:
+    return [d for d in dims if dimension_kind(d) == "applicability"]
+
+
 def conflicting_dimensions(
     left: TableApplicability,
     right: TableApplicability,
 ) -> List[str]:
-    """Return attribute keys / dims that distinguish two profiles."""
+    """Return attribute keys / dims that distinguish two profiles.
+
+    Only dims that actually differ between the two profiles are returned.
+    Declared ``differentiating_dimensions`` are included only when they name a
+    shared attribute with unequal values, a one-sided attribute key, or a
+    bound conflict — not merely because the LLM listed them on one table.
+    """
     dims: List[str] = []
     shared_keys = set(left.attributes) & set(right.attributes)
     for key in shared_keys:
+        if dimension_kind(key) == "provenance":
+            continue
         if left.attributes[key].lower() != right.attributes[key].lower():
             dims.append(key)
     left_only = set(left.attributes) - set(right.attributes)
     right_only = set(right.attributes) - set(left.attributes)
     # Unique attribute keys are differentiating when both sides have attrs.
     if left.attributes and right.attributes:
-        dims.extend(sorted(left_only | right_only))
+        dims.extend(
+            sorted(
+                k
+                for k in (left_only | right_only)
+                if dimension_kind(k) != "provenance"
+            )
+        )
     left_ranges = left.bound_ranges or left.age_ranges
     right_ranges = right.bound_ranges or right.age_ranges
-    if left_ranges and right_ranges and profiles_are_distinct(left, right):
+    if left_ranges and right_ranges and bound_sets_are_distinct(left_ranges, right_ranges):
         dims.append("applicability_bound")
-    for d in left.differentiating_dimensions + right.differentiating_dimensions:
-        if d and d not in dims:
-            dims.append(d)
+    declared = list(
+        dict.fromkeys(
+            list(left.differentiating_dimensions or [])
+            + list(right.differentiating_dimensions or [])
+        )
+    )
+    for d in declared:
+        key = str(d or "").strip()
+        if not key or key in dims:
+            continue
+        # Keep declared dim only when it corresponds to a real attribute split
+        # or bound conflict already detected above (via alias match).
+        lk = key.lower()
+        if lk in {k.lower() for k in dims}:
+            continue
+        # Skip provenance-only declarations — they are not eligibility splits.
+        if dimension_kind(key) == "provenance":
+            continue
+        # If neither profile has this attribute key, do not invent a conflict.
+        left_has = any(k.lower() == lk for k in (left.attributes or {}))
+        right_has = any(k.lower() == lk for k in (right.attributes or {}))
+        if left_has or right_has:
+            dims.append(key)
     return list(dict.fromkeys(dims))
 
 
@@ -504,7 +702,13 @@ def _query_units(constraints: QueryConstraints) -> Set[str]:
 
 
 def _axis_compatible(table: Dict[str, Any], constraints: QueryConstraints) -> bool:
-    """Reject tables whose headers cannot host the query's unit-bearing axes."""
+    """Reject tables whose headers cannot host the query's unit-bearing axes.
+
+    Multi-axis numeric questions (e.g. two unit-bearing factors) require the
+    table to expose matching header units. Unit-less siblings (adverse-event
+    lists, narrative grids) must not enter the eligibility pool and create
+    false applicability conflicts with the real matrix.
+    """
     axis_units = {
         (c.unit or "").lower().replace(" ", "")
         for c in constraints.constraints
@@ -514,7 +718,10 @@ def _axis_compatible(table: Dict[str, Any], constraints: QueryConstraints) -> bo
         return True
     header_units = _header_units(table)
     if not header_units:
-        # No unit evidence in headers — do not hard-reject.
+        # Strong matrix signal (≥2 axis units): unit-less tables are incompatible.
+        if len(axis_units) >= 2:
+            return False
+        # Single axis — keep soft (uncertain metadata).
         return True
     # Require at least one query axis unit to appear in table headers.
     return bool(axis_units & header_units)
@@ -587,6 +794,18 @@ def select_eligible_table_chunks(
             query_constraints=query.to_dict(),
         )
 
+    # Explicit Table N citation — hard-narrow before conflict detection so
+    # sibling matrices with different captions cannot force false ambiguity.
+    table_num = question_table_number(question)
+    if table_num:
+        matched_num = [
+            (chunk, table, profile)
+            for chunk, table, profile in profiles
+            if table_number_match(table, chunk, table_num)
+        ]
+        if matched_num:
+            profiles = matched_num
+
     duration_bounds = [
         float(c.numeric_value)
         for c in query.constraints
@@ -597,9 +816,10 @@ def select_eligible_table_chunks(
             or re.search(r"(?i)year|yr|yo", c.evidence or query.raw_question)
         )
     ]
-    # Fallback to legacy helper for tests / phrasing edge cases.
-    if not duration_bounds:
-        duration_bounds = question_age_constraints(question)
+    # Always merge phrase-based cohort bounds (e.g. ">=12 years").
+    for b in question_age_constraints(question):
+        if b not in duration_bounds:
+            duration_bounds.append(b)
 
     any_bound_metadata = any(
         (p.bound_ranges or p.age_ranges) for _, _, p in profiles
@@ -648,6 +868,48 @@ def select_eligible_table_chunks(
                 {
                     "table_id": profile.table_id,
                     "reason": "attribute_constraint_mismatch",
+                }
+            )
+            continue
+
+        # Cohort lexicon opposition (domain-agnostic): "adult" questions must
+        # not keep pediatric-only siblings that then force applicability_bound
+        # ambiguity against the adult matrix.
+        q_cohort = q_tokens & {
+            "adult",
+            "adults",
+            "adolescent",
+            "adolescents",
+            "pediatric",
+            "paediatric",
+            "child",
+            "children",
+            "infant",
+            "infants",
+        }
+        t_cohort = set(profile.cue_tokens or set()) | set(profile.purpose_tokens or set())
+        adultish = {"adult", "adults", "adolescent", "adolescents"}
+        pedish = {
+            "pediatric",
+            "paediatric",
+            "child",
+            "children",
+            "infant",
+            "infants",
+        }
+        if (q_cohort & adultish) and (t_cohort & pedish) and not (t_cohort & adultish):
+            excluded.append(
+                {
+                    "table_id": profile.table_id,
+                    "reason": "cohort_lexicon_mismatch",
+                }
+            )
+            continue
+        if (q_cohort & pedish) and (t_cohort & adultish) and not (t_cohort & pedish):
+            excluded.append(
+                {
+                    "table_id": profile.table_id,
+                    "reason": "cohort_lexicon_mismatch",
                 }
             )
             continue
@@ -833,6 +1095,15 @@ def select_eligible_table_chunks(
                 # Still multi-eligible after value narrowing — remain ambiguous.
                 missing.extend(extra_dims)
                 requires = True
+
+    # Provenance-only missing dims never force hard disambiguation.
+    missing = applicability_dimensions(list(dict.fromkeys(missing)))
+    if requires and not missing and len(eligible) <= 1:
+        requires = False
+    # A single remaining eligible table is uniquely resolved.
+    if len(eligible) <= 1:
+        requires = False
+        missing = []
 
     # Build per-dim attribute values for value-aware missing-dimension marking.
     attr_values_by_dim: Dict[str, List[str]] = {}

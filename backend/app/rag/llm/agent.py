@@ -760,6 +760,57 @@ def _verified_meta_from_sources(sources: List[Dict[str, Any]]) -> Optional[Dict[
     return None
 
 
+def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
+    """Build a clarification-only response; never retain definitive conclusions."""
+    status = str(hard.get("status") or "not_found")
+    dims = [str(d) for d in (hard.get("missing_dimensions") or []) if d]
+    candidates = hard.get("candidate_values") or []
+    table_ids = hard.get("candidate_table_ids") or []
+    reason = str(hard.get("reason") or "").strip()
+    verification = str(hard.get("verification_status") or status)
+    if status == "ambiguous" or (
+        isinstance(candidates, list) and len(candidates) > 1
+    ):
+        lines = [
+            "Inconclusive — table evidence is ambiguous.",
+            "I cannot confirm a labeled regimen, on-label/off-label status, or "
+            "dosing deviation until the applicable table/cell is uniquely resolved.",
+        ]
+        if dims:
+            lines.append(f"- Unresolved applicability: {', '.join(dims[:6])}")
+        if table_ids:
+            lines.append(
+                "- Candidate tables: "
+                + ", ".join(str(t) for t in table_ids[:8] if t)
+            )
+        if candidates:
+            lines.append(
+                "- Conflicting candidate values (not verified): "
+                + ", ".join(str(v) for v in candidates[:8])
+            )
+        if reason:
+            lines.append(f"- Reason: {reason}")
+        lines.append(f"- Verification status: {verification}")
+        lines.append(
+            "Please specify the missing applicability constraint, or ask about "
+            "one cited table by number/caption."
+        )
+        return "\n".join(lines)
+    lines = [
+        "Inconclusive — no uniquely verified table cell is available.",
+        "I am not stating a definitive labeled dose/frequency or on-label/"
+        "off-label conclusion from unverified matrix evidence.",
+    ]
+    if table_ids:
+        lines.append(
+            "- Candidate tables: " + ", ".join(str(t) for t in table_ids[:8] if t)
+        )
+    if reason:
+        lines.append(f"- Reason: {reason}")
+    lines.append(f"- Verification status: {verification}")
+    return "\n".join(lines)
+
+
 def _reconcile_answer_with_verified_cell(
     answer: str,
     sources: List[Dict[str, Any]],
@@ -770,6 +821,9 @@ def _reconcile_answer_with_verified_cell(
     For compare-mode (stated administered amount vs label cell), only ensure the
     label cell appears — do not rewrite the takeaway to the label amount.
     Also pins ``VerifiedCalculation`` results the same way as ``VerifiedCell``.
+
+    Hard ambiguous / failed verification: replace any definitive conclusion with
+    a clarification-only response (never append a warning under a confident answer).
     """
     from app.rag.table_rag.telemetry import record_reconcile_action
 
@@ -777,67 +831,48 @@ def _reconcile_answer_with_verified_cell(
     if not meta:
         # Hard insufficient / ambiguous: force abstain framing.
         # Soft insufficient: allow prose RAG without boilerplate.
-        # Skip banner when a matched verified cell is already present (handled
-        # above) or when the model already framed insufficiency/ambiguity.
         hard = [
             s
             for s in (sources or [])
             if s.get("insufficient_table_evidence") and not s.get("soft_insufficient")
         ]
         if hard:
-            # Unique candidate with no disagreement — do not clobber prose.
             candidates = hard[0].get("candidate_values") or []
+            status = str(hard[0].get("status") or "")
+            # Unique candidate value with no multi-table conflict — keep prose.
             if (
-                str(hard[0].get("status") or "") == "ambiguous"
+                status == "ambiguous"
                 and isinstance(candidates, list)
                 and len(candidates) == 1
+                and len(hard[0].get("candidate_table_ids") or []) <= 1
             ):
+                record_reconcile_action("none")
                 return answer
-            status = str(hard[0].get("status") or "")
-            if not re.search(
-                r"(?i)insufficient|ambiguous|cannot determine|unable to verify|"
-                r"not enough evidence|missing",
-                answer or "",
+            if status in {
+                "ambiguous",
+                "verification_failed",
+                "empty_cell",
+                "invalid_table_structure",
+                "selector_failed",
+                "out_of_range",
+            } or (isinstance(candidates, list) and len(candidates) > 1):
+                record_reconcile_action("abstain_replaced")
+                return _format_table_evidence_failure(hard[0])
+            # Hard not_found / other: replace definitive matrix claims.
+            body = (answer or "").strip()
+            if re.search(
+                r"(?i)\b(label recommends?|on[- ]label|off[- ]label|"
+                r"verified label|authoritative verified|clinical takeaway)\b",
+                body,
             ):
-                if status == "ambiguous" or candidates:
-                    dims = hard[0].get("missing_dimensions") or ["applicability"]
-                    record_reconcile_action("abstain_banner_injected")
-                    # Domain-agnostic note — never dump raw selector jargon first.
-                    note = (
-                        "Ambiguous table evidence — more than one table or cell "
-                        "could apply here"
-                        + (
-                            f" (unclear: {', '.join(str(d) for d in dims[:4])})"
-                            if dims
-                            else ""
-                        )
-                        + ". I am not pinning a single matrix cell without guessing"
-                        + (
-                            f"; values seen include {candidates[:6]}."
-                            if candidates
-                            else "."
-                        )
-                        + " Use the applicability-matched table and state "
-                        "uncertainty plainly.\n\n"
-                    )
-                    # Prefer the model's answer first when it already frames
-                    # ambiguity; otherwise prepend the caution banner.
-                    body = (answer or "").strip()
-                    if body and not re.search(
-                        r"(?i)^(ambiguous table evidence|looking at|from the label|"
-                        r"clinical takeaway|\*\*clinical)",
-                        body,
-                    ):
-                        return note + body
-                    return (body + "\n\n" + note.strip()) if body else note.strip()
-                record_reconcile_action("abstain_banner_injected")
-                return (
-                    "I could not verify a unique row–column cell in the retrieved "
-                    "tables, so I am not inventing a matrix value. "
-                    "If the surrounding prose still answers the question, use that; "
-                    "otherwise say the information is insufficient.\n\n"
-                    + (answer or "")
-                )
+                record_reconcile_action("abstain_replaced")
+                return _format_table_evidence_failure(hard[0])
+            record_reconcile_action("abstain_banner_injected")
+            return (
+                "I could not verify a unique row–column cell in the retrieved "
+                "tables, so I am not inventing a matrix value.\n\n"
+                + body
+            ).strip()
         record_reconcile_action("none")
         return answer
 
@@ -1620,6 +1655,44 @@ def _generate_answer_stream_direct(
         user_prompt = f"{history}\n\n{user_prompt}"
 
     provider = normalize_llm_provider(llm_provider)
+    # Hard table-evidence failures must not stream a definitive answer then
+    # append an ambiguity warning — replace up front when already known.
+    hard_fail = next(
+        (
+            s
+            for s in (sources or [])
+            if s.get("insufficient_table_evidence") and not s.get("soft_insufficient")
+        ),
+        None,
+    )
+    if hard_fail and str(hard_fail.get("status") or "") in {
+        "ambiguous",
+        "verification_failed",
+        "empty_cell",
+        "invalid_table_structure",
+        "selector_failed",
+        "out_of_range",
+    }:
+        msg = _format_table_evidence_failure(hard_fail)
+        try:
+            from app.rag.table_rag.telemetry import record_reconcile_action
+
+            record_reconcile_action("abstain_replaced")
+            emit_table_rag_trace = None
+            try:
+                from app.rag.table_rag.telemetry import emit_table_rag_trace as _emit
+
+                emit_table_rag_trace = _emit
+            except Exception:
+                pass
+            if emit_table_rag_trace:
+                emit_table_rag_trace()
+        except Exception:
+            pass
+        yield f"data: {json.dumps({'type': 'token', 'data': msg})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
     try:
         yield f"data: {json.dumps({'type': 'status', 'data': 'generating'})}\n\n"
         client = get_llm_client(llm_provider=provider)

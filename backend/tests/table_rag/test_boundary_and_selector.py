@@ -8,9 +8,11 @@ import pytest
 
 from app.rag.generation.structured_lookup import (
     STATUS_AMBIGUOUS,
+    STATUS_EMPTY_CELL,
     STATUS_MATCHED,
     STATUS_NOT_FOUND,
     STATUS_OUT_OF_RANGE,
+    STATUS_VERIFICATION_FAILED,
     InsufficientEvidence,
     VerifiedCell,
     lookup_cell_in_table,
@@ -354,7 +356,7 @@ def test_verifier_downgrades_out_of_bounds_coordinate():
     )
     outcome = verify_lookup_decision(decision, candidates)
     assert isinstance(outcome, InsufficientEvidence)
-    assert outcome.status == STATUS_NOT_FOUND
+    assert outcome.status == STATUS_VERIFICATION_FAILED
     assert "out of bounds" in outcome.reason.lower()
 
 
@@ -379,7 +381,7 @@ def test_verifier_downgrades_na_cell_to_out_of_range():
     )
     outcome = verify_lookup_decision(decision, candidates)
     assert isinstance(outcome, InsufficientEvidence)
-    assert outcome.status == STATUS_OUT_OF_RANGE
+    assert outcome.status == STATUS_EMPTY_CELL
 
 
 def test_verifier_accepts_valid_sql_cell():
