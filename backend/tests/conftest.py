@@ -53,6 +53,7 @@ fake_vectorstore.store_chunks = (
 )
 fake_vectorstore.delete_document_chunks = lambda document_id, user_id: None
 fake_vectorstore.query_chunks = lambda query_embedding, user_id, document_id=None, top_k=10: []
+fake_vectorstore.get_chunks_by_ids = lambda user_id, chunk_ids: []
 
 if "sentence_transformers" not in sys.modules:
     fake_sentence_transformers = types.ModuleType("sentence_transformers")

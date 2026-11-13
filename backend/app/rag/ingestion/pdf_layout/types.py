@@ -202,6 +202,9 @@ class TableData:
     # merged_cells: [{row_index, col_index, row_span, col_span, text}]
     merged_cells: List[Dict[str, Any]] = field(default_factory=list)
     textract_confidence: float = 0.0
+    # Geometry-aware header reconstruction (paths, hierarchy, confidence).
+    header_reconstruction: Dict[str, Any] = field(default_factory=dict)
+    normalized_header_paths: List[List[str]] = field(default_factory=list)
 
     @property
     def n_cols(self) -> int:
@@ -261,7 +264,31 @@ class TableData:
             "header_rows": [list(r) for r in (self.header_rows or [])],
             "merged_cells": list(self.merged_cells or []),
             "textract_confidence": float(self.textract_confidence or 0.0),
+            "header_reconstruction": dict(self.header_reconstruction or {}),
+            "normalized_header_paths": [
+                list(p) for p in (self.normalized_header_paths or [])
+            ],
         }
+        try:
+            from app.rag.ingestion.pdf_layout.table_structure import (
+                validate_table_structure,
+            )
+
+            validation = validate_table_structure(data)
+            data["structure_validation"] = validation.to_dict()
+            if validation.status != "structure_valid":
+                data["needs_verification"] = True
+            elif self.low_confidence_cells:
+                data["needs_verification"] = True
+            else:
+                data["needs_verification"] = bool(
+                    (self.header_reconstruction or {}).get("needs_verification")
+                )
+        except Exception:
+            data["needs_verification"] = bool(
+                self.low_confidence_cells
+                or (self.header_reconstruction or {}).get("needs_verification")
+            )
         if include_markdown:
             data["markdown"] = self.markdown
         return data

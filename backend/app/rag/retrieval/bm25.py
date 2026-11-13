@@ -206,6 +206,10 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
             "table_ids",
             "index_version",
             "token_count",
+            "chunk_type",
+            "index_kind",
+            "row_index",
+            "table_needs_verification",
         ):
             value = chunk.get(key)
             if value not in (None, ""):

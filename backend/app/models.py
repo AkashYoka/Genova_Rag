@@ -536,6 +536,65 @@ class DocumentChunk(Base):
     created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
 
 
+class DocumentTable(Base):
+    """Complete extracted table structure for TableRAG retrieval.
+
+    Chroma/BM25 hold table_summary, table_interpretation, and table_row *index*
+    texts; this row is the durable source of headers, rows, merged cells,
+    bboxes, and confidence flags passed to answer generation.
+    """
+
+    __tablename__ = "document_tables"
+    __table_args__ = (
+        Index(
+            "ix_document_tables_document_page",
+            "document_id",
+            "page_start",
+        ),
+        UniqueConstraint(
+            "document_id",
+            "table_id",
+            name="uq_document_tables_document_table_id",
+        ),
+    )
+
+    # ``{document_id}:{table_id}`` (truncated to column width).
+    id = Column(String(160), primary_key=True)
+    document_id = Column(
+        GUID,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(GUID, nullable=False, index=True)
+    table_id = Column(String(128), nullable=False, index=True)
+    filename = Column(String(255), nullable=True)
+    page_start = Column(Integer, nullable=True)
+    page_end = Column(Integer, nullable=True)
+    section = Column(String(512), nullable=True)
+    subsection = Column(String(512), nullable=True)
+    caption = Column(LongText, nullable=True)
+    extraction_method = Column(String(64), nullable=True)
+    n_rows = Column(Integer, nullable=True)
+    n_cols = Column(Integer, nullable=True)
+    headers_json = Column(LongText, nullable=True)
+    rows_json = Column(LongText, nullable=True)
+    bbox_json = Column(LongText, nullable=True)
+    merged_cells_json = Column(LongText, nullable=True)
+    cells_json = Column(LongText, nullable=True)
+    header_rows_json = Column(LongText, nullable=True)
+    low_confidence_json = Column(LongText, nullable=True)
+    table_json = Column(LongText, nullable=True)
+    summary_text = Column(LongText, nullable=True)
+    # LLM interpretation metadata only — never replaces extracted cell values.
+    llm_understanding_json = Column(LongText, nullable=True)
+    needs_verification = Column(Boolean, default=False, nullable=False)
+    confidence = Column(Float, nullable=True)
+    index_version = Column(String(32), nullable=True)
+    ordinal = Column(Integer, nullable=False, default=0)
+    created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc))
+
+
 class ChatMessage(Base):
     """
     Persistent log of conversations between users and the AI analyst.

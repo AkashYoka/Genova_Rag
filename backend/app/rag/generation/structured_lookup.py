@@ -21,6 +21,17 @@ _RANGE_RE = re.compile(
     r"(-?\d+(?:\.\d+)?)"
     r"\s*([a-zA-Z%/μµ²³]*)?"
 )
+# OCR artifact: hyphen lost inside a single cell → "30 100" / ">300 400"
+_SPACE_RANGE_RE = re.compile(
+    r"(?i)"
+    r"(≥|>=|>|≤|<=|<)?"
+    r"\s*"
+    r"(-?\d+(?:\.\d+)?)"
+    r"\s+"
+    r"(-?\d+(?:\.\d+)?)"
+    r"\s*([a-zA-Z%/μµ²³]*)?"
+    r"$"
+)
 _SINGLE_BOUND_RE = re.compile(
     r"(?i)(≥|>=|>|≤|<=|<)\s*(-?\d+(?:\.\d+)?)\s*([a-zA-Z%/μµ²³]*)?"
 )
@@ -86,6 +97,19 @@ ROLE_EXCLUDE = "exclude"
 
 VERIFIED_BLOCK_MARKER = "CRITICAL — Verified table evidence is authoritative."
 
+# Explicit lookup statuses (domain-agnostic).
+STATUS_MATCHED = "matched"
+STATUS_AMBIGUOUS = "ambiguous"
+STATUS_NOT_FOUND = "not_found"
+STATUS_OUT_OF_RANGE = "out_of_range"
+STATUS_INVALID_TABLE_STRUCTURE = "invalid_table_structure"
+
+_EMPTY_OR_UNSUPPORTED_CELL_RE = re.compile(
+    r"(?i)^\s*(?:[-–—]+|n/?a|none|null|empty|"
+    r"insufficient(?:\s+data)?(?:\s+to\s+recommend(?:\s+a\s+dose)?)?|"
+    r"do\s+not\s+dose|not\s+recommended|no\s+dose)\s*$"
+)
+
 
 @dataclass(frozen=True)
 class NumericConstraint:
@@ -117,6 +141,9 @@ class VerifiedCell:
     confidence: float = 100.0
     table_headers: List[str] = field(default_factory=list)
     evidence: Dict[str, Any] = field(default_factory=dict)
+    status: str = STATUS_MATCHED
+    table_id: str = ""
+    normalized_value: str = ""
 
     def to_prompt_block(self) -> str:
         row_s = " | ".join(self.row_headers) if self.row_headers else f"row {self.row_index}"
@@ -127,24 +154,61 @@ class VerifiedCell:
         if self.page is not None:
             loc.append(f"Page {self.page}")
         where = ", ".join(loc) if loc else "retrieved table"
+        caption = str(self.evidence.get("table_caption") or "").strip()
+        section = str(self.evidence.get("table_section") or "").strip()
+        tid = self.table_id or "unknown"
+        provenance = (
+            f"- Source: {where}\n"
+            f"- Table id: {tid}\n"
+            + (f"- Caption: {caption}\n" if caption else "")
+            + (f"- Section: {section}\n" if section else "")
+            + "- Provenance rule: cite THIS page and table only for the matrix "
+            "value. Never attribute this cell to a different page/table.\n"
+        )
         prescribed = self.evidence.get("prescribed_value")
         if prescribed is not None:
             p_unit = self.evidence.get("prescribed_unit") or ""
             p_s = f"{prescribed}{(' ' + p_unit) if p_unit else ''}".strip()
+            p_freq = self.evidence.get("prescribed_frequency")
+            freq_line = (
+                f"- Stated frequency/schedule: {p_freq}\n" if p_freq else ""
+            )
+            # Same numeric → must not be framed as an error/deviation.
+            same_amount = False
+            try:
+                same_amount = float(prescribed) == float(
+                    re.search(r"(\d+(?:\.\d+)?)", str(self.value) or "").group(1)
+                )
+            except Exception:
+                same_amount = str(prescribed) in str(self.value)
+            match_rule = (
+                "The stated amount EQUALS the verified label cell. Characterize "
+                "as matching / concordant for that amount unless a stated "
+                "frequency/schedule clearly conflicts with the verified row. "
+                "Do NOT call it an intentional deviation, medication error, or "
+                "off-label dosing solely because a prescription was mentioned.\n"
+                if same_amount
+                else "The stated amount DIFFERS from the verified label cell. "
+                "Describe the mismatch factually; separate label facts from "
+                "interpretation. Do not invent clinical consequences.\n"
+            )
             return (
                 f"{VERIFIED_BLOCK_MARKER}\n"
                 "This question compares a stated administered/prescribed amount "
                 "against a verified table cell.\n"
                 f"- Label / table cell value (authoritative): {self.value}\n"
                 f"- Stated administered/prescribed amount: {p_s}\n"
+                f"{freq_line}"
                 f"- Row: {row_s}\n"
                 f"- Column: {col_s}\n"
-                f"- Source: {where}\n"
+                f"{provenance}"
                 f"- Confidence: {self.confidence:.1f}\n"
-                "Classify whether the stated amount is concordant with the label "
-                "cell. Do NOT claim the patient received the label cell value. "
-                "Do NOT replace the label cell with a neighboring cell.\n"
-                "Exposure math (required when dose AND frequency both differ): "
+                f"{match_rule}"
+                "Do NOT claim the patient received the label cell value when it "
+                "differs. Do NOT replace the label cell with a neighboring cell "
+                "or another table.\n"
+                "Preserve value, units, and schedule/frequency as separate fields.\n"
+                "Exposure math (required when amount AND frequency both differ): "
                 "normalize both regimens to the same time window (e.g. mg per "
                 "4 weeks) and state that ratio. Example: 150 mg every 4 weeks "
                 "= 150 mg/4 wk; 300 mg every 2 weeks = 600 mg/4 wk → prescribed "
@@ -160,7 +224,8 @@ class VerifiedCell:
             f"- Value: {self.value}\n"
             f"- Row: {row_s}\n"
             f"- Column: {col_s}\n"
-            f"- Source: {where}\n"
+            f"{provenance}"
+            f"- Status: {self.status}\n"
             f"- Confidence: {self.confidence:.1f}"
         )
 
@@ -169,11 +234,45 @@ class VerifiedCell:
 class InsufficientEvidence:
     reason: str
     structured_lookup: bool = True
+    status: str = STATUS_NOT_FOUND
+    soft: bool = False
+    candidate_values: List[str] = field(default_factory=list)
+    candidate_table_ids: List[str] = field(default_factory=list)
+    missing_dimensions: List[str] = field(default_factory=list)
 
     def to_prompt_block(self) -> str:
+        if self.status == STATUS_AMBIGUOUS:
+            dims = (
+                ", ".join(self.missing_dimensions)
+                if self.missing_dimensions
+                else "applicability / population / period / category"
+            )
+            return (
+                "AMBIGUOUS table evidence — do not invent a single cell value.\n"
+                f"- Reason: {self.reason}\n"
+                f"- Status: {self.status}\n"
+                f"- Missing or conflicting dimensions: {dims}\n"
+                f"- Candidate values seen: {self.candidate_values or []}\n"
+                f"- Candidate tables: {self.candidate_table_ids or []}\n"
+                "- Ask for the missing constraint or present the candidates with provenance.\n"
+                "- Do not pick an arbitrary table when candidates disagree.\n"
+                "- Do not promote one candidate into a definitive answer."
+            )
+        if self.soft:
+            return (
+                "SOFT table-lookup notice (not a hard abstain):\n"
+                f"- Reason: {self.reason}\n"
+                f"- Status: {self.status}\n"
+                "- A unique matrix cell was not verified. Answer from clear prose "
+                "dosing/guidance in Document Context when present.\n"
+                "- Do not invent a matrix cell, swap sibling tables, or fabricate "
+                "row/column intersections.\n"
+                "- Preserve uncertainty: separate labeled facts from interpretation."
+            )
         return (
             "Insufficient table evidence:\n"
             f"- Reason: {self.reason}\n"
+            f"- Status: {self.status}\n"
             "- Do not invent a cell value from flattened markdown or neighboring rows/columns.\n"
             "- If you cannot verify a unique row-column intersection, say evidence is insufficient."
         )
@@ -219,6 +318,27 @@ def parse_range_label(text: str) -> Optional[ParsedRange]:
             unit=_norm_unit(unit),
             inclusive_low=inclusive_low,
             inclusive_high=inclusive_high,
+            raw=raw,
+        )
+    # Space-separated endpoints in one cell (Textract hyphen drop).
+    # Must run before single-bound parsing so ">300 400" is not truncated to >300.
+    m3 = _SPACE_RANGE_RE.match(raw.strip())
+    if m3:
+        op, lo_s, hi_s, unit = m3.group(1), m3.group(2), m3.group(3), m3.group(4) or ""
+        lo, hi = float(lo_s), float(hi_s)
+        if lo > hi:
+            lo, hi = hi, lo
+        inclusive_low = True
+        if raw.lstrip().startswith(">") and not raw.lstrip().startswith(">="):
+            inclusive_low = False
+        if raw.lstrip().startswith("≥") or raw.lstrip().startswith(">="):
+            inclusive_low = True
+        return ParsedRange(
+            low=lo,
+            high=hi,
+            unit=_norm_unit(unit),
+            inclusive_low=inclusive_low,
+            inclusive_high=True,
             raw=raw,
         )
     m2 = _SINGLE_BOUND_RE.search(raw)
@@ -507,14 +627,37 @@ def lookup_cell_in_table(
     page: Optional[int] = None,
 ) -> VerifiedCell | InsufficientEvidence:
     """Find a unique verified cell for constraints in ``question``."""
+    # Structural gate: never return matched from an unreliable grid.
+    try:
+        from app.rag.ingestion.pdf_layout.table_structure import (
+            STRUCTURE_INVALID,
+            validate_table_structure,
+        )
+
+        validation = validate_table_structure(table)
+        if validation.status == STRUCTURE_INVALID or not validation.reliable_for_lookup:
+            return InsufficientEvidence(
+                "table structure is unreliable for definitive lookup: "
+                + ",".join(validation.reason_codes[:6]),
+                status=STATUS_INVALID_TABLE_STRUCTURE,
+            )
+    except Exception:
+        pass
+
     headers = [str(h or "") for h in (table.get("headers") or [])]
     rows = [list(r) for r in (table.get("rows") or [])]
     if not headers or not rows:
-        return InsufficientEvidence("table missing headers or rows")
+        return InsufficientEvidence(
+            "table missing headers or rows",
+            status=STATUS_INVALID_TABLE_STRUCTURE,
+        )
 
     width = max(len(headers), max((len(r) for r in rows), default=0))
     if width < 2:
-        return InsufficientEvidence("table has fewer than 2 columns")
+        return InsufficientEvidence(
+            "table has fewer than 2 columns",
+            status=STATUS_INVALID_TABLE_STRUCTURE,
+        )
 
     headers = (headers + [""] * width)[:width]
     body = [(list(r) + [""] * width)[:width] for r in rows]
@@ -540,7 +683,10 @@ def lookup_cell_in_table(
     col_hits = [(i + 1, score, c) for i, score, c in col_hits]
 
     if not row_hits and not col_hits:
-        return InsufficientEvidence("no row or column labels matched question values")
+        return InsufficientEvidence(
+            "no row or column labels matched question values",
+            status=STATUS_NOT_FOUND,
+        )
 
     selected_row: Optional[Tuple[int, float, NumericConstraint]] = None
     selected_col: Optional[Tuple[int, float, NumericConstraint]] = None
@@ -634,11 +780,11 @@ def lookup_cell_in_table(
                     )
         if len(verified_hits) == 1:
             cell = verified_hits[0]
-            return _attach_compare(cell, compare_cs)
+            return _attach_compare(cell, compare_cs, freq_cs)
         if len(verified_hits) > 1:
             values = {h.value for h in verified_hits}
             if len(values) == 1:
-                return _attach_compare(verified_hits[0], compare_cs)
+                return _attach_compare(verified_hits[0], compare_cs, freq_cs)
             return InsufficientEvidence(
                 "multiple list rows match with disagreeing values"
             )
@@ -696,7 +842,15 @@ def lookup_cell_in_table(
 
     value = str(body[r_i][c_i] or "").strip()
     if not value:
-        return InsufficientEvidence("intersecting cell is empty")
+        return InsufficientEvidence(
+            "intersecting cell is empty",
+            status=STATUS_OUT_OF_RANGE,
+        )
+    if _EMPTY_OR_UNSUPPORTED_CELL_RE.match(value):
+        return InsufficientEvidence(
+            f"intersecting cell is unsupported or out of range: {value!r}",
+            status=STATUS_OUT_OF_RANGE,
+        )
 
     if _score_label_match(row_labels[r_i], selected_row[2], axis_prefer_unit=row_unit) <= 0:
         return InsufficientEvidence("row label failed verification against constraint")
@@ -733,9 +887,26 @@ def lookup_cell_in_table(
                 conflicts.append(other_val)
     if conflicts:
         return InsufficientEvidence(
-            "multiple rows match equally with disagreeing cell values"
+            "multiple rows match equally with disagreeing cell values",
+            status=STATUS_AMBIGUOUS,
+            candidate_values=sorted({value, *conflicts}),
         )
 
+    table_id = str(table.get("table_id") or "")
+    header_paths = table.get("normalized_header_paths") or []
+    if not header_paths:
+        recon = table.get("header_reconstruction") or {}
+        if isinstance(recon, dict):
+            header_paths = recon.get("normalized_header_paths") or []
+    col_path = []
+    if isinstance(header_paths, list) and c_i < len(header_paths):
+        col_path = [str(p) for p in (header_paths[c_i] or [])]
+    und = table.get("llm_understanding") if isinstance(table.get("llm_understanding"), dict) else {}
+    applicability_evidence = {
+        "cues": list(und.get("applicability_cues") or [])[:8],
+        "attributes": list(und.get("applicability_attributes") or [])[:8],
+        "caption": str(table.get("caption") or "")[:240],
+    }
     cell = VerifiedCell(
         value=value,
         row_headers=[row_labels[r_i]],
@@ -749,8 +920,34 @@ def lookup_cell_in_table(
             60.0 + 20.0 * float(selected_row[1]) + 10.0 * float(selected_col[1]),
         ),
         table_headers=headers,
+        status=STATUS_MATCHED,
+        table_id=table_id,
+        normalized_value=value,
         evidence={
             "match_mode": "row_col_intersection",
+            "status": STATUS_MATCHED,
+            "table_id": table_id,
+            "source_document_id": str(
+                table.get("document_id") or table.get("doc_id") or ""
+            ),
+            "original_cell_text": value,
+            "normalized_header_paths": {
+                "row": [row_labels[r_i]],
+                "column": col_path or [col_labels[c_i]],
+            },
+            "applicability_evidence": applicability_evidence,
+            "table_caption": str(table.get("caption") or "")[:240],
+            "table_section": str(
+                table.get("section")
+                or table.get("section_path")
+                or (und.get("subject") if und else "")
+                or ""
+            )[:240],
+            "warnings": list(
+                (table.get("header_reconstruction") or {}).get("warnings") or []
+            )[:12]
+            if isinstance(table.get("header_reconstruction"), dict)
+            else [],
             "constraints": [
                 {
                     "value": selected_row[2].value,
@@ -765,12 +962,13 @@ def lookup_cell_in_table(
             ],
         },
     )
-    return _attach_compare(cell, compare_cs)
+    return _attach_compare(cell, compare_cs, freq_cs)
 
 
 def _attach_compare(
     cell: VerifiedCell,
     compare_cs: Sequence[NumericConstraint],
+    freq_cs: Sequence[NumericConstraint] | None = None,
 ) -> VerifiedCell:
     if not compare_cs:
         return cell
@@ -784,6 +982,12 @@ def _attach_compare(
     )
     evidence["prescribed_value"] = c.value
     evidence["prescribed_unit"] = c.unit
+    if freq_cs:
+        f = freq_cs[0]
+        unit = (f.unit or "").strip()
+        evidence["prescribed_frequency"] = (
+            f"every {f.value} {unit}".strip() if unit else str(f.value)
+        )
     cell.evidence = evidence
     return cell
 
@@ -792,7 +996,10 @@ def lookup_from_chunk(
     chunk: Dict[str, Any],
     question: str,
 ) -> VerifiedCell | InsufficientEvidence | None:
-    table = _parse_table_payload(chunk.get("table_json"))
+    # Prefer TableRAG-hydrated full table, then chunk table_json.
+    table = _parse_table_payload(chunk.get("table")) or _parse_table_payload(
+        chunk.get("table_json")
+    )
     if not table:
         return None
     # Prefer Textract/table_json page (true table location) over chunk page,

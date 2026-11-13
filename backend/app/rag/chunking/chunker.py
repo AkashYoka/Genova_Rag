@@ -770,7 +770,19 @@ def extract_pdf_with_tables(filepath: str) -> List[Dict[str, Any]]:
 
     Each table record includes Markdown text, structured JSON, page, bbox, footnotes,
     and extractor metadata suitable for chunking and retrieval.
+
+    When the layout-aware pipeline is enabled, this legacy path returns PyMuPDF
+    body text only: AWS Textract owns table extraction in ``parse_pdf``, so
+    running Camelot/Docling/pdfplumber here would duplicate tables.
     """
+    if bool(getattr(get_settings(), "PDF_LAYOUT_AWARE_ENABLED", True)):
+        logger.info(
+            "Layout-aware PDF enabled: legacy chunker returns body text only "
+            "for '%s' (Camelot/Docling/pdfplumber tables disabled; Textract owns tables)",
+            filepath,
+        )
+        return extract_pdf_with_pymupdf(filepath)
+
     pages: List[Dict[str, Any]] = []
     text_pages: List[Dict[str, Any]] = []
     plumber_tables: List[Dict[str, Any]] = []

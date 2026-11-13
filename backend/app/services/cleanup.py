@@ -35,6 +35,13 @@ def _hard_delete_document(db, doc):
         logger.warning("Cleanup: error deleting vectors for %s: %s", doc_id, e)
 
     try:
+        from app.rag.table_rag import delete_document_tables
+
+        delete_document_tables(document_id=str(doc_id), db=db)
+    except Exception as e:
+        logger.warning("Cleanup: error deleting document_tables for %s: %s", doc_id, e)
+
+    try:
         import os
         filepath = os.path.join(settings.UPLOAD_DIR, str(user_id), doc.filename)
         if os.path.exists(filepath):

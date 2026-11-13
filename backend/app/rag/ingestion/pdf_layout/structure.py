@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from app.rag.table_rag.ids import make_table_id
+
 from app.rag.ingestion.pdf_layout.analyzer import (
     is_caption_line,
     is_list_line,
@@ -160,7 +162,11 @@ def _join_lines(lines: Sequence[TextLine]) -> str:
 
 
 def _caption_near(blocks: Sequence[TextBlock], bbox: BBox, page_height: float) -> Optional[TextBlock]:
-    """Nearest caption above or below a table/figure (layout-generic)."""
+    """Nearest caption above or below a table/figure (layout-generic).
+
+    Multi-line table titles (``Table N. ...`` wrapped onto the next line) are
+    merged so applicability cues such as age bands are not truncated.
+    """
     threshold = max(36.0, page_height * 0.06)
     candidates: List[tuple[float, TextBlock]] = []
     for block in blocks:
@@ -177,7 +183,48 @@ def _caption_near(blocks: Sequence[TextBlock], bbox: BBox, page_height: float) -
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
+    primary = candidates[0][1]
+    # Merge immediately following non-caption continuation lines.
+    ordered = sorted(
+        [b for b in blocks if b.text],
+        key=lambda b: (b.bbox.y0, b.bbox.x0),
+    )
+    try:
+        idx = next(i for i, b in enumerate(ordered) if b is primary)
+    except StopIteration:
+        return primary
+    parts = [primary.text]
+    y_limit = primary.bbox.y1 + max(28.0, page_height * 0.035)
+    for nxt in ordered[idx + 1 : idx + 3]:
+        if is_caption_line(nxt.text):
+            break
+        if nxt.bbox.y0 > y_limit:
+            break
+        if not (nxt.bbox.x0 < bbox.x1 and nxt.bbox.x1 > bbox.x0):
+            break
+        # Continuation: short line without starting a new section heading style.
+        text = normalize_ws(nxt.text)
+        if not text or len(text) > 160:
+            break
+        parts.append(text)
+        y_limit = nxt.bbox.y1 + max(22.0, page_height * 0.03)
+    if len(parts) == 1:
+        return primary
+    merged = TextBlock(
+        lines=list(primary.lines) + [
+            line for b in ordered[idx + 1 : idx + len(parts)] for line in b.lines
+        ],
+        page=primary.page,
+        column=primary.column,
+        block_type=primary.block_type,
+        bbox_override=BBox(
+            min(primary.bbox.x0, *(ordered[idx + i].bbox.x0 for i in range(len(parts) - 1))),
+            primary.bbox.y0,
+            max(primary.bbox.x1, *(ordered[idx + i].bbox.x1 for i in range(len(parts) - 1))),
+            max(primary.bbox.y1, *(ordered[idx + i].bbox.y1 for i in range(len(parts) - 1))),
+        ),
+    )
+    return merged
 
 
 def build_page_elements(
@@ -261,6 +308,7 @@ def build_page_elements(
             )
         list_lines = []
 
+    table_ordinal = 0
     for obj in ordered:
         if isinstance(obj, TableData):
             flush_paragraph()
@@ -268,6 +316,16 @@ def build_page_elements(
             caption = _caption_near(blocks, obj.bbox, page_height)
             if caption:
                 obj.caption = caption.text
+            table_payload = obj.to_json()
+            # Stable id so TableRAG SQL + row/summary index chunks can
+            # reference the same extracted grid across split parts.
+            table_payload["table_id"] = make_table_id(
+                page=int(obj.page or 1),
+                ordinal=table_ordinal,
+                bbox=obj.bbox.as_tuple() if obj.bbox else None,
+                headers=obj.headers or [],
+            )
+            table_ordinal += 1
             elements.append(
                 DocumentElement(
                     element_type="table",
@@ -280,10 +338,11 @@ def build_page_elements(
                     extraction_method=obj.extraction_method,
                     content_type="table",
                     metadata={
-                        "table": obj.to_json(),
+                        "table": table_payload,
                         "rows": obj.n_rows,
                         "columns": obj.n_cols,
                         "caption": obj.caption,
+                        "table_id": table_payload["table_id"],
                     },
                 )
             )

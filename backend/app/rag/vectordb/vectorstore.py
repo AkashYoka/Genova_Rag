@@ -206,10 +206,14 @@ def _chunk_metadata(
         "table_ids",
         "index_version",
         "token_count",
+        "index_kind",
+        "row_index",
     ):
         value = chunk.get(key)
         if value not in (None, ""):
             metadata[key] = value
+    if chunk.get("table_needs_verification"):
+        metadata["table_needs_verification"] = True
     for key in ("bbox", "table_json", "layout_metadata"):
         value = chunk.get(key)
         if value in (None, ""):
@@ -471,6 +475,9 @@ def query_chunks(
                 "table_ids",
                 "index_version",
                 "token_count",
+                "index_kind",
+                "row_index",
+                "table_needs_verification",
             ):
                 if key in metadata and metadata[key] not in (None, ""):
                     chunk[key] = metadata[key]
@@ -547,6 +554,9 @@ def get_chunks_by_ids(user_id: str, chunk_ids: List[str]) -> List[Dict[str, Any]
             "table_ids",
             "index_version",
             "token_count",
+            "index_kind",
+            "row_index",
+            "table_needs_verification",
         ):
             if key in metadata and metadata[key] not in (None, ""):
                 chunk[key] = metadata[key]

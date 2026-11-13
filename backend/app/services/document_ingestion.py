@@ -218,6 +218,47 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
 
         db.commit()
 
+        # ── TableRAG expansion ─────────────────────────────────────────────
+        # Additive table_summary / table_row index chunks share Chroma+BM25
+        # with paragraph RAG. Full grids are persisted to document_tables.
+        table_records = []
+        store_chunk_list = list(chunks)
+        try:
+            from app.rag.table_rag import expand_table_rag_chunks, persist_document_tables
+
+            store_chunk_list, table_records = expand_table_rag_chunks(
+                chunks,
+                document_id=document_id,
+                filename=original_name,
+                index_version=chunk_index_version or "",
+                enabled=bool(getattr(settings, "TABLE_RAG_ENABLED", True)),
+                max_rows_per_table=int(
+                    getattr(settings, "TABLE_RAG_MAX_ROWS_PER_TABLE", 200) or 200
+                ),
+            )
+            if table_records:
+                persist_document_tables(
+                    document_id=document_id,
+                    user_id=user_id,
+                    filename=original_name,
+                    tables=table_records,
+                    index_version=chunk_index_version or "",
+                    db=db,
+                )
+                logger.info(
+                    "TableRAG stored %d structured tables for document %s",
+                    len(table_records),
+                    document_id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "TableRAG indexing failed for document %s (continuing text RAG): %s",
+                document_id,
+                exc,
+            )
+            store_chunk_list = list(chunks)
+            table_records = []
+
         def _on_embed_progress(stored: int, total: int) -> None:
             if total <= 0:
                 return
@@ -226,12 +267,20 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             _update_progress(document_id, min(pct, 90), "embedding")
 
         chunk_count = store_chunks(
-            chunks=chunks,
+            chunks=store_chunk_list,
             document_id=document_id,
             filename=original_name,
             user_id=user_id,
             on_progress=_on_embed_progress,
         )
+
+        # Navigation hierarchy uses content chunks only (not table_row index rows).
+        hierarchy_chunks = [
+            c
+            for c in store_chunk_list
+            if str(c.get("chunk_type") or "")
+            not in ("table_summary", "table_interpretation", "table_row")
+        ]
 
         # ── Hierarchical navigation index ──────────────────────────────────
         # Chroma/BM25 remain the retrieval stores. These rows power the
@@ -244,7 +293,7 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
                     document_id=document_id,
                     user_id=user_id,
                     sections=chunk_hierarchy,
-                    chunks=list(chunks),
+                    chunks=hierarchy_chunks,
                     index_version=chunk_index_version or "",
                     db=db,
                 )

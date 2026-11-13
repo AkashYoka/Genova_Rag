@@ -8,6 +8,20 @@ from app.rag.chunking import chunker
 from app.rag.chunking.chunker import _table_to_markdown, chunk_document, get_page_count
 
 
+@pytest.fixture(autouse=True)
+def _legacy_table_engine(monkeypatch):
+    """Keep legacy chunker table-extractor tests off the layout-aware short-circuit.
+
+    Production layout-aware mode returns body text only from this path; the
+    guard itself is covered separately below.
+    """
+    monkeypatch.setattr(
+        chunker,
+        "get_settings",
+        lambda: types.SimpleNamespace(PDF_LAYOUT_AWARE_ENABLED=False),
+    )
+
+
 def test_txt_extraction_and_chunking(tmp_path):
     file_path = tmp_path / "notes.txt"
     file_path.write_text("This is a sample text file for chunking.", encoding="utf-8")
@@ -503,6 +517,39 @@ def test_pdf_image_captioning_on_the_fly(monkeypatch):
     assert chunks[1]["image_caption"] == "Captured image on page 1"
     # Ensure image_bytes is not in the chunk dictionary (preventing memory leak)
     assert "image_bytes" not in chunks[1]
+
+def test_layout_aware_skips_legacy_table_extractors(monkeypatch):
+    """Layout-aware mode must not run Camelot/Docling/pdfplumber tables."""
+    calls = {"camelot": 0, "docling": 0, "pdfplumber": 0, "pymupdf": 0}
+
+    def _fail(name):
+        def _inner(_filepath):
+            calls[name] += 1
+            raise AssertionError(
+                f"{name} must not run when PDF_LAYOUT_AWARE_ENABLED=true"
+            )
+        return _inner
+
+    monkeypatch.setattr(
+        chunker,
+        "get_settings",
+        lambda: types.SimpleNamespace(PDF_LAYOUT_AWARE_ENABLED=True),
+    )
+    monkeypatch.setattr(chunker, "_extract_tables_with_camelot", _fail("camelot"))
+    monkeypatch.setattr(chunker, "_extract_tables_with_docling", _fail("docling"))
+    monkeypatch.setattr(chunker, "_extract_tables_with_pdfplumber", _fail("pdfplumber"))
+
+    def fake_body_text(_filepath):
+        calls["pymupdf"] += 1
+        return [{"text": "Body paragraph", "page": 1, "chunk_type": "text"}]
+
+    monkeypatch.setattr(chunker, "extract_pdf_with_pymupdf", fake_body_text)
+
+    result = chunker.extract_pdf_with_tables("report.pdf")
+
+    assert result == [{"text": "Body paragraph", "page": 1, "chunk_type": "text"}]
+    assert calls == {"camelot": 0, "docling": 0, "pdfplumber": 0, "pymupdf": 1}
+
 
 def test_pdf_multi_column_layout_parsing_order(monkeypatch):
     """Ensure multi-column layout extracts text column-by-column rather than row-by-row."""

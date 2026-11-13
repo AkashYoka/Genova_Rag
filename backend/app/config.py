@@ -184,9 +184,11 @@ class Settings(BaseSettings):
     PDF_OCR_TESSDATA_DIR: str = ""  # blank → TESSDATA_PREFIX / system tessdata
     PDF_TABLE_MAX_CHARS: int = 4000
     PDF_TABLE_SPLIT_ROWS: int = 40
-    # AWS Textract TABLES is the primary structured-table extractor for RAG.
+    # Sole production PDF table extractor: AWS Textract AnalyzeDocument TABLES.
     # IAM: textract:AnalyzeDocument. Cost ~$0.015/page analyzed when enabled.
-    # Set PDF_TEXTRACT_TABLES_ENABLED=false for offline/local without AWS.
+    # Set PDF_TEXTRACT_TABLES_ENABLED=false for offline/local without AWS
+    # (tables will be empty; failures are reported explicitly — no img2table
+    # or Tesseract table fallback).
     # When PDF_TEXTRACT_TABULAR_ONLY=true (default), Textract runs only on pages
     # that look tabular — never on ordinary text-only pages.
     PDF_TEXTRACT_TABLES_ENABLED: bool = True
@@ -203,6 +205,19 @@ class Settings(BaseSettings):
     # Pull neighboring chunks when a hit is a table or references Table N.
     RAG_EXPAND_ADJACENT_CHUNKS: bool = True
     RAG_ADJACENT_CHUNK_WINDOW: int = 1
+    # TableRAG: structured SQL storage + table/row index chunks in Chroma/BM25.
+    TABLE_RAG_ENABLED: bool = True
+    TABLE_RAG_MAX_ROWS_PER_TABLE: int = 200
+    TABLE_RAG_HYDRATE_ON_RETRIEVE: bool = True
+    # LLM table understanding during semantic chunking (interpretation only).
+    TABLE_RAG_LLM_UNDERSTANDING_ENABLED: bool = True
+    TABLE_RAG_LLM_BATCH_SIZE: int = 2
+    TABLE_RAG_LLM_MAX_TABLES: int = 20
+    TABLE_RAG_LLM_PROMPT_ROWS: int = 12
+    TABLE_RAG_LLM_MAX_OUTPUT_TOKENS: int = 2048
+    # Emit a separate Chroma/BM25 chunk for LLM interpretation (not merged into
+    # table_summary). Keep summary/row/interpretation as distinct embeddings.
+    TABLE_RAG_SEPARATE_INTERPRETATION_EMBEDDING: bool = True
     # Per-query RAG debug payload (redacted by default).
     RAG_DEBUG_ENABLED: bool = False
     RAG_DEBUG_REDACT: bool = True

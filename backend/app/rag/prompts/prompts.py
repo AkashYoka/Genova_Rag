@@ -18,6 +18,9 @@ IMPORTANT RULES:
 10. When simplifying for a child or non-expert (e.g. "like I'm 5"), keep the SAME exact numbers, units, currencies, dates, and frequencies from the source. Never convert or approximate them (example: do NOT turn "every 4 weeks" into "about 3 months").
 11. Do not open answers with table-abstain boilerplate unless the provided context explicitly requires abstaining from inventing a missing matrix cell that is necessary to answer.
 12. When a label marks one schedule as recommended and others as less effective / “although not as effective”, state the recommended schedule first; never promote secondary schedules as the primary regimen. Prefer Dosage and Administration over Clinical Studies for “what does the label recommend”.
+13. When context contains CRITICAL — Verified table evidence, treat that block as authoritative for the matrix value and its page/table provenance. Do not cite a different page or table for that value, and do not swap in a neighboring or sibling-table cell.
+14. When a verified label cell equals a stated administered/prescribed amount, characterize that amount as matching / concordant unless a stated schedule clearly conflicts. Do not call an exact amount match an intentional deviation or error.
+15. Soft table-lookup notices allow prose answers; AMBIGUOUS blocks forbid inventing a single definitive cell.
 
 FORMATTING:
 - Use **bold** for key terms and important findings
@@ -45,7 +48,7 @@ RAG_PROMPT_TEMPLATE = """Based on the following document excerpts, answer the us
 
 ## Instructions
 
-Provide a comprehensive answer based strictly on the document context above. Include inline citations using [Source: filename, Page X] format for every claim you make. If the documents don't contain relevant information, clearly state that. Focus only on the current question; ignore unrelated prior topics, patients, and doses. If simplifying language, preserve exact facts, units, and frequencies from the context. Prefer clear prose dosing guidance when no verified matrix cell is present — do not lead with table-abstain language in that case. When the context marks one schedule as recommended and others as less effective, lead with the recommended schedule.
+Provide a comprehensive answer based strictly on the document context above. Include inline citations using [Source: filename, Page X] format for every claim you make. If the documents don't contain relevant information, clearly state that. Focus only on the current question; ignore unrelated prior topics, patients, and doses. If simplifying language, preserve exact facts, units, and frequencies from the context. Prefer clear prose dosing guidance when no verified matrix cell is present — do not lead with table-abstain language in that case. When the context marks one schedule as recommended and others as less effective, lead with the recommended schedule. If CRITICAL verified table evidence is present, use that exact value and its stated page/table only; never attribute it to another table. If a stated amount equals the verified cell, call it a match — not a deviation — unless schedule clearly conflicts. AMBIGUOUS evidence must not become a single invented cell.
 
 ## Answer
 """

@@ -177,6 +177,29 @@ def semantic_chunk_document(
         index_version=index_version,
     )
 
+    # TableRAG LLM understanding uses section context from the hierarchy.
+    # Interpretation metadata is attached to SourceBlock.table without mutating
+    # extracted headers/rows/cells/merged_cells.
+    table_understanding_report: Dict[str, Any] = {}
+    try:
+        from app.rag.table_rag.understanding import understand_document_tables
+
+        _report_progress(progress, "table_understanding", 48)
+        blocks, table_understanding_report = understand_document_tables(
+            blocks,
+            nodes,
+            document_name=document_name,
+            settings=settings,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Table understanding skipped for %s: %s", filepath, exc
+        )
+        table_understanding_report = {
+            "enabled": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
     _report_progress(progress, "chunking", 55)
     max_tokens = int(
         getattr(settings, "SEMANTIC_CHUNKING_MAX_CHUNK_TOKENS", 1800) or 1800
@@ -247,6 +270,12 @@ def semantic_chunk_document(
     report_dict["elapsed_s"] = round(time.perf_counter() - started, 2)
     report_dict["chunk_size_hint"] = chunk_size
     report_dict["chunk_overlap_hint"] = chunk_overlap
+    if table_understanding_report:
+        report_dict["table_understanding"] = table_understanding_report
+        # Count table LLM calls toward the semantic report totals.
+        report_dict["llm_calls"] = int(report_dict.get("llm_calls") or 0) + int(
+            table_understanding_report.get("llm_calls") or 0
+        )
 
     _report_progress(progress, "chunked", 60)
     logger.info(

@@ -612,8 +612,16 @@ def _multi_doc_prompt_prefix(document_ids: Optional[List[str]], chunks: List[Dic
 
 
 def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 12) -> str:
-    """Compact structured table appendix so answer stage sees headers/rows, not text only."""
-    raw = chunk.get("table_json")
+    """Compact structured table appendix so answer stage sees headers/rows, not text only.
+
+    Prefers TableRAG-hydrated ``table_prompt_block`` (full grid + merged cells +
+    confidence warnings) when present.
+    """
+    prompt_block = chunk.get("table_prompt_block")
+    if isinstance(prompt_block, str) and prompt_block.strip():
+        return prompt_block.strip()
+
+    raw = chunk.get("table") or chunk.get("table_json")
     if not raw:
         return ""
     try:
@@ -624,6 +632,16 @@ def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 12) -> str:
         return ""
     if not isinstance(table, dict):
         return ""
+    try:
+        from app.rag.table_rag.representations import compact_table_prompt_block
+
+        return compact_table_prompt_block(
+            table,
+            max_rows=max_rows,
+            relevant_row_indices=chunk.get("relevant_row_indices"),
+        )
+    except Exception:
+        pass
     headers = [str(h or "") for h in (table.get("headers") or [])]
     rows = [list(r) for r in (table.get("rows") or [])][:max_rows]
     if not headers and not rows:
@@ -636,6 +654,10 @@ def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 12) -> str:
         lines.append(f"row[{idx}]: " + " | ".join(cells))
     if len(table.get("rows") or []) > max_rows:
         lines.append(f"... ({len(table['rows']) - max_rows} more rows)")
+    if table.get("needs_verification") or table.get("low_confidence_cells"):
+        lines.append(
+            "WARNING: low-confidence table extraction; verify numeric values."
+        )
     return "\n".join(lines)
 
 
@@ -708,9 +730,9 @@ def _apply_table_interpretation(
 
     prefix = interpretation.prompt_prefix or ""
     if prefix:
-        # Place authoritative evidence at both ends — models often overweight
-        # the start and the end of long contexts.
-        context = prefix + context + "\n\n" + prefix.rstrip() + "\n"
+        # Single injection: double-prefix wasted context and amplified abstain
+        # instructions for small models without improving pin fidelity.
+        context = prefix + context
 
     update = interpretation.sources_update or {}
     if update and sources:
@@ -750,21 +772,49 @@ def _reconcile_answer_with_verified_cell(
     """
     meta = _verified_meta_from_sources(sources)
     if not meta:
-        # Soft insufficient: do not prepend abstain boilerplate — prose RAG may
-        # still answer correctly from dosage paragraphs.
-        if any(
-            s.get("insufficient_table_evidence") and not s.get("soft_insufficient")
+        # Hard insufficient / ambiguous: force abstain framing.
+        # Soft insufficient: allow prose RAG without boilerplate.
+        # Skip banner when a matched verified cell is already present (handled
+        # above) or when the model already framed insufficiency/ambiguity.
+        hard = [
+            s
             for s in (sources or [])
-        ):
+            if s.get("insufficient_table_evidence") and not s.get("soft_insufficient")
+        ]
+        if hard:
+            # Unique candidate with no disagreement — do not clobber prose.
+            candidates = hard[0].get("candidate_values") or []
+            if (
+                str(hard[0].get("status") or "") == "ambiguous"
+                and isinstance(candidates, list)
+                and len(candidates) == 1
+            ):
+                return answer
+            status = str(hard[0].get("status") or "")
             if not re.search(
-                r"(?i)insufficient|cannot determine|unable to verify|not enough evidence",
+                r"(?i)insufficient|ambiguous|cannot determine|unable to verify|"
+                r"not enough evidence|missing",
                 answer or "",
             ):
+                if status == "ambiguous" or candidates:
+                    dims = hard[0].get("missing_dimensions") or ["applicability"]
+                    return (
+                        "Ambiguous table evidence: multiple applicable tables or "
+                        "cells could answer this lookup. "
+                        f"Missing or conflicting dimensions: {dims}. "
+                        f"Candidate values: {candidates}. "
+                        "Do not invent a single cell value.\n\n"
+                        + (answer or "")
+                    )
                 return (
                     "Insufficient table evidence to verify a unique row–column "
                     "intersection. Do not invent a cell value.\n\n"
                     + (answer or "")
                 )
+        return answer
+
+    # Only pin answers for matched verified cells.
+    if str(meta.get("status") or "matched") not in ("", "matched"):
         return answer
 
     raw_val = str(meta.get("value") or "").strip()
@@ -787,10 +837,46 @@ def _reconcile_answer_with_verified_cell(
         )
 
     verified_num = m_val.group(1)
+    verified_page = meta.get("page")
+    answer_text = answer or ""
+
+    def _provenance_mismatch(text: str) -> bool:
+        """True when the answer cites a different Page N for this cell value."""
+        if verified_page is None:
+            return False
+        try:
+            vp = int(verified_page)
+        except (TypeError, ValueError):
+            return False
+        # Other page citations near the verified numeric → provenance drift.
+        for m in re.finditer(
+            rf"(?i)(?:page|p\.?)\s*(\d+)",
+            text[:800],
+        ):
+            try:
+                cited = int(m.group(1))
+            except ValueError:
+                continue
+            if cited != vp:
+                return True
+        return False
+
+    def _with_provenance_pin(text: str) -> str:
+        if not _provenance_mismatch(text):
+            return text
+        return (
+            f"**Authoritative verified table value: {raw_val}** "
+            f"(Page {verified_page}; row {meta.get('row_headers')}; "
+            f"column {meta.get('col_headers')}; "
+            f"table {meta.get('table_id') or 'verified'}). "
+            "Cite this page/table only for the matrix value — not a sibling table.\n\n"
+            + text
+        )
+
     if compare_mode:
         # Stated amount may lead the answer; require the label cell somewhere.
-        if verified_num in (answer or ""):
-            return answer
+        if verified_num in answer_text:
+            return _with_provenance_pin(answer_text)
         prescribed = meta.get("prescribed_value")
         p_unit = meta.get("prescribed_unit") or ""
         p_s = (
@@ -804,16 +890,16 @@ def _reconcile_answer_with_verified_cell(
             f"column {meta.get('col_headers')}). "
             f"Compare the stated amount ({p_s}) against this label cell; "
             "do not treat the label cell as the administered amount.\n\n"
-            + (answer or "")
+            + answer_text
         )
 
-    lead = _LEADING_DOSE_RE.search(answer or "")
+    lead = _LEADING_DOSE_RE.search(answer_text)
     if lead and lead.group(1) == verified_num:
-        return answer
+        return _with_provenance_pin(answer_text)
     # Also accept if verified value appears early without a conflicting lead dose.
-    head = (answer or "")[:320]
+    head = answer_text[:320]
     if verified_num in head and not lead:
-        return answer
+        return _with_provenance_pin(answer_text)
     if lead and lead.group(1) != verified_num:
         correction = (
             f"**Authoritative verified table value: {raw_val}** "
@@ -822,15 +908,15 @@ def _reconcile_answer_with_verified_cell(
             f"The takeaway value must be {raw_val}, not {lead.group(1)} mg "
             "from a neighboring cell or another table.\n\n"
         )
-        return correction + (answer or "")
-    if verified_num not in (answer or ""):
+        return correction + answer_text
+    if verified_num not in answer_text:
         return (
             f"**Authoritative verified table value: {raw_val}** "
             f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
             f"column {meta.get('col_headers')}).\n\n"
-            + (answer or "")
+            + answer_text
         )
-    return answer
+    return _with_provenance_pin(answer_text)
 
 
 def _coerce_source_page(page: Any) -> int:

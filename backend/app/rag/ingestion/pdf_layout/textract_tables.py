@@ -1,13 +1,15 @@
 """AWS Textract TABLES → TableData for Genova RAG.
 
-Primary structured-table extractor for **tabular pages only**. The parser gates
-calls via ``_page_looks_tabular`` so ordinary text pages never hit AWS.
+Sole production structured-table extractor. The parser gates calls via
+``_page_looks_tabular`` (when ``PDF_TEXTRACT_TABULAR_ONLY``) so ordinary text
+pages never hit AWS.
 
 Uses AnalyzeDocument(FeatureTypes=["TABLES"]) on a per-page PNG.
 IAM: textract:AnalyzeDocument. Cost ~$0.015/page analyzed.
 
-On client/API errors or empty TABLE blocks, returns [] so the parser can fall
-back to PyMuPDF / OCR / Camelot. Body text is never taken from Textract.
+On client/API errors the parser records ``textract_error`` and leaves tables
+empty — there is no img2table or Tesseract table fallback. Body text is never
+taken from Textract.
 """
 from __future__ import annotations
 
@@ -20,6 +22,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from botocore.config import Config
 
 from app.config import get_settings
+from app.rag.ingestion.pdf_layout.header_reconstruction import (
+    reconstruct_table_headers_cached,
+)
 from app.rag.ingestion.pdf_layout.types import BBox, TableData, normalize_ws
 
 logger = logging.getLogger(__name__)
@@ -216,6 +221,19 @@ def _infer_header_row_count(grid: List[List[Dict[str, Any]]]) -> int:
         else:
             break
     if headerish > 0:
+        # Peek one more row: numeric/unit leaf bands often lack COLUMN_HEADER flags.
+        if headerish < len(grid):
+            nxt = grid[headerish]
+            texts = [normalize_ws(c.get("text") or "") for c in nxt]
+            nonempty = [t for t in texts if t]
+            if (
+                nonempty
+                and not texts[0]
+                and sum(1 for t in nonempty if re.search(r"\d", t)) >= max(2, len(nonempty) - 1)
+                and sum(1 for t in nonempty if re.fullmatch(r"-?\d+(?:\.\d+)?", t))
+                < max(2, len(nonempty) // 2)
+            ):
+                headerish += 1
         return headerish
     # Fallback: first row is headers when the table has ≥2 rows.
     return 1 if len(grid) >= 2 else 0
@@ -385,6 +403,31 @@ def table_data_from_textract_blocks(
         if max_col < 2 or (not body and not headers):
             continue
 
+        # Geometry-aware header path reconstruction + fragmented cell repair.
+        recon = reconstruct_table_headers_cached(
+            header_rows=header_rows,
+            rows=body,
+            cells=cells_out,
+            merged_cells=merged_out,
+            existing_headers=headers,
+        )
+        if recon.leaf_headers and len(recon.leaf_headers) == max_col:
+            headers = list(recon.leaf_headers)
+        if recon.reconstructed_header_rows:
+            header_rows = [list(r) for r in recon.reconstructed_header_rows]
+        if recon.reconstructed_rows:
+            body = [list(r) for r in recon.reconstructed_rows]
+        if recon.needs_verification:
+            low_confidence_cells.append(
+                {
+                    "row": -1,
+                    "col": -1,
+                    "text": "",
+                    "confidence": recon.normalization_confidence * 100.0,
+                    "reason": "header_reconstruction_uncertain",
+                }
+            )
+
         table_bbox = _geometry_to_pdf_bbox(
             block.get("Geometry") or {},
             page_width=page_width,
@@ -417,6 +460,8 @@ def table_data_from_textract_blocks(
                 header_rows=header_rows,
                 merged_cells=merged_out,
                 textract_confidence=round(mean_conf, 2),
+                header_reconstruction=recon.to_dict(),
+                normalized_header_paths=[list(p) for p in recon.normalized_header_paths],
             )
         )
     return tables

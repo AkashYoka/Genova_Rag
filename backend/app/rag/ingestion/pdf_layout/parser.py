@@ -48,9 +48,13 @@ from app.rag.ingestion.pdf_layout.types import (
 
 logger = logging.getLogger(__name__)
 
-
 class PdfLayoutError(RuntimeError):
     """Raised when the layout pipeline cannot produce usable content."""
+
+
+def _table_engine() -> str:
+    """Production table extractor is always AWS Textract TABLES."""
+    return "textract"
 
 
 def _page_area(page: fitz.Page) -> float:
@@ -242,8 +246,17 @@ def _native_tables(page: fitz.Page) -> List[TableData]:
 
 def _ocr_page_content(
     page: fitz.Page,
+    *,
+    exclude_boxes: Optional[Sequence[BBox]] = None,
+    detect_tables: bool = True,
 ) -> Tuple[List[TextLine], List[TableData], float, str, Dict[str, Any]]:
-    settings = get_settings()
+    """OCR a page into positioned text lines.
+
+    ``detect_tables=False`` disables the legacy ruled/alignment table
+    reconstruction.  ``exclude_boxes`` removes words that belong to tables
+    already extracted by another engine so table text does not leak into
+    paragraph chunks.
+    """
     result = ocr_page(page)
     words = result["words"]
     backend = result["backend"]
@@ -251,29 +264,41 @@ def _ocr_page_content(
     if not words:
         raise OcrError("OCR returned no positioned words")
 
+    excluded = list(exclude_boxes or [])
+    if excluded:
+        words = [
+            word
+            for word in words
+            if not any(
+                box.intersection_area(word.bbox) > 0.5 * word.bbox.area
+                for box in excluded
+            )
+        ]
+
     page_width = float(page.rect.width)
     page_height = float(page.rect.height)
     tables: List[TableData] = []
     consumed_boxes: List[BBox] = []
     used_words = list(words)
 
-    for bbox in detect_ruled_table_boxes(page):
-        grid_x, grid_y = extract_grid_positions(page, bbox)
-        if len(grid_x) > 16 or len(grid_y) > 90:
-            grid_x, grid_y = [], []
-        table = table_from_words(
-            used_words,
-            bbox,
-            page=page.number + 1,
-            page_width=page_width,
-            page_height=page_height,
-            grid_x=grid_x,
-            grid_y=grid_y,
-            method="ocr_ruled",
-        )
-        if table:
-            tables.append(table)
-            consumed_boxes.append(bbox)
+    if detect_tables:
+        for bbox in detect_ruled_table_boxes(page):
+            grid_x, grid_y = extract_grid_positions(page, bbox)
+            if len(grid_x) > 16 or len(grid_y) > 90:
+                grid_x, grid_y = [], []
+            table = table_from_words(
+                used_words,
+                bbox,
+                page=page.number + 1,
+                page_width=page_width,
+                page_height=page_height,
+                grid_x=grid_x,
+                grid_y=grid_y,
+                method="ocr_ruled",
+            )
+            if table:
+                tables.append(table)
+                consumed_boxes.append(bbox)
 
     remaining = [
         word for word in used_words
@@ -281,37 +306,190 @@ def _ocr_page_content(
     ]
     lines = words_to_lines(remaining, page_width)
 
-    # Borderless ledger tables: detect aligned short numeric rows, then remove
-    # their lines from normal paragraph flow.
-    for bbox, _region_lines in alignment_table_regions(
-        lines, page_width, page_height, excluded=consumed_boxes
-    ):
-        table = table_from_words(
-            remaining,
-            bbox,
-            page=page.number + 1,
-            page_width=page_width,
-            page_height=page_height,
-            method="ocr_alignment",
-        )
-        if table:
-            tables.append(table)
-            consumed_boxes.append(bbox)
-    if consumed_boxes:
-        lines = [
-            line for line in lines
-            if not any(box.intersection_area(line.bbox) > 0.5 * line.bbox.area for box in consumed_boxes)
-        ]
+    if detect_tables:
+        # Borderless ledger tables: detect aligned short numeric rows, then
+        # remove their lines from normal paragraph flow.
+        for bbox, _region_lines in alignment_table_regions(
+            lines, page_width, page_height, excluded=consumed_boxes
+        ):
+            table = table_from_words(
+                remaining,
+                bbox,
+                page=page.number + 1,
+                page_width=page_width,
+                page_height=page_height,
+                method="ocr_alignment",
+            )
+            if table:
+                tables.append(table)
+                consumed_boxes.append(bbox)
+        if consumed_boxes:
+            lines = [
+                line for line in lines
+                if not any(box.intersection_area(line.bbox) > 0.5 * line.bbox.area for box in consumed_boxes)
+            ]
     lines.sort(key=lambda line: (line.bbox.center_y, line.bbox.x0))
     details = {
         "ocr_elapsed_s": result.get("elapsed_s", 0),
         "ocr_dpi": result.get("dpi"),
         "pixel_size": result.get("pixel_size"),
         "ocr_words": len(words),
+        "ocr_excluded_table_words": len(result["words"]) - len(words),
+        "ocr_table_detection": bool(detect_tables),
         "ruled_tables": sum(1 for table in tables if table.extraction_method == "ocr_ruled"),
         "alignment_tables": sum(1 for table in tables if table.extraction_method == "ocr_alignment"),
     }
     return lines, tables, confidence, backend, details
+
+
+def _apply_ocr_result(
+    page_ext: PageExtraction,
+    page: fitz.Page,
+    *,
+    lines: List[TextLine],
+    confidence: float,
+    backend: str,
+    details: Dict[str, Any],
+    image_coverage: float,
+) -> None:
+    page_ext.lines = lines
+    page_ext.ocr_confidence = confidence
+    page_ext.ocr_backend = backend
+    page_ext.metrics.update(details)
+    page_ext.metrics["ocr_chars"] = sum(len(line.text) for line in lines)
+    page_ext.metrics["ocr_text_metrics"] = compute_text_metrics(
+        "\n".join(line.text for line in lines),
+        page_area=_page_area(page),
+        image_coverage=image_coverage,
+    )
+
+
+def _extract_body_lines(
+    page: fitz.Page,
+    *,
+    strategy: str,
+    coverage: float,
+    page_ext: PageExtraction,
+    exclude_boxes: Sequence[BBox] = (),
+    allow_ocr_retry: bool = True,
+) -> str:
+    """Extract paragraph lines without running any table engine.
+
+    Used when table regions are already known and should be excluded from the
+    body flow. Returns the (possibly changed) page strategy.
+    """
+    if strategy == "ocr":
+        lines, _tables, confidence, backend, details = _ocr_page_content(
+            page,
+            exclude_boxes=exclude_boxes,
+            detect_tables=False,
+        )
+        _apply_ocr_result(
+            page_ext,
+            page,
+            lines=lines,
+            confidence=confidence,
+            backend=backend,
+            details=details,
+            image_coverage=coverage,
+        )
+        return strategy
+
+    if strategy == "native":
+        lines = _native_lines(page, exclude_boxes)
+        page_ext.lines = lines
+        if not lines and allow_ocr_retry and coverage >= 0.15:
+            logger.warning(
+                "Page %s has no native lines despite a text layer; retrying with OCR",
+                page.number + 1,
+            )
+            page_ext.strategy = "ocr"
+            strategy = "ocr"
+            lines, _tables, confidence, backend, details = _ocr_page_content(
+                page,
+                exclude_boxes=exclude_boxes,
+                detect_tables=False,
+            )
+            _apply_ocr_result(
+                page_ext,
+                page,
+                lines=lines,
+                confidence=confidence,
+                backend=backend,
+                details=details,
+                image_coverage=coverage,
+            )
+        return strategy
+
+    page_ext.status = "empty"
+    page_ext.metrics["note"] = "blank page with no text or image"
+    return strategy
+
+
+def _table_extraction_report(
+    pages: Sequence[PageExtraction],
+    *,
+    engine: str,
+    engine_info: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Aggregate table metrics for evaluation and diagnostics."""
+    processed = [page for page in pages if page.strategy != "none"]
+    with_tables = [page for page in pages if page.tables]
+    without_tables = [
+        page.page_number for page in processed if not page.tables
+    ]
+    blank_pages = [page.page_number for page in pages if page.strategy == "none"]
+    failures = [
+        {
+            "page": page.page_number,
+            "error": str(page.metrics.get("textract_error") or ""),
+        }
+        for page in pages
+        if page.metrics.get("textract_error")
+    ]
+
+    table_entries: List[Dict[str, Any]] = []
+    for page in pages:
+        for index, table in enumerate(page.tables, start=1):
+            table_entries.append(
+                {
+                    "page": page.page_number,
+                    "index": index,
+                    "extraction_method": table.extraction_method,
+                    "bbox": [round(value, 2) for value in table.bbox.as_tuple()],
+                    "n_rows": table.n_rows,
+                    "n_cols": table.n_cols,
+                    "data_rows": len(table.rows),
+                    "headers": list(table.headers),
+                    "rows": [list(row) for row in table.rows],
+                    "header_rows": [list(row) for row in (table.header_rows or [])],
+                    "merged_cells": list(table.merged_cells or []),
+                    "cell_count": len(table.cells or []),
+                    "caption": table.caption,
+                }
+            )
+
+    elapsed = sum(
+        float(page.metrics.get("textract_elapsed_s") or 0) for page in pages
+    )
+    return {
+        "engine": engine,
+        "engine_info": dict(engine_info or {}),
+        "pages_processed": len(processed),
+        "pages_with_tables": len(with_tables),
+        "pages_without_tables": without_tables,
+        "blank_pages": blank_pages,
+        "table_count": sum(len(page.tables) for page in pages),
+        "merged_cell_count": sum(
+            len(table.merged_cells or [])
+            for page in pages
+            for table in page.tables
+        ),
+        "failure_count": len(failures),
+        "failures": failures,
+        "elapsed_s": round(elapsed, 3),
+        "tables": table_entries,
+    }
 
 
 def _figure_elements(
@@ -383,6 +561,24 @@ def parse_pdf(
     if not path.exists():
         raise FileNotFoundError(f"PDF file not found: {filepath}")
 
+    engine = _table_engine()
+    engine_info: Dict[str, Any] = {
+        "engine": "textract",
+        "tables_enabled": bool(getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)),
+        "tabular_only": bool(getattr(settings, "PDF_TEXTRACT_TABULAR_ONLY", True)),
+        "region": (
+            (getattr(settings, "PDF_TEXTRACT_REGION", "") or "").strip()
+            or (getattr(settings, "BEDROCK_REGION", "") or "").strip()
+            or "us-east-1"
+        ),
+    }
+    logger.info(
+        "PDF table engine: AWS Textract TABLES (enabled=%s, tabular_only=%s, region=%s)",
+        engine_info["tables_enabled"],
+        engine_info["tabular_only"],
+        engine_info["region"],
+    )
+
     doc = fitz.open(str(path))
     pages: List[PageExtraction] = []
     figures_by_page: Dict[int, List[DocumentElement]] = {}
@@ -416,67 +612,90 @@ def parse_pdf(
             )
 
             try:
-                fallback_tables: List[TableData] = []
-                if strategy == "ocr":
-                    lines, fallback_tables, confidence, backend, details = _ocr_page_content(page)
-                    page_ext.lines = lines
-                    page_ext.ocr_confidence = confidence
-                    page_ext.ocr_backend = backend
-                    page_ext.metrics.update(details)
-                    page_ext.metrics["ocr_chars"] = sum(len(line.text) for line in lines)
-                    page_ext.metrics["ocr_text_metrics"] = compute_text_metrics(
-                        "\n".join(line.text for line in lines),
-                        page_area=_page_area(page),
-                        image_coverage=coverage,
-                    )
-                elif strategy == "native":
-                    # Text lines first (independent of table engine). Table bboxes
-                    # for line exclusion come from fallback native tables; Textract
-                    # tables may replace them below.
-                    fallback_tables = _native_tables(page)
-                    lines = _native_lines(page, [table.bbox for table in fallback_tables])
-                    page_ext.lines = lines
-                    if not lines and not fallback_tables and coverage >= 0.15:
-                        logger.warning(
-                            "Page %s has no native lines despite a text layer; retrying with OCR",
-                            page_number,
-                        )
-                        page_ext.strategy = "ocr"
-                        strategy = "ocr"
-                        lines, fallback_tables, confidence, backend, details = _ocr_page_content(page)
-                        page_ext.lines = lines
-                        page_ext.ocr_confidence = confidence
-                        page_ext.ocr_backend = backend
-                        page_ext.metrics.update(details)
-                else:
+                table_source = "none"
+                page_ext.metrics["table_engine"] = "textract"
+                hint_tables: List[TableData] = []
+                if strategy == "none":
                     page_ext.status = "empty"
                     page_ext.metrics["note"] = "blank page with no text or image"
+                else:
+                    # Body text only — never use OCR/native grids as stored tables.
+                    if strategy == "ocr":
+                        (
+                            lines,
+                            _ocr_tables,
+                            confidence,
+                            backend,
+                            details,
+                        ) = _ocr_page_content(page, detect_tables=False)
+                        _apply_ocr_result(
+                            page_ext,
+                            page,
+                            lines=lines,
+                            confidence=confidence,
+                            backend=backend,
+                            details=details,
+                            image_coverage=coverage,
+                        )
+                    else:
+                        hint_tables = _native_tables(page)
+                        lines = _native_lines(
+                            page, [table.bbox for table in hint_tables]
+                        )
+                        page_ext.lines = lines
+                        if not lines and not hint_tables and coverage >= 0.15:
+                            logger.warning(
+                                "Page %s has no native lines despite a text layer; "
+                                "retrying with OCR",
+                                page_number,
+                            )
+                            page_ext.strategy = "ocr"
+                            strategy = "ocr"
+                            (
+                                lines,
+                                _ocr_tables,
+                                confidence,
+                                backend,
+                                details,
+                            ) = _ocr_page_content(page, detect_tables=False)
+                            _apply_ocr_result(
+                                page_ext,
+                                page,
+                                lines=lines,
+                                confidence=confidence,
+                                backend=backend,
+                                details=details,
+                                image_coverage=coverage,
+                            )
 
-                # Primary table path: Textract TABLES only on tabular pages.
-                # Ordinary text pages keep native/OCR text and never call AWS.
-                table_source = "none"
-                page_ext.tables = []
-                if strategy != "none":
+                    # Sole production table path: AWS Textract TABLES.
                     textract_started = time.perf_counter()
                     textract_tables: List[TableData] = []
                     textract_error = ""
-                    textract_skipped = False
                     tabular_only = bool(
                         getattr(settings, "PDF_TEXTRACT_TABULAR_ONLY", True)
                     )
                     looks_tabular, tabular_reason = _page_looks_tabular(
                         page,
-                        fallback_tables=fallback_tables,
+                        fallback_tables=hint_tables,
                         page_text=native_text,
                     )
                     page_ext.metrics["tabular_candidate"] = looks_tabular
                     page_ext.metrics["tabular_reason"] = tabular_reason
-                    run_textract = bool(settings.PDF_TEXTRACT_TABLES_ENABLED) and (
+                    tables_enabled = bool(
+                        getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)
+                    )
+                    run_textract = tables_enabled and (
                         looks_tabular or not tabular_only
                     )
-                    if settings.PDF_TEXTRACT_TABLES_ENABLED and tabular_only and not looks_tabular:
-                        textract_skipped = True
+                    if tables_enabled and tabular_only and not looks_tabular:
                         page_ext.metrics["textract_skipped"] = "non_tabular_page"
+                    elif not tables_enabled:
+                        page_ext.metrics["textract_skipped"] = "disabled"
+                        page_ext.warnings.append(
+                            "Textract TABLES disabled (PDF_TEXTRACT_TABLES_ENABLED=false); "
+                            "no table extraction fallback is configured"
+                        )
                     if run_textract:
                         try:
                             from app.rag.ingestion.pdf_layout.textract_tables import (
@@ -489,11 +708,13 @@ def parse_pdf(
                             )
                         except Exception as exc:
                             textract_error = f"{type(exc).__name__}: {exc}"
-                            logger.warning(
-                                "Textract primary tables failed on page %s: %s",
+                            logger.error(
+                                "Textract TABLES failed on page %s of %s: %s",
                                 page_number,
+                                path.name,
                                 exc,
                             )
+                            page_ext.warnings.append(f"textract: {textract_error}")
                     page_ext.metrics["textract_elapsed_s"] = round(
                         time.perf_counter() - textract_started, 3
                     )
@@ -504,20 +725,33 @@ def parse_pdf(
                     if textract_tables:
                         page_ext.tables = list(textract_tables)
                         table_source = "textract"
-                    elif fallback_tables:
-                        page_ext.tables = list(fallback_tables)
-                        table_source = (
-                            "ocr"
-                            if strategy == "ocr"
-                            or any(
-                                (t.extraction_method or "").startswith("ocr")
-                                for t in fallback_tables
-                            )
-                            else "native"
-                        )
+                    else:
+                        page_ext.tables = []
+                        table_source = "none"
+                        if run_textract and not textract_error:
+                            page_ext.metrics["textract_empty"] = True
+
+                    # Exclude Textract table regions from body lines when present.
+                    if page_ext.tables and page_ext.lines:
+                        table_boxes = [
+                            table.bbox
+                            for table in page_ext.tables
+                            if table.bbox and table.bbox.area > 0
+                        ]
+                        if table_boxes:
+                            page_ext.lines = [
+                                line
+                                for line in page_ext.lines
+                                if not any(
+                                    box.intersection_area(line.bbox)
+                                    > 0.5 * line.bbox.area
+                                    for box in table_boxes
+                                    if line.bbox
+                                )
+                            ]
+
                 page_ext.metrics["table_source"] = table_source
 
-                # Repair collapsed numeric grids via Camelot when needed.
                 if page_ext.tables:
                     page_ext.tables = _repair_page_tables(
                         page_ext.tables, filepath=str(path)
@@ -597,6 +831,10 @@ def parse_pdf(
         "ocr_pages": classification["ocr_pages"],
         "failed_pages": classification["failed_pages"],
         "ocr": ocr_status(),
+        "table_engine": engine,
+        "table_extraction": _table_extraction_report(
+            pages, engine=engine, engine_info=engine_info
+        ),
         "margins": margin_report,
         "layout": {
             "body_font_size": round(body_size, 2),

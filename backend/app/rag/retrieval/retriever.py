@@ -35,7 +35,12 @@ def _exclude_soft_deleted_chunks(
     chunks: List[Dict[str, Any]],
     user_id: str,
 ) -> List[Dict[str, Any]]:
-    """Drop chunks whose document is in Trash (soft-deleted)."""
+    """Drop chunks whose document is in Trash (soft-deleted).
+
+    Only documents explicitly marked ``is_deleted=True`` are excluded. Missing
+    SQL rows (e.g. ephemeral demo indexes) are kept so retrieval still works
+    when vectors exist but the metadata row is absent.
+    """
     if not chunks:
         return chunks
     doc_ids = {
@@ -51,13 +56,13 @@ def _exclude_soft_deleted_chunks(
 
         db = SessionLocal()
         try:
-            active = {
+            deleted = {
                 str(row[0])
                 for row in db.query(Document.id)
                 .filter(
                     Document.user_id == user_id,
                     Document.id.in_(list(doc_ids)),
-                    Document.is_deleted.is_(False),
+                    Document.is_deleted.is_(True),
                 )
                 .all()
             }
@@ -66,11 +71,12 @@ def _exclude_soft_deleted_chunks(
     except Exception as exc:
         logger.warning("Could not filter soft-deleted chunks: %s", exc)
         return chunks
+    if not deleted:
+        return chunks
     return [
         chunk
         for chunk in chunks
-        if not chunk.get("document_id")
-        or str(chunk.get("document_id")) in active
+        if str(chunk.get("document_id") or "") not in deleted
     ]
 
 _EX_Q = (
@@ -281,6 +287,11 @@ def _generate_query_variants(query: str) -> List[str]:
         'Example output: ["variation one", "variation two", "variation three"]'
     )
 
+    # Use the provider-correct model id. Passing settings.LLM_MODEL (Ollama id)
+    # into Bedrock Converse causes ValidationException and aborts rewrite.
+    from app.rag.llm.agent import llm_model_for_provider
+
+    rewrite_model = llm_model_for_provider()
     response = client.chat_completion(
         messages=[
             {
@@ -292,7 +303,7 @@ def _generate_query_variants(query: str) -> List[str]:
             },
             {"role": "user", "content": prompt},
         ],
-        model=settings.LLM_MODEL,
+        model=rewrite_model,
         max_tokens=256,
         temperature=0.3,
     )
@@ -416,7 +427,7 @@ def _chunk_index_from_id(chunk_id: Any) -> Optional[int]:
 
 def _needs_adjacent_expansion(chunk: Dict[str, Any]) -> bool:
     chunk_type = str(chunk.get("chunk_type") or chunk.get("content_type") or "").lower()
-    if chunk_type == "table":
+    if chunk_type in ("table", "table_summary", "table_interpretation", "table_row"):
         return True
     text = str(chunk.get("text") or "")
     if re.search(r"(?i)\btable\s+\d+\b", text):
@@ -429,15 +440,31 @@ def _needs_adjacent_expansion(chunk: Dict[str, Any]) -> bool:
 def _boost_table_candidates(
     query: str,
     candidates: List[Dict[str, Any]],
+    *,
+    modality: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Prefer table / Table-facts chunks for structured lookup questions.
+    """Prefer table / Table-facts / TableRAG index chunks for lookup questions.
 
     Domain-agnostic: when the query looks like a table/schedule/parameter
     lookup, boost any table (or linearized ``Table facts:`` block). Extra
     weight when the table text shares content tokens with the query so the
     relevant matrix outranks unrelated narrative paragraphs.
+
+    ``modality`` comes from TableRAG query routing:
+      - table: stronger table boost + mild paragraph downrank
+      - both: moderate table boost
+      - paragraph: no boost (preserve text RAG)
     """
-    if not candidates or not _STRUCTURED_LOOKUP_RE.search(query or ""):
+    if not candidates:
+        return candidates
+
+    modality_l = (modality or "").lower()
+    structured_query = bool(_STRUCTURED_LOOKUP_RE.search(query or ""))
+    # Boost only when the question looks tabular/numeric or routing says table.
+    # Plain "both"/paragraph questions keep existing text-RAG ranking.
+    if modality_l == "paragraph" and not structured_query:
+        return candidates
+    if modality_l != "table" and not structured_query:
         return candidates
 
     q_tokens = _query_content_tokens(query or "")
@@ -449,11 +476,33 @@ def _boost_table_candidates(
         chunk_type = str(
             item.get("chunk_type") or item.get("content_type") or ""
         ).lower()
+        index_kind = str(item.get("index_kind") or "").lower()
         score = float(item.get("score") or 0)
         factor = 1.0
-        is_table = chunk_type == "table" or "table facts:" in text_l
+        is_table = (
+            chunk_type
+            in ("table", "table_summary", "table_interpretation", "table_row")
+            or index_kind
+            in ("table_summary", "table_interpretation", "table_row")
+            or "table facts:" in text_l
+            or "table interpretation" in text_l
+            or bool(item.get("table_json"))
+        )
+        is_paragraph = not is_table and chunk_type in ("text", "paragraph", "list", "")
+
         if is_table:
             factor += 0.35
+            if chunk_type == "table_row" or index_kind == "table_row":
+                # Exact-value / multi-constraint lookups land on row texts.
+                factor += 0.25 if modality_l == "table" else 0.15
+            elif chunk_type == "table_summary" or index_kind == "table_summary":
+                factor += 0.2 if modality_l == "table" else 0.1
+            elif (
+                chunk_type == "table_interpretation"
+                or index_kind == "table_interpretation"
+            ):
+                # Semantic purpose / axis phrasing — useful for how/why questions.
+                factor += 0.22 if modality_l == "table" else 0.12
         if re.search(r"(?i)\btable\s+\d+\b", text) and re.search(
             r"(?i)dose|dosing|schedule|frequency|amount|rate|weight|"
             r"every\s+\d+\s+(?:weeks?|days?|hours?|months?)",
@@ -466,9 +515,13 @@ def _boost_table_candidates(
                 factor += 0.2
             elif overlap == 1:
                 factor += 0.1
-        if factor > 1.0:
+        if modality_l == "table" and is_paragraph:
+            factor *= 0.85
+        if factor != 1.0:
             item["score"] = score * factor
             item["boost_reason"] = "structured_table"
+            if modality_l:
+                item["query_modality"] = modality_l
         boosted.append(item)
     return boosted
 
@@ -719,6 +772,23 @@ def retrieve(
     # ── Stage 1: Hybrid retrieval with query transformation ───────────────────
     all_candidates: List[Dict[str, Any]] = []
     search_queries = transform_query(query)
+
+    query_modality = "both"
+    try:
+        from app.rag.table_rag.routing import route_query
+
+        route = route_query(query)
+        query_modality = route.modality.value
+        logger.info(
+            "TableRAG route=%s reason=%s structured=%s for query='%s'",
+            route.modality.value,
+            route.reason,
+            route.wants_structured_lookup,
+            query[:120],
+        )
+    except Exception as exc:
+        logger.debug("TableRAG routing unavailable: %s", exc)
+
     try:
         from app.rag.retrieval.rag_debug import record_rewrites
 
@@ -769,10 +839,15 @@ def retrieve(
         return []
 
     candidates = _merge_candidates(all_candidates)
-    candidates = _boost_table_candidates(query, candidates)
+    candidates = _boost_table_candidates(
+        query, candidates, modality=query_modality
+    )
 
     # ── Stage 2: Cross-encoder reranking ─────────────────────────────────────
     final_k = top_k if top_k is not None else settings.TOP_K_RERANK
+    # Table-heavy routes keep a slightly wider final window so row hits survive.
+    if query_modality == "table":
+        final_k = max(final_k, min(final_k + 2, stage1_top_k))
     reranker = get_reranker()
 
     rerank_enabled = reranker is not None
@@ -809,8 +884,20 @@ def retrieve(
             if "rerank_score" in chunk:
                 chunk["score"] = round(chunk["rerank_score"], 4)
                 del chunk["rerank_score"]
+            chunk.setdefault("query_modality", query_modality)
 
     top_chunks = _exclude_soft_deleted_chunks(top_chunks, user_id)
+
+    # Hydrate full structured tables from SQL for answer generation.
+    if getattr(settings, "TABLE_RAG_HYDRATE_ON_RETRIEVE", True) and getattr(
+        settings, "TABLE_RAG_ENABLED", True
+    ):
+        try:
+            from app.rag.table_rag import hydrate_retrieved_tables
+
+            top_chunks = hydrate_retrieved_tables(top_chunks, user_id=user_id)
+        except Exception as exc:
+            logger.warning("TableRAG hydrate skipped: %s", exc)
 
     from app.observability import chunks_retrieved_var
     chunks_retrieved_var.set(len(top_chunks))
