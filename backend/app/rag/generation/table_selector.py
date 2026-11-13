@@ -28,6 +28,7 @@ from app.rag.generation.table_calculator import (
     calculation_fallback_prompt,
     try_calculate_from_decision,
 )
+from app.rag.ingestion.pdf_layout.table_structure import validate_table_structure
 from app.rag.table_rag.ids import parse_table_payload
 from app.rag.table_rag.representations import render_indexed_table_for_selector
 from app.rag.table_rag.schema import TableLookupDecision, coerce_table_dict
@@ -716,6 +717,21 @@ def verify_lookup_decision(
                 corrected.value,
             )
             return corrected
+        if isinstance(corrected, InsufficientEvidence):
+            # The selector's coordinates do not satisfy the question's axes and
+            # the deterministic lookup cannot resolve a cell either. Reporting
+            # the selector's cell anyway would cite a value from the wrong row.
+            beyond = dict(getattr(corrected, "evidence", {}) or {})
+            beyond["selector_coords_rejected"] = {
+                "row_index": r_i,
+                "col_index": c_i,
+                "value": raw_val,
+            }
+            try:
+                corrected.evidence = beyond  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            return corrected
 
     evidence = {
         "table_id": table_id,
@@ -725,6 +741,8 @@ def verify_lookup_decision(
         "selector_rationale": decision.rationale or "",
         "question": question,
         "verification": "python_sql_hydrate",
+        "document_version": str(table.get("document_version") or ""),
+        "structural_validation": validate_table_structure(table).to_dict(),
     }
     return VerifiedCell(
         value=raw_val,
@@ -915,6 +933,15 @@ def interpret_with_selector(
         get_table=_table_dict_from_chunk,
     )
     eligible_chunks = list(eligibility.eligible_chunks or [])
+    from app.rag.generation.table_selection import eligibility_audit
+    from app.rag.table_rag.telemetry import record_candidate_audit
+
+    record_candidate_audit(
+        retrieved_table_ids=[
+            str(c.get("table_id") or "") for c in expanded if c.get("table_id")
+        ],
+        eligibility=eligibility_audit(eligibility),
+    )
     eligible_ids = [
         str(c.get("table_id") or "").strip()
         for c in eligible_chunks

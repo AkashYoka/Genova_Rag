@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 from pathlib import Path
 
 import httpx
@@ -36,7 +37,11 @@ CASES = [
             "XOLAIR dose and frequency apply for pretreatment IgE 350 IU/mL and body "
             "weight 78 kg?"
         ),
-        "expect": {"label_dose": "300", "label_freq": "2 week"},
+        "expect": {
+            "label_dose": "300",
+            "label_freq": "2 week",
+            "citation_page": 5,
+        },
     },
     {
         "id": 3,
@@ -44,7 +49,11 @@ CASES = [
             "Asthma patient >=12 years, IgE 300 IU/mL, weight 70 kg. What is the "
             "label dose and frequency from the dosing table?"
         ),
-        "expect": {"label_dose": "225", "label_freq": "4 week"},
+        "expect": {
+            "label_dose": "225",
+            "label_freq": "4 week",
+            "citation_page": 5,
+        },
     },
     {
         "id": 4,
@@ -58,6 +67,7 @@ CASES = [
             "off_label_indication": False,
             "dosing_deviation": True,
             "label_dose": "225",
+            "citation_page": 5,
         },
     },
     {
@@ -71,6 +81,7 @@ CASES = [
             "off_label_indication": False,
             "dosing_deviation": True,
             "label_dose": "225",
+            "citation_page": 5,
         },
     },
     {
@@ -103,6 +114,7 @@ CASES = [
             "ae": False,
             "off_label_indication": False,
             "dosing_deviation": False,
+            "citation_page": 6,
         },
     },
     {
@@ -128,7 +140,7 @@ CASES = [
             "For asthma Table 1 patients >=12 years, IgE about 800 IU/mL and weight "
             "about 140 kg: does the table recommend a dose or show insufficient data?"
         ),
-        "expect": {"no_labeled_dose": True},
+        "expect": {"no_labeled_dose": True, "citation_page": 5},
     },
     {
         "id": 12,
@@ -147,12 +159,62 @@ CASES = [
 ]
 
 
+_DASH_RE = re.compile(r"[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]")
+_MARKUP_RE = re.compile(r"[*_`|]")
+
+
 def _low(ans: str) -> str:
-    return (ans or "").lower()
+    """Lowercase and fold the Unicode dashes/quotes the model emits."""
+    text = unicodedata.normalize("NFKC", ans or "").lower()
+    text = _DASH_RE.sub("-", text)
+    return re.sub(r"\s+", " ", text)
+
+
+def _plain(ans: str) -> str:
+    """Scoring view: dash-folded, markdown stripped, whitespace collapsed."""
+    return re.sub(r"\s+", " ", _MARKUP_RE.sub(" ", _low(ans)))
+
+
+def _blank_dosing_off_label(text: str) -> str:
+    """Mask "off-label" mentions that describe a dose/schedule, not an indication."""
+    spans = []
+    for m in re.finditer(r"off[- ]?label", text):
+        window = text[max(0, m.start() - 80) : m.end() + 80]
+        if re.search(
+            r"\b(dose|doses|dosing|mg|regimen|frequency|schedule|amount|interval)\b",
+            window,
+        ):
+            spans.append((m.start(), m.end()))
+    if not spans:
+        return text
+    chars = list(text)
+    for start, end in spans:
+        for i in range(start, end):
+            chars[i] = " "
+    return "".join(chars)
+
+
+def _affirmed(text: str, pattern: str) -> bool:
+    """True when ``pattern`` appears without an adjacent negation."""
+    for m in re.finditer(pattern, text):
+        before = text[max(0, m.start() - 90) : m.start()]
+        # "… no off-label use, special situation, or medication error present"
+        if re.search(r"\b(?:no|none|without|neither)\b[^.;]{0,80}$", before):
+            continue
+        tail = text[m.end() : m.end() + 40]
+        if re.match(
+            r"[\s:;,.()\-\u2013\u2014*]*"
+            r"(?:is\s+|was\s+|are\s+|were\s+)?"
+            r"(?:no|none|not|absent|n/a)\b",
+            tail,
+        ):
+            continue
+        return True
+    return False
 
 
 def score(ans: str, expect: dict) -> dict:
-    low = _low(ans)
+    low = _plain(ans)
     checks = {}
     pass_n = 0
     total = 0
@@ -197,20 +259,22 @@ def score(ans: str, expect: dict) -> dict:
             bool(re.search(r"off[- ]?label|not (an )?approved|not indicated", low)),
         )
     elif expect.get("off_label_indication") is False:
-        # Should not claim off-label indication for approved asthma
+        # Should not claim off-label indication for approved asthma. Mentions
+        # that describe a dose/schedule deviation are not indication claims.
+        off_ctx = _blank_dosing_off_label(low)
         strong_off = bool(
             re.search(
                 r"off[- ]?label (indication|use|usage).{0,20}(yes|present)"
                 r"|indication.{0,30}off[- ]?label",
-                low,
+                off_ctx,
             )
         ) and not re.search(
             r"not off[- ]?label|off[- ]?label.{0,20}(no|none|not)",
-            low,
+            off_ctx,
         )
         ok("not_off_label_indication", not strong_off or re.search(
             r"off[- ]?label.{0,40}(no|not)|not (categorically )?off[- ]?label",
-            low,
+            off_ctx,
         ) is not None)
 
     if expect.get("dosing_deviation") is True:
@@ -231,12 +295,14 @@ def score(ans: str, expect: dict) -> dict:
             bool(
                 re.search(
                     r"match(es)? the label|label[- ]concordant|appropriate|"
+                    r"recommended in the label|label(ed)? (dose|regimen)|"
+                    r"dose recommended|received the (labeled|recommended) dose|"
                     r"no off[- ]?label|no (special situation|ae)",
                     low,
                 )
             )
-            and not bool(
-                re.search(r"medication error|not concordant|does not match", low)
+            and not _affirmed(
+                low, r"medication error|not concordant|does not match"
             ),
         )
 
@@ -264,6 +330,31 @@ def score(ans: str, expect: dict) -> dict:
                 )
             ),
         )
+
+    if "citation_page" in expect:
+        ok(
+            "citation_page",
+            bool(re.search(rf"\bpage\s*{int(expect['citation_page'])}\b", low)),
+        )
+
+    # Mutual exclusion: a definitive dose must never coexist with an
+    # ambiguity/clarification state.
+    ambiguous = bool(
+        re.search(r"inconclusive|ambiguous|cannot confirm|not uniquely resolved", low)
+    )
+    definitive = bool(re.search(r"\b\d{2,4}\s*mg\b", low))
+    ok("state_exclusive", not (ambiguous and definitive))
+    # A "no recommended dose" finding must not carry a pinned verified dose.
+    ok(
+        "no_contradiction",
+        not (
+            definitive
+            and re.search(
+                r"insufficient data|no (labeled|recommended) dose|not recommend", low
+            )
+            and re.search(r"authoritative verified table value", low)
+        ),
+    )
 
     return {
         "pass": pass_n,

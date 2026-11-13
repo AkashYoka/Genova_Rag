@@ -11,6 +11,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from app.rag.ingestion.pdf_layout.table_structure import (
+    STRUCTURE_INVALID,
+    validate_table_structure,
+)
+
 _NUM_RE = re.compile(r"(?i)(-?\d+(?:\.\d+)?)\s*([a-zA-Z%/μµ²³]*)")
 _RANGE_RE = re.compile(
     r"(?i)"
@@ -107,6 +112,114 @@ STATUS_SELECTOR_FAILED = "selector_failed"
 STATUS_VERIFICATION_FAILED = "verification_failed"
 STATUS_EMPTY_CELL = "empty_cell"
 
+# Single authoritative answer state, derived from verified evidence status.
+# Retrieval relevance, applicability, structural validity and cell verification
+# are separate stages; this vocabulary is how they reach the answer stage.
+ANSWER_STATE_VERIFIED = "verified"
+ANSWER_STATE_AMBIGUOUS = "ambiguous"
+ANSWER_STATE_INSUFFICIENT = "insufficient"
+ANSWER_STATE_INVALID = "invalid"
+ANSWER_STATE_NOT_APPLICABLE = "not_applicable"
+
+_INVALID_LOOKUP_STATUSES = frozenset(
+    {
+        STATUS_INVALID_TABLE_STRUCTURE,
+        STATUS_VERIFICATION_FAILED,
+        STATUS_EMPTY_CELL,
+        STATUS_SELECTOR_FAILED,
+        STATUS_OUT_OF_RANGE,
+    }
+)
+_AMBIGUOUS_LOOKUP_STATUSES = frozenset(
+    {STATUS_AMBIGUOUS, "needs_disambiguation", "ambiguous_applicability"}
+)
+_VERIFIED_LOOKUP_STATUSES = frozenset({"", STATUS_MATCHED, "calculated", "verified"})
+
+
+@dataclass
+class AnswerStateDecision:
+    """One authoritative answer state plus the evidence that controls it."""
+
+    state: str = ANSWER_STATE_NOT_APPLICABLE
+    status: str = ""
+    soft: bool = False
+    source: Optional[Dict[str, Any]] = None
+    verified: Optional[Dict[str, Any]] = None
+
+    @property
+    def blocks_definitive_answer(self) -> bool:
+        return self.state in {ANSWER_STATE_AMBIGUOUS, ANSWER_STATE_INVALID}
+
+
+def answer_state_for_status(status: str, *, soft: bool = False) -> str:
+    """Map one lookup status to the authoritative answer state."""
+    text = str(status or "").strip().lower()
+    if text in _AMBIGUOUS_LOOKUP_STATUSES:
+        return ANSWER_STATE_AMBIGUOUS
+    if text in _INVALID_LOOKUP_STATUSES:
+        return ANSWER_STATE_INVALID
+    if text in _VERIFIED_LOOKUP_STATUSES and not soft:
+        return ANSWER_STATE_VERIFIED
+    return ANSWER_STATE_INSUFFICIENT
+
+
+def answer_state_from_sources(
+    sources: Sequence[Dict[str, Any]] | None,
+) -> AnswerStateDecision:
+    """Derive the single authoritative answer state from evidence sources.
+
+    Fail closed: a hard (non-soft) table-evidence failure outranks any verified
+    cell, so a stale or conflicting verification cannot rescue a definitive
+    answer. Ordinary prose retrieval (no table evidence) is ``not_applicable``
+    and must never be forced into abstention.
+    """
+    items = [s for s in (sources or []) if isinstance(s, dict)]
+    hard = [
+        s
+        for s in items
+        if s.get("insufficient_table_evidence") and not s.get("soft_insufficient")
+    ]
+    if hard:
+        status = str(hard[0].get("status") or hard[0].get("verification_status") or "")
+        return AnswerStateDecision(
+            state=answer_state_for_status(status),
+            status=status,
+            soft=False,
+            source=hard[0],
+        )
+    for src in items:
+        meta = src.get("verified_cell") or src.get("verified_calculation")
+        if not isinstance(meta, dict) or meta.get("value") is None:
+            continue
+        status = str(meta.get("status") or STATUS_MATCHED).strip().lower()
+        if status in _VERIFIED_LOOKUP_STATUSES:
+            return AnswerStateDecision(
+                state=ANSWER_STATE_VERIFIED,
+                status=status or STATUS_MATCHED,
+                verified=meta,
+            )
+        return AnswerStateDecision(
+            state=answer_state_for_status(status),
+            status=status,
+            source=meta,
+        )
+    soft_src = next(
+        (
+            s
+            for s in items
+            if s.get("insufficient_table_evidence") and s.get("soft_insufficient")
+        ),
+        None,
+    )
+    if soft_src is not None:
+        return AnswerStateDecision(
+            state=ANSWER_STATE_INSUFFICIENT,
+            status=str(soft_src.get("status") or ""),
+            soft=True,
+            source=soft_src,
+        )
+    return AnswerStateDecision(state=ANSWER_STATE_NOT_APPLICABLE)
+
 _EMPTY_OR_UNSUPPORTED_CELL_RE = re.compile(
     r"(?i)^\s*(?:[-–—]+|n/?a|none|null|empty|"
     r"insufficient(?:\s+data)?(?:\s+to\s+recommend(?:\s+a\s+dose)?)?|"
@@ -149,6 +262,42 @@ class VerifiedCell:
     status: str = STATUS_MATCHED
     table_id: str = ""
     normalized_value: str = ""
+    document_version: str = ""
+    structural_validation: Dict[str, Any] = field(default_factory=dict)
+
+    def provenance_record(self) -> Dict[str, Any]:
+        """Reproduce exactly why this cell was selected (audit, not reasoning)."""
+        evidence = self.evidence or {}
+        return {
+            "document_id": str(
+                evidence.get("source_document_id")
+                or evidence.get("document_id")
+                or ""
+            ),
+            "document_version": str(
+                self.document_version or evidence.get("document_version") or ""
+            ),
+            "page": self.page,
+            "table_id": self.table_id,
+            "table_caption": str(evidence.get("table_caption") or ""),
+            "row_index": self.row_index,
+            "col_index": self.col_index,
+            "original_cell_text": str(
+                evidence.get("original_cell_text") or self.value
+            ),
+            "normalized_row_headers": list(self.row_headers or []),
+            "normalized_column_headers": list(self.col_headers or []),
+            "matched_query_constraints": list(evidence.get("constraints") or []),
+            "applicability_evidence": dict(
+                evidence.get("applicability_evidence") or {}
+            ),
+            "structural_validation": dict(
+                self.structural_validation
+                or evidence.get("structural_validation")
+                or {}
+            ),
+            "verification_status": self.status,
+        }
 
     def to_prompt_block(self) -> str:
         row_s = " | ".join(self.row_headers) if self.row_headers else f"row {self.row_index}"
@@ -225,6 +374,10 @@ class VerifiedCell:
             if self.confidence and self.confidence > 0
             else "- Coordinate verification: python_sql_hydrate"
         )
+        row_field_lines = "".join(
+            f"- Same-row verified field — {k}: {v}\n"
+            for k, v in (self.evidence.get("row_fields") or {}).items()
+        )
         return (
             f"{VERIFIED_BLOCK_MARKER}\n"
             "Your final answer MUST use this exact cell value. "
@@ -234,9 +387,19 @@ class VerifiedCell:
             f"- Value: {self.value}\n"
             f"- Row: {row_s}\n"
             f"- Column: {col_s}\n"
+            f"{row_field_lines}"
             f"{provenance}"
             f"- Status: {self.status}\n"
-            f"{conf_line}"
+            f"{conf_line}\n"
+            "The verified cell fixes the value and any same-row schedule listed "
+            "above; do not borrow a dose or frequency from another row, column, "
+            "or sibling table. Evaluate in order before stating any regimen: "
+            "(1) indication, (2) age/population eligibility, (3) weight and "
+            "baseline lab bounds, (4) labeled dose, frequency and deviation. "
+            "If the patient's stated condition or population does not match "
+            "this table's caption, say that the cited table is not appropriate "
+            "for this patient and give the applicable label guidance — do not "
+            "hedge as ambiguous when the patient details are present."
         )
 
 
@@ -249,6 +412,7 @@ class InsufficientEvidence:
     candidate_values: List[str] = field(default_factory=list)
     candidate_table_ids: List[str] = field(default_factory=list)
     missing_dimensions: List[str] = field(default_factory=list)
+    structural_validation: Dict[str, Any] = field(default_factory=dict)
 
     def to_prompt_block(self) -> str:
         if self.status == STATUS_AMBIGUOUS:
@@ -283,13 +447,31 @@ class InsufficientEvidence:
                 "row/column intersections.\n"
                 "- Preserve uncertainty: separate labeled facts from interpretation."
             )
+        structural = ""
+        if self.structural_validation:
+            structural = (
+                "- Structural validation: "
+                f"{self.structural_validation.get('status') or 'unknown'}"
+                + (
+                    " ("
+                    + ",".join(self.structural_validation.get("reason_codes") or [])
+                    + ")"
+                    if self.structural_validation.get("reason_codes")
+                    else ""
+                )
+                + "\n"
+            )
         return (
             "Insufficient table evidence:\n"
             f"- Reason: {self.reason}\n"
             f"- Status: {self.status}\n"
+            f"{structural}"
             "- Do not invent a cell value from flattened markdown or neighboring rows/columns.\n"
             "- If you cannot verify a unique row-column intersection, say evidence is insufficient."
         )
+
+
+_HEADER_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def _norm_unit(unit: str) -> str:
@@ -458,6 +640,61 @@ def extract_numeric_constraints(question: str) -> List[NumericConstraint]:
             NumericConstraint(value=num, unit=unit, label_hint=hint, role=role)
         )
     return found
+
+
+def annotate_verified_cell(
+    cell: VerifiedCell,
+    table: Dict[str, Any],
+    *,
+    verification: str = "",
+) -> VerifiedCell:
+    """Attach structural validation + document version provenance to a cell."""
+    validation = validate_table_structure(table or {})
+    cell.structural_validation = validation.to_dict()
+    cell.document_version = str(
+        (table or {}).get("document_version") or cell.document_version or ""
+    )
+    evidence = dict(cell.evidence or {})
+    evidence.setdefault("verification_status", cell.status)
+    evidence["structural_validation"] = cell.structural_validation
+    evidence["document_version"] = cell.document_version
+    if verification:
+        evidence["verification"] = verification
+    cell.evidence = evidence
+    return cell
+
+
+def _detect_row_axis_column(
+    body: Sequence[Sequence[str]],
+    axis_constraints: Sequence[NumericConstraint],
+) -> int:
+    """Pick the row-axis column by range-label evidence (never assume index 0).
+
+    Only range-shaped labels count, so a numeric value column cannot win the
+    vote merely because one of its cells equals a query amount.
+    """
+    if not body or not axis_constraints:
+        return 0
+    width = max(len(r) for r in body)
+    best_col = 0
+    best_score = 0.0
+    for col in range(width):
+        score = 0.0
+        for row in body:
+            if len(row) <= col:
+                continue
+            label = str(row[col] or "")
+            if not parse_range_label(label):
+                continue
+            best_label_score = max(
+                (_score_label_match(label, c) for c in axis_constraints),
+                default=0.0,
+            )
+            if best_label_score > 0:
+                score += best_label_score
+        if score > best_score + 1e-9:
+            best_col, best_score = col, score
+    return best_col
 
 
 def _axis_constraints(constraints: Sequence[NumericConstraint]) -> List[NumericConstraint]:
@@ -632,21 +869,15 @@ def lookup_cell_in_table(
 ) -> VerifiedCell | InsufficientEvidence:
     """Find a unique verified cell for constraints in ``question``."""
     # Structural gate: never return matched from an unreliable grid.
-    try:
-        from app.rag.ingestion.pdf_layout.table_structure import (
-            STRUCTURE_INVALID,
-            validate_table_structure,
+    validation = validate_table_structure(table)
+    structure_validation = validation.to_dict()
+    if validation.status == STRUCTURE_INVALID or not validation.reliable_for_lookup:
+        return InsufficientEvidence(
+            "table structure is unreliable for definitive lookup: "
+            + ",".join(validation.reason_codes[:6]),
+            status=STATUS_INVALID_TABLE_STRUCTURE,
+            structural_validation=structure_validation,
         )
-
-        validation = validate_table_structure(table)
-        if validation.status == STRUCTURE_INVALID or not validation.reliable_for_lookup:
-            return InsufficientEvidence(
-                "table structure is unreliable for definitive lookup: "
-                + ",".join(validation.reason_codes[:6]),
-                status=STATUS_INVALID_TABLE_STRUCTURE,
-            )
-    except Exception:
-        pass
 
     headers = [str(h or "") for h in (table.get("headers") or [])]
     rows = [list(r) for r in (table.get("rows") or [])]
@@ -665,7 +896,6 @@ def lookup_cell_in_table(
 
     headers = (headers + [""] * width)[:width]
     body = [(list(r) + [""] * width)[:width] for r in rows]
-    row_labels = [str(r[0] or "") for r in body]
     col_labels = list(headers)
 
     constraints = extract_numeric_constraints(question)
@@ -675,7 +905,10 @@ def lookup_cell_in_table(
     if len(axis_cs) < 1:
         return InsufficientEvidence("no axis numeric constraints found in question")
 
-    row_unit = _axis_unit_preference(row_labels + [headers[0]])
+    axis_col = _detect_row_axis_column(body, axis_cs)
+    row_labels = [str(r[axis_col] or "") for r in body]
+
+    row_unit = _axis_unit_preference(row_labels + [headers[axis_col]])
     col_unit = _axis_unit_preference(col_labels[1:])
 
     row_hits = _best_axis_matches(
@@ -870,31 +1103,53 @@ def lookup_cell_in_table(
                 "column label failed verification against constraint"
             )
 
+    # A row conflict is semantic, not score-based: any other row whose label
+    # also satisfies the selected axis constraint is an applicable row. Narrower
+    # bins scoring higher must not silently resolve genuine overlap.
     conflicts = []
-    for other_i, other_score, other_c in row_hits:
+    selected_constraint = selected_row[2]
+    for other_i, _other_score, _other_c in row_hits:
         if other_i == r_i:
             continue
-        if other_c is not selected_row[2] and not (
-            abs(other_c.value - selected_row[2].value) < 1e-9
-            and _norm_unit(other_c.unit) == _norm_unit(selected_row[2].unit)
-        ):
+        if _score_label_match(
+            row_labels[other_i], selected_constraint, axis_prefer_unit=row_unit
+        ) <= 0:
             continue
-        if abs(other_score - selected_row[1]) < 1e-9:
-            # If standalone frequency uniquely selects our row, ignore siblings.
-            if standalone_freq and _frequency_matches_row(
-                body[r_i], standalone_freq[0]
-            ):
-                if not _frequency_matches_row(body[other_i], standalone_freq[0]):
-                    continue
-            other_val = str(body[other_i][c_i] or "").strip()
-            if other_val and other_val != value:
-                conflicts.append(other_val)
+        # A standalone schedule token that uniquely matches our row resolves it.
+        if standalone_freq and _frequency_matches_row(body[r_i], standalone_freq[0]):
+            if not _frequency_matches_row(body[other_i], standalone_freq[0]):
+                continue
+        other_val = str(body[other_i][c_i] or "").strip()
+        if other_val and other_val != value:
+            conflicts.append(other_val)
     if conflicts:
+        table_id_hint = str(table.get("table_id") or "")
         return InsufficientEvidence(
-            "multiple rows match equally with disagreeing cell values",
+            "multiple rows satisfy the same axis constraint with disagreeing "
+            "cell values",
             status=STATUS_AMBIGUOUS,
             candidate_values=sorted({value, *conflicts}),
+            candidate_table_ids=[table_id_hint] if table_id_hint else [],
         )
+
+    # Companion cells of the verified row (e.g. a dosing-frequency column).
+    # They are part of the verified ground truth: a dose without its schedule
+    # is an incomplete label answer, and models otherwise borrow the schedule
+    # from a neighbouring row. Sibling axis columns are skipped by header
+    # similarity to the selected column rather than by domain naming.
+    row_fields: Dict[str, str] = {}
+    selected_header_tokens = set(_HEADER_TOKEN_RE.findall(str(headers[c_i] or "").lower()))
+    for j in range(width):
+        if j in (c_i, axis_col):
+            continue
+        header_j = str(headers[j] or "").strip()
+        if not header_j or header_j == str(headers[c_i] or "").strip():
+            continue
+        if len(set(_HEADER_TOKEN_RE.findall(header_j.lower())) & selected_header_tokens) >= 2:
+            continue
+        cell_j = str(body[r_i][j] or "").strip()
+        if cell_j:
+            row_fields[header_j] = cell_j[:80]
 
     table_id = str(table.get("table_id") or "")
     header_paths = table.get("normalized_header_paths") or []
@@ -927,6 +1182,8 @@ def lookup_cell_in_table(
         status=STATUS_MATCHED,
         table_id=table_id,
         normalized_value=value,
+        document_version=str(table.get("document_version") or ""),
+        structural_validation=structure_validation,
         evidence={
             "match_mode": "row_col_intersection",
             "status": STATUS_MATCHED,
@@ -935,10 +1192,19 @@ def lookup_cell_in_table(
                 table.get("document_id") or table.get("doc_id") or ""
             ),
             "original_cell_text": value,
+            "row_fields": row_fields,
+            "verification_status": STATUS_MATCHED,
+            "structural_validation": structure_validation,
+            "document_version": str(table.get("document_version") or ""),
+            "page": page if page is not None else table.get("page"),
+            "row_index": r_i,
+            "col_index": c_i,
             "normalized_header_paths": {
                 "row": [row_labels[r_i]],
                 "column": col_path or [col_labels[c_i]],
             },
+            "normalized_row_headers": [row_labels[r_i]],
+            "normalized_column_headers": col_path or [col_labels[c_i]],
             "applicability_evidence": applicability_evidence,
             "table_caption": str(table.get("caption") or "")[:240],
             "table_section": str(

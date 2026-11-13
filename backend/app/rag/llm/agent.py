@@ -760,6 +760,48 @@ def _verified_meta_from_sources(sources: List[Dict[str, Any]]) -> Optional[Dict[
     return None
 
 
+_TABLE_GATE_PREFIXES = (
+    "Inconclusive —",
+    "Inconclusive -",
+    "I could not verify a unique row–column cell",
+)
+
+
+def _is_table_gate_message(text: str) -> bool:
+    """True when ``text`` is already a gate response (keeps reconcile idempotent)."""
+    body = (text or "").strip()
+    return any(body.startswith(prefix) for prefix in _TABLE_GATE_PREFIXES)
+
+
+def _streaming_gate_message(sources: List[Dict[str, Any]]) -> Optional[str]:
+    """Pre-token gate: whole-stream replacement when evidence cannot verify.
+
+    Streaming cannot retract emitted tokens, so AMBIGUOUS / INVALID evidence is
+    resolved before the first token. Soft or merely-missing evidence still
+    streams normal prose (over-abstention avoidance).
+    """
+    from app.rag.generation.structured_lookup import (
+        ANSWER_STATE_AMBIGUOUS,
+        ANSWER_STATE_INVALID,
+        answer_state_from_sources,
+    )
+
+    decision = answer_state_from_sources(sources)
+    if decision.state not in {ANSWER_STATE_AMBIGUOUS, ANSWER_STATE_INVALID}:
+        return None
+    hard = decision.source or {}
+    candidates = hard.get("candidate_values") or []
+    # Unique candidate value with no multi-table conflict — not worth abstaining.
+    if (
+        decision.state == ANSWER_STATE_AMBIGUOUS
+        and isinstance(candidates, list)
+        and len(candidates) == 1
+        and len(hard.get("candidate_table_ids") or []) <= 1
+    ):
+        return None
+    return _format_table_evidence_failure(hard)
+
+
 def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
     """Build a clarification-only response; never retain definitive conclusions."""
     status = str(hard.get("status") or "not_found")
@@ -768,6 +810,33 @@ def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
     table_ids = hard.get("candidate_table_ids") or []
     reason = str(hard.get("reason") or "").strip()
     verification = str(hard.get("verification_status") or status)
+    from app.rag.generation.structured_lookup import (
+        ANSWER_STATE_INVALID,
+        ANSWER_STATE_INSUFFICIENT,
+        answer_state_for_status,
+    )
+
+    state = answer_state_for_status(status)
+    if state == ANSWER_STATE_INVALID:
+        lines = [
+            "Inconclusive — the retrieved table structure cannot support "
+            "reliable verification.",
+            "Insufficient table evidence: no row–column cell can be verified "
+            "from this structure.",
+        ]
+        if table_ids:
+            lines.append(
+                "- Candidate tables: "
+                + ", ".join(str(t) for t in table_ids[:8] if t)
+            )
+        if reason:
+            lines.append(f"- Reason: {reason}")
+        lines.append(f"- Verification status: {verification}")
+        lines.append(
+            "I am not stating a definitive labeled value, classification, or "
+            "compliance conclusion from this evidence."
+        )
+        return "\n".join(lines)
     if status == "ambiguous" or (
         isinstance(candidates, list) and len(candidates) > 1
     ):
@@ -796,11 +865,21 @@ def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
             "one cited table by number/caption."
         )
         return "\n".join(lines)
+    evidence_page = hard.get("evidence_page")
+    evidence_caption = str(hard.get("evidence_caption") or "").strip()
     lines = [
         "Inconclusive — no uniquely verified table cell is available.",
-        "I am not stating a definitive labeled dose/frequency or on-label/"
-        "off-label conclusion from unverified matrix evidence.",
+        "Insufficient table evidence: no row–column cell in the retrieved "
+        "tables matches these patient values, so I am not stating a labeled "
+        "dose/frequency or on-label/off-label conclusion.",
     ]
+    if evidence_caption or evidence_page:
+        where = []
+        if evidence_caption:
+            where.append(evidence_caption)
+        if evidence_page:
+            where.append(f"page {evidence_page}")
+        lines.append("- Cited table: " + " — ".join(where))
     if table_ids:
         lines.append(
             "- Candidate tables: " + ", ".join(str(t) for t in table_ids[:8] if t)
@@ -811,7 +890,85 @@ def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _reconcile_answer_with_verified_cell(
+_LEAK_DIRECTIVE_RE = re.compile(
+    r"(?i)(must state this value|your final answer must|takeaway value must|"
+    r"cite this page|provenance rule|do not treat the label cell|"
+    r"compare the stated amount|any other conflicting numeric value|"
+    r"coordinate verification|same-row verified field|"
+    r"do not borrow a dose or frequency|evaluate in order before stating|"
+    r"do not replace it with a neighboring)"
+)
+
+
+def _strip_prompt_leaks(text: str) -> str:
+    """Drop echoed prompt directives from user-visible answer text."""
+    if not text:
+        return text
+    kept_lines: List[str] = []
+    for line in text.splitlines():
+        if line.strip() and _LEAK_DIRECTIVE_RE.search(line):
+            sentences = re.split(r"(?<=[.!?])\s+", line.strip())
+            line = " ".join(
+                s
+                for s in sentences
+                if s.strip() and not _LEAK_DIRECTIVE_RE.search(s)
+            ).strip()
+        kept_lines.append(line)
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
+    return cleaned or text
+
+
+_MG_AMOUNT_RE = re.compile(r"(?i)(\d{2,4}(?:\.\d+)?)\s*mg\b")
+_SCHEDULE_CLAIM_RE = re.compile(r"(?i)\bevery\s+(\d+)\s*(weeks?|days?|months?)\b")
+_LABEL_CLAIM_RE = re.compile(
+    r"(?i)\b(label|labeled|labelled|table\s+\d|dosing table|recommended|"
+    r"regimen|dose|dosing)\b"
+)
+
+
+def _verified_schedule(meta: Dict[str, Any]) -> Optional[str]:
+    """Schedule cell from the verified row (e.g. ``Every 4 weeks``)."""
+    evidence = meta.get("evidence") or {}
+    for value in (evidence.get("row_fields") or {}).values():
+        m = _SCHEDULE_CLAIM_RE.search(str(value))
+        if m:
+            return f"every {m.group(1)} {m.group(2).lower()}"
+    return None
+
+
+def _harmonize_label_claims(
+    text: str,
+    verified_num: str,
+    meta: Dict[str, Any],
+) -> str:
+    """Rewrite label sentences that contradict the verified cell.
+
+    Only sentences that carry label language, cite a different amount, and do
+    not already contain the verified amount are rewritten, so enumerations and
+    comparative prose stay intact. Table rows are never rewritten.
+    """
+    if not text:
+        return text
+    schedule = _verified_schedule(meta)
+    parts = re.split(r"((?<=[.!?])\s+)", text)
+    for i in range(0, len(parts), 2):
+        sentence = parts[i]
+        stripped = sentence.lstrip()
+        if (
+            verified_num in sentence
+            or not _LABEL_CLAIM_RE.search(sentence)
+            or not _MG_AMOUNT_RE.search(sentence)
+            or stripped.startswith("|")
+        ):
+            continue
+        sentence = _MG_AMOUNT_RE.sub(f"{verified_num} mg", sentence)
+        if schedule:
+            sentence = _SCHEDULE_CLAIM_RE.sub(schedule, sentence)
+        parts[i] = sentence
+    return "".join(parts).strip()
+
+
+def _reconcile_answer_inner(
     answer: str,
     sources: List[Dict[str, Any]],
 ) -> str:
@@ -825,9 +982,15 @@ def _reconcile_answer_with_verified_cell(
     Hard ambiguous / failed verification: replace any definitive conclusion with
     a clarification-only response (never append a warning under a confident answer).
     """
-    from app.rag.table_rag.telemetry import record_reconcile_action
+    from app.rag.generation.structured_lookup import answer_state_from_sources
+    from app.rag.table_rag.telemetry import record_answer_state, record_reconcile_action
 
-    meta = _verified_meta_from_sources(sources)
+    decision = answer_state_from_sources(sources)
+    record_answer_state(decision.state)
+    if _is_table_gate_message(answer):
+        record_reconcile_action("none")
+        return answer
+    meta = decision.verified
     if not meta:
         # Hard insufficient / ambiguous: force abstain framing.
         # Soft insufficient: allow prose RAG without boilerplate.
@@ -923,6 +1086,8 @@ def _reconcile_answer_with_verified_cell(
     verified_num = m_val.group(1)
     verified_page = meta.get("page")
     answer_text = answer or ""
+    if not compare_mode and not is_calculation:
+        answer_text = _harmonize_label_claims(answer_text, verified_num, meta)
 
     def _provenance_mismatch(text: str) -> bool:
         """True when the answer cites a different Page N for this cell value."""
@@ -953,7 +1118,7 @@ def _reconcile_answer_with_verified_cell(
             f"(Page {verified_page}; row {meta.get('row_headers')}; "
             f"column {meta.get('col_headers')}; "
             f"table {meta.get('table_id') or 'verified'}). "
-            "Cite this page/table only for the matrix value — not a sibling table.\n\n"
+            "\n\n"
             + text
         )
 
@@ -974,8 +1139,8 @@ def _reconcile_answer_with_verified_cell(
             f"**Verified label table value: {raw_val}** "
             f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
             f"column {meta.get('col_headers')}). "
-            f"Compare the stated amount ({p_s}) against this label cell; "
-            "do not treat the label cell as the administered amount.\n\n"
+            ""
+            "\n\n"
             + answer_text
         )
 
@@ -999,8 +1164,8 @@ def _reconcile_answer_with_verified_cell(
             f"**{auth_label}: {raw_val}** "
             f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
             f"column {meta.get('col_headers')}). "
-            f"The takeaway value must be {raw_val}, not {lead.group(1)} mg "
-            "from a neighboring cell or another table.\n\n"
+            f"The label value is {raw_val}. "
+            "\n\n"
         )
         return correction + answer_text
     if verified_num not in answer_text:
@@ -1013,6 +1178,14 @@ def _reconcile_answer_with_verified_cell(
         )
     record_reconcile_action("none")
     return _with_provenance_pin(answer_text)
+
+
+def _reconcile_answer_with_verified_cell(
+    answer: str,
+    sources: List[Dict[str, Any]],
+) -> str:
+    """Reconcile a generated answer with verified evidence, then clean it."""
+    return _strip_prompt_leaks(_reconcile_answer_inner(answer, sources))
 
 
 def _coerce_source_page(page: Any) -> int:
@@ -1657,23 +1830,9 @@ def _generate_answer_stream_direct(
     provider = normalize_llm_provider(llm_provider)
     # Hard table-evidence failures must not stream a definitive answer then
     # append an ambiguity warning — replace up front when already known.
-    hard_fail = next(
-        (
-            s
-            for s in (sources or [])
-            if s.get("insufficient_table_evidence") and not s.get("soft_insufficient")
-        ),
-        None,
-    )
-    if hard_fail and str(hard_fail.get("status") or "") in {
-        "ambiguous",
-        "verification_failed",
-        "empty_cell",
-        "invalid_table_structure",
-        "selector_failed",
-        "out_of_range",
-    }:
-        msg = _format_table_evidence_failure(hard_fail)
+    gate_msg = _streaming_gate_message(sources)
+    if gate_msg:
+        msg = gate_msg
         try:
             from app.rag.table_rag.telemetry import record_reconcile_action
 

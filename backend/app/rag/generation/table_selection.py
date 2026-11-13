@@ -7,7 +7,7 @@ applicability must not be silently collapsed to one answer.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from app.rag.generation.query_constraints import (
@@ -124,6 +124,152 @@ class TableApplicability:
     age_ranges: List[ParsedRange] = field(default_factory=list)
 
 
+ELIGIBLE = "eligible"
+INELIGIBLE = "ineligible"
+UNCERTAIN = "uncertain"
+
+_POPULATION_KEY_HINTS = (
+    "population",
+    "cohort",
+    "age",
+    "subject",
+    "patient",
+    "audience",
+    "segment",
+    "group",
+)
+
+
+@dataclass
+class CandidateEligibility:
+    """Explicit eligibility state for one candidate table (audit record)."""
+
+    table_id: str = ""
+    state: str = UNCERTAIN
+    reasons: List[str] = field(default_factory=list)
+    question_answered: str = ""
+    population: str = ""
+    dimensions: Dict[str, List[str]] = field(default_factory=dict)
+    units: List[str] = field(default_factory=list)
+    conflicts_with: List[str] = field(default_factory=list)
+    sufficient_evidence: bool = False
+    provenance: Dict[str, str] = field(default_factory=dict)
+    applicability: Dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+def _applicability_state(
+    table: Dict[str, Any],
+    profile: "TableApplicability",
+) -> Tuple[str, bool, List[str]]:
+    """ELIGIBLE only when applicability evidence exists; else UNCERTAIN.
+
+    Provenance-only attributes (section/caption/trial) do not establish
+    applicability, so they never promote a candidate to ELIGIBLE.
+    """
+    und = _understanding(table)
+    app_attrs = {
+        k: v
+        for k, v in (profile.attributes or {}).items()
+        if dimension_kind(k) == "applicability"
+    }
+    has_bounds = bool(profile.bound_ranges or profile.age_ranges)
+    reasons: List[str] = []
+    if und.get("uncertain") or und.get("source") == "deterministic_fallback":
+        reasons.append("interpretation_uncertain")
+    if app_attrs or has_bounds:
+        return ELIGIBLE, True, reasons
+    if profile.cue_tokens:
+        reasons.append("metadata_without_applicability_attributes")
+        return UNCERTAIN, False, reasons
+    reasons.append("no_applicability_metadata")
+    return UNCERTAIN, False, reasons
+
+
+def _eligibility_records(
+    profiles: Sequence[Tuple[Dict[str, Any], Dict[str, Any], "TableApplicability"]],
+    eligible: Sequence[Tuple[Dict[str, Any], Dict[str, Any], "TableApplicability"]],
+    excluded: Sequence[Dict[str, Any]],
+) -> List[CandidateEligibility]:
+    """Per-candidate eligibility states for audit (no selection side effects)."""
+    eligible_ids = {
+        str(profile.table_id or table.get("table_id") or "")
+        for _chunk, table, profile in eligible
+    }
+    excluded_reasons: Dict[str, str] = {}
+    for item in excluded or []:
+        tid = str(item.get("table_id") or "")
+        if tid and tid not in excluded_reasons:
+            excluded_reasons[tid] = str(item.get("reason") or "excluded")
+
+    profiles_by_id: Dict[str, "TableApplicability"] = {}
+    for chunk, table, profile in profiles:
+        tid = str(profile.table_id or table.get("table_id") or chunk.get("table_id") or "")
+        if tid:
+            profiles_by_id[tid] = profile
+
+    records: List[CandidateEligibility] = []
+    for chunk, table, profile in profiles:
+        tid = str(profile.table_id or table.get("table_id") or chunk.get("table_id") or "")
+        und = _understanding(table)
+        provenance = {
+            "caption": str(table.get("caption") or chunk.get("caption") or ""),
+            "section": str(chunk.get("section") or table.get("section") or ""),
+            "page": str(table.get("page") or chunk.get("page") or ""),
+            "table_id": tid,
+            "document_id": str(chunk.get("document_id") or ""),
+        }
+        population = ""
+        for key, val in (profile.attributes or {}).items():
+            if any(hint in key.lower() for hint in _POPULATION_KEY_HINTS):
+                population = str(val)
+                break
+        dimensions: Dict[str, List[str]] = {}
+        for key, val in (profile.attributes or {}).items():
+            dimensions.setdefault(key, []).append(str(val))
+        record = CandidateEligibility(
+            table_id=tid,
+            question_answered=str(
+                und.get("purpose") or und.get("subject") or provenance["caption"]
+            ),
+            population=population,
+            dimensions=dimensions,
+            units=sorted(profile.header_units or set()),
+            provenance=provenance,
+            applicability=dict(profile.attributes or {}),
+        )
+        if tid in eligible_ids:
+            state, sufficient, reasons = _applicability_state(table, profile)
+            record.state = state
+            record.sufficient_evidence = sufficient
+            record.reasons = reasons
+        else:
+            record.state = INELIGIBLE
+            record.reasons = [
+                excluded_reasons.get(tid, "not_selected_by_query_applicability")
+            ]
+        records.append(record)
+
+    applicable = [r for r in records if r.state in {ELIGIBLE, UNCERTAIN}]
+    for i, left in enumerate(applicable):
+        for right in applicable[i + 1 :]:
+            left_profile = profiles_by_id.get(left.table_id)
+            right_profile = profiles_by_id.get(right.table_id)
+            if left_profile is None or right_profile is None:
+                continue
+            if profiles_are_distinct(left_profile, right_profile):
+                left.conflicts_with.append(right.table_id)
+                right.conflicts_with.append(left.table_id)
+    return records
+
+
+def eligibility_audit(decision: "SelectionDecision") -> List[Dict[str, Any]]:
+    """Serializable eligibility decisions for telemetry/debugging."""
+    return [c.to_dict() for c in (decision.candidates or [])]
+
+
 @dataclass
 class SelectionDecision:
     """Result of filtering candidate table chunks for structured lookup."""
@@ -135,6 +281,9 @@ class SelectionDecision:
     missing_dimensions: List[str] = field(default_factory=list)
     query_constraints: Optional[Dict[str, Any]] = None
     structure_blocked: List[Dict[str, Any]] = field(default_factory=list)
+    candidates: List[CandidateEligibility] = field(default_factory=list)
+    # Condition words from the question that no candidate table covers.
+    mismatch_terms: List[str] = field(default_factory=list)
 
 
 def attribute_value_tokens(profile: TableApplicability) -> Set[str]:
@@ -161,6 +310,118 @@ def _tokens(text: str) -> Set[str]:
         for t in _TOKEN_RE.findall(text or "")
         if len(t) > 2 and t.lower() not in _STOP
     }
+
+
+# Cohort words describe which table the question names, not which indication
+# the patient has; they are ignored when choosing a replacement table.
+_COHORT_TOKENS = frozenset(
+    {
+        "adult",
+        "adults",
+        "adolescent",
+        "adolescents",
+        "pediatric",
+        "paediatric",
+        "child",
+        "children",
+        "infant",
+        "infants",
+    }
+)
+
+
+_GENERIC_QUERY_TOKENS = frozenset(
+    {
+        "patient",
+        "patients",
+        "adult",
+        "adults",
+        "pediatric",
+        "paediatric",
+        "child",
+        "children",
+        "label",
+        "correct",
+        "appropriate",
+        "given",
+        "dosed",
+        "using",
+        "regimen",
+        "table",
+        "tables",
+        "value",
+        "values",
+        "dose",
+        "doses",
+        "dosing",
+        "frequency",
+        "recommended",
+        "recommend",
+        "according",
+        "received",
+        "weighs",
+    }
+)
+
+# "... with <condition phrase>" — the phrase, not the whole sentence, names
+# the patient's condition.
+_CONDITION_PHRASE_RE = re.compile(
+    r"(?i)\b(?:with|diagnosed\s+with|history\s+of)\s+"
+    r"([a-z][a-z\s\-()]{2,50}?)"
+    r"(?=[,.;:]|$|\s+\d|\s+(?:weigh\w*|body|was|were|is|received|given|got|"
+    r"dosed|using|at|who)\b)"
+)
+
+# Measurement nouns that can follow "with" but do not name a condition.
+_NON_CONDITION_TOKENS = frozenset(
+    {"assay", "level", "levels", "result", "results", "count", "score", "ratio"}
+)
+
+
+def _condition_tokens(question: str) -> Set[str]:
+    """Content tokens of the condition phrase(s) stated in the question."""
+    toks: Set[str] = set()
+    for m in _CONDITION_PHRASE_RE.finditer(question or ""):
+        toks |= _tokens(m.group(1))
+    return toks - _GENERIC_QUERY_TOKENS - _NON_CONDITION_TOKENS
+
+
+def _indication_mismatch_terms(
+    question: str,
+    eligible: Sequence[Tuple[Dict[str, Any], Dict[str, Any], "TableApplicability"]],
+) -> List[str]:
+    """Condition words the question states that no candidate table covers."""
+    condition = _condition_tokens(question)
+    if not condition or not eligible:
+        return []
+    covered: Set[str] = set()
+    for _chunk, _table, profile in eligible:
+        covered |= set(profile.cue_tokens or set()) | set(
+            profile.purpose_tokens or set()
+        )
+    uncovered = sorted(condition - covered)
+    # One stray word can be a qualifier; several mean the condition itself is
+    # outside every candidate table's scope.
+    return uncovered if len(uncovered) >= 2 else []
+
+
+def _narrow_by_purpose_overlap(
+    eligible: Sequence[Tuple[Dict[str, Any], Dict[str, Any], "TableApplicability"]],
+    q_tokens: Set[str],
+) -> List[Tuple[Dict[str, Any], Dict[str, Any], "TableApplicability"]]:
+    """Pick the single surviving table whose purpose best matches the question."""
+    if len(eligible) < 2:
+        return list(eligible)
+    probe = set(q_tokens) - _COHORT_TOKENS
+    scored = [
+        (len(set(item[2].purpose_tokens or set()) & probe), item)
+        for item in eligible
+    ]
+    best = max(score for score, _ in scored)
+    if best <= 0:
+        return list(eligible)
+    winners = [item for score, item in scored if score == best]
+    return winners if len(winners) == 1 else list(eligible)
 
 
 def _understanding(table: Dict[str, Any]) -> Dict[str, Any]:
@@ -684,10 +945,22 @@ def conflicting_dimensions(
         if dimension_kind(key) == "provenance":
             continue
         # If neither profile has this attribute key, do not invent a conflict.
-        left_has = any(k.lower() == lk for k in (left.attributes or {}))
-        right_has = any(k.lower() == lk for k in (right.attributes or {}))
-        if left_has or right_has:
-            dims.append(key)
+        left_val = next(
+            (v for k, v in (left.attributes or {}).items() if k.lower() == lk), None
+        )
+        right_val = next(
+            (v for k, v in (right.attributes or {}).items() if k.lower() == lk), None
+        )
+        if left_val is None and right_val is None:
+            continue
+        # Both sides declare the same value: metadata agreement, not a split.
+        if (
+            left_val is not None
+            and right_val is not None
+            and left_val.strip().lower() == right_val.strip().lower()
+        ):
+            continue
+        dims.append(key)
     return list(dict.fromkeys(dims))
 
 
@@ -794,17 +1067,11 @@ def select_eligible_table_chunks(
             query_constraints=query.to_dict(),
         )
 
-    # Explicit Table N citation — hard-narrow before conflict detection so
-    # sibling matrices with different captions cannot force false ambiguity.
+    # Explicit Table N citation is resolved *after* the hard filters: a
+    # question may cite a table in order to challenge it ("is adult Table 1
+    # appropriate for this 8-year-old?"), and narrowing first would empty the
+    # pool and hide the table that actually applies.
     table_num = question_table_number(question)
-    if table_num:
-        matched_num = [
-            (chunk, table, profile)
-            for chunk, table, profile in profiles
-            if table_number_match(table, chunk, table_num)
-        ]
-        if matched_num:
-            profiles = matched_num
 
     duration_bounds = [
         float(c.numeric_value)
@@ -897,7 +1164,14 @@ def select_eligible_table_chunks(
             "infant",
             "infants",
         }
-        if (q_cohort & adultish) and (t_cohort & pedish) and not (t_cohort & adultish):
+        # A cited table's own population label is not a constraint on the
+        # patient ("is adult Table 1 appropriate for this 8-year-old?").
+        if (
+            not table_num
+            and (q_cohort & adultish)
+            and (t_cohort & pedish)
+            and not (t_cohort & adultish)
+        ):
             excluded.append(
                 {
                     "table_id": profile.table_id,
@@ -905,7 +1179,12 @@ def select_eligible_table_chunks(
                 }
             )
             continue
-        if (q_cohort & pedish) and (t_cohort & adultish) and not (t_cohort & pedish):
+        if (
+            not table_num
+            and (q_cohort & pedish)
+            and (t_cohort & adultish)
+            and not (t_cohort & pedish)
+        ):
             excluded.append(
                 {
                     "table_id": profile.table_id,
@@ -941,9 +1220,46 @@ def select_eligible_table_chunks(
 
         eligible.append((chunk, table, profile))
 
+    if table_num:
+        cited = [
+            (chunk, table, profile)
+            for chunk, table, profile in eligible
+            if table_number_match(table, chunk, table_num)
+        ]
+        if cited:
+            eligible = cited
+        elif eligible:
+            # The cited table was filtered as inapplicable. Replace it with the
+            # surviving table whose caption/purpose is closest to the question,
+            # so the fallback is topical rather than arbitrary.
+            probe = _condition_tokens(question) or (set(q_tokens) - _COHORT_TOKENS)
+            eligible = _narrow_by_purpose_overlap(eligible, probe)
+
+    mismatch_terms = _indication_mismatch_terms(question, eligible)
+    if mismatch_terms:
+        # The patient's condition is outside the scope of every candidate
+        # table: this is a wrong-table situation, not missing metadata.
+        return SelectionDecision(
+            eligible_chunks=[],
+            candidates=_eligibility_records(profiles, eligible, excluded),
+            excluded=excluded,
+            structure_blocked=structure_blocked,
+            reason=(
+                "indication mismatch — the stated patient condition ("
+                + ", ".join(mismatch_terms)
+                + ") is outside the scope of the candidate tables; the table "
+                "used is not appropriate for this patient"
+            ),
+            requires_disambiguation=True,
+            missing_dimensions=["indication"],
+            query_constraints=query.to_dict(),
+            mismatch_terms=mismatch_terms,
+        )
+
     if not eligible:
         return SelectionDecision(
             eligible_chunks=[],
+            candidates=_eligibility_records(profiles, [], excluded),
             excluded=excluded,
             structure_blocked=structure_blocked,
             reason="all_tables_excluded_by_hard_constraints",
@@ -1121,6 +1437,7 @@ def select_eligible_table_chunks(
 
     return SelectionDecision(
         eligible_chunks=[c for c, _, _ in eligible],
+        candidates=_eligibility_records(profiles, eligible, excluded),
         excluded=excluded,
         structure_blocked=structure_blocked,
         reason="ok" if not requires else "ambiguous_applicability",

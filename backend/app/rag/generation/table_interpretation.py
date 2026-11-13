@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
 from app.rag.generation.structured_lookup import (
+    ANSWER_STATE_VERIFIED,
     STATUS_AMBIGUOUS,
     STATUS_INVALID_TABLE_STRUCTURE,
     STATUS_MATCHED,
@@ -226,7 +227,20 @@ def _interpret_with_llm_selector(
             "evidence": dict(outcome.evidence or {}),
             "selector_status": decision.status,
             "selector_rationale": decision.rationale,
+            "provenance": outcome.provenance_record(),
+            "answer_state": ANSWER_STATE_VERIFIED,
         }
+        from app.rag.table_rag.telemetry import record_cell_verification
+
+        record_cell_verification(
+            table_id=outcome.table_id,
+            row_index=outcome.row_index,
+            col_index=outcome.col_index,
+            row_headers=outcome.row_headers,
+            col_headers=outcome.col_headers,
+            status=STATUS_MATCHED,
+            reason=str(outcome.evidence.get("verification") or ""),
+        )
         record_selector_metrics(
             status="matched",
             latency_ms=latency_ms,
@@ -286,6 +300,19 @@ def _interpret_with_llm_selector(
     else:
         prefix = insuff.to_prompt_block() + "\n\n"
     cand_ids = list(insuff.candidate_table_ids or candidate_ids)
+    # Locate the cited table so the abstention can name its page/caption
+    # instead of only listing opaque ids.
+    evidence_page = None
+    evidence_caption = ""
+    cited_id = str(getattr(decision, "table_id", "") or "")
+    for cand in candidates:
+        if cited_id and str(cand.get("table_id") or "") != cited_id:
+            continue
+        tbl = cand.get("table") if isinstance(cand.get("table"), dict) else {}
+        chunk = cand.get("chunk") or {}
+        evidence_page = tbl.get("page") or chunk.get("page")
+        evidence_caption = str(tbl.get("caption") or chunk.get("caption") or "")
+        break
     return TableInterpretationResult(
         is_structured_lookup=True,
         result=insuff,
@@ -298,6 +325,8 @@ def _interpret_with_llm_selector(
             "missing_dimensions": list(insuff.missing_dimensions or []),
             "candidate_values": list(insuff.candidate_values or []),
             "candidate_table_ids": cand_ids,
+            "evidence_page": evidence_page,
+            "evidence_caption": evidence_caption[:160],
             "verification_status": str(insuff.status or status_label),
             "selector_status": status_label,
             "selector_rationale": decision.rationale,
@@ -363,6 +392,15 @@ def interpret_table_question(
     decision = select_eligible_table_chunks(
         question, table_chunks, get_table=_parse_table
     )
+    from app.rag.generation.table_selection import eligibility_audit
+    from app.rag.table_rag.telemetry import record_candidate_audit
+
+    record_candidate_audit(
+        retrieved_table_ids=[
+            str(c.get("table_id") or "") for c in table_chunks if c.get("table_id")
+        ],
+        eligibility=eligibility_audit(decision),
+    )
     working = decision.eligible_chunks or []
     if not working:
         insuff = InsufficientEvidence(
@@ -382,6 +420,9 @@ def interpret_table_question(
                 "soft_insufficient": False,
                 "missing_dimensions": insuff.missing_dimensions,
                 "excluded_tables": decision.excluded,
+                "indication_mismatch_terms": list(
+                    getattr(decision, "mismatch_terms", []) or []
+                ),
             },
         )
 
@@ -610,6 +651,8 @@ def interpret_table_question(
         ),
         "missing_dimensions": list(decision.missing_dimensions),
         "query_constraints": decision.query_constraints,
+        "provenance": best.provenance_record(),
+        "answer_state": ANSWER_STATE_VERIFIED,
     }
     if (best.evidence or {}).get("prescribed_value") is not None:
         verified_meta["compare_mode"] = True
