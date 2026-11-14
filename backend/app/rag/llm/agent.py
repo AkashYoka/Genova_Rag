@@ -611,7 +611,7 @@ def _multi_doc_prompt_prefix(document_ids: Optional[List[str]], chunks: List[Dic
     )
 
 
-def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 12) -> str:
+def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 20) -> str:
     """Compact structured table appendix so answer stage sees headers/rows, not text only.
 
     Prefers TableRAG-hydrated ``table_prompt_block`` (full grid + merged cells +
@@ -715,18 +715,46 @@ def _apply_table_interpretation(
     chunks: List[Dict[str, Any]],
     context: str,
     sources: List[Dict[str, Any]],
-) -> Tuple[str, List[Dict[str, Any]]]:
-    """Prepend verified / insufficient table evidence; annotate sources."""
-    try:
-        from app.rag.generation.llm_table_reasoning import interpret_table_question
+    *,
+    user_id: str = "",
+    document_id: Optional[str] = None,
+    document_ids: Optional[List[str]] = None,
+) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Prepend verified / insufficient table evidence; annotate sources.
 
-        interpretation = interpret_table_question(question, chunks)
+    When iterative evidence retrieval is enabled, may fetch additional chunks
+    and rebuild context so the answer LLM sees the expanded evidence set.
+    Returns ``(context, sources, chunks)``.
+    """
+    working_chunks: List[Dict[str, Any]] = list(chunks or [])
+    try:
+        settings = get_settings()
+        if bool(getattr(settings, "TABLE_RAG_ITERATIVE_ENABLED", True)) and user_id:
+            from app.rag.generation.iterative_evidence import run_iterative_evidence_loop
+
+            interpretation, working_chunks, _stats = run_iterative_evidence_loop(
+                question,
+                working_chunks,
+                user_id=user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+            )
+            # Rebuild context/sources so follow-up evidence reaches the answer LLM.
+            sources = _sources_from_chunks(working_chunks)
+            context = (
+                _multi_doc_prompt_prefix(document_ids, working_chunks)
+                + _format_context(working_chunks)
+            )
+        else:
+            from app.rag.generation.llm_table_reasoning import interpret_table_question
+
+            interpretation = interpret_table_question(question, working_chunks)
     except Exception as exc:
         logger.warning("Table interpretation failed: %s", exc)
-        return context, sources
+        return context, sources, working_chunks
 
     if not interpretation.is_structured_lookup:
-        return context, sources
+        return context, sources, working_chunks
 
     prefix = interpretation.prompt_prefix or ""
     if prefix:
@@ -744,7 +772,7 @@ def _apply_table_interpretation(
         sources = enriched
     elif update:
         sources = [{**update, "text": "", "filename": "", "page": 0}]
-    return context, sources
+    return context, sources, working_chunks
 
 
 _LEADING_DOSE_RE = re.compile(
@@ -1610,8 +1638,14 @@ def _generate_answer_direct(
         context = (
             _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
         )
-        context, sources = _apply_table_interpretation(
-            question, chunks, context, sources
+        context, sources, chunks = _apply_table_interpretation(
+            question,
+            chunks,
+            context,
+            sources,
+            user_id=user_id,
+            document_id=document_id,
+            document_ids=document_ids,
         )
 
     resolved = _resolve_runtime_prompts(
@@ -1819,8 +1853,14 @@ def _generate_answer_stream_direct(
         context = (
             _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
         )
-        context, sources = _apply_table_interpretation(
-            question, chunks, context, sources
+        context, sources, chunks = _apply_table_interpretation(
+            question,
+            chunks,
+            context,
+            sources,
+            user_id=user_id,
+            document_id=document_id,
+            document_ids=document_ids,
         )
         try:
             from app.rag.table_rag.telemetry import emit_table_rag_trace

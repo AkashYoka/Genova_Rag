@@ -1,0 +1,74 @@
+[
+  {
+    "doc": "trading",
+    "document_id": "3e8616b1-baaa-4648-89d6-a3669c11d35f",
+    "question": "What tables or figures are present in this document, and what do they measure?",
+    "status": 200,
+    "elapsed_s": 7.81,
+    "session_id": "ee863a02-9c95-4995-8637-9719c010de3a",
+    "ans_head": "The document excerpts provided do not contain any tables or figures. The content consists entirely of textual advice and guidelines related to rice trading strategies, market conditions, and mindset. Each section discusses various trading principles and recommendations without any visual data representations such as charts, graphs, or tabular data.\n\nKey points from the text include:\n\n- **Do not sell rice during a good harvest year** because of bearish market forecasts [Source: Trading.pdf, Page 2].\n- **Do not buy rice in a bad harvest year** due to overbought market conditions [Source: Trading",
+    "mentions_insufficient": false,
+    "has_citation_or_page": true,
+    "error": null
+  },
+  {
+    "doc": "trading",
+    "document_id": "3e8616b1-baaa-4648-89d6-a3669c11d35f",
+    "question": "Extract one concrete numeric value from a table, including units and page if available.",
+    "status": 200,
+    "elapsed_s": 4.83,
+    "session_id": "ee863a02-9c95-4995-8637-9719c010de3a",
+    "ans_head": "I don't see any tables in the provided document context. The content consists of text passages discussing trading strategies, market observations, and rice price behaviors, but there are no tables present from which to extract a numeric value.\n\nIf you have a specific table in mind or additional pages that might contain tabular data, please provide them for analysis.",
+    "mentions_insufficient": false,
+    "has_citation_or_page": true,
+    "error": null
+  },
+  {
+    "doc": "research",
+    "document_id": "14d09766-cb93-4f4e-9232-27c75b42a971",
+    "question": "Summarize a key quantitative finding from a table or results section with citations.",
+    "status": 200,
+    "elapsed_s": 5.91,
+    "session_id": "ce7105c3-63e3-432c-acec-855d6c1c3d37",
+    "ans_head": "The provided document context does not contain any tables or results sections with quantitative findings. The text focuses on describing methodologies, challenges, and concepts related to GraphRAG, knowledge organization, and retrieval techniques, but does not present any numerical results or data tables.\n\nKey points from the context include:\n\n- **GraphRAG Overview**: GraphRAG is presented as a paradigm that addresses limitations of traditional Retrieval-Augmented Generation (RAG) by using graph-structured knowledge representation, efficient graph-based retrieval, and structure-aware knowledge",
+    "mentions_insufficient": true,
+    "has_citation_or_page": true,
+    "error": null
+  },
+  {
+    "doc": "research",
+    "document_id": "14d09766-cb93-4f4e-9232-27c75b42a971",
+    "question": "If the document lacks enough evidence for a specific medical dosage recommendation, say so explicitly.",
+    "status": 200,
+    "elapsed_s": 7.26,
+    "session_id": "ce7105c3-63e3-432c-acec-855d6c1c3d37",
+    "ans_head": "The provided document excerpts do not contain any specific medical dosage recommendations or information related to medical treatments. The content primarily focuses on the **Graph Retrieval-Augmented Generation (GraphRAG)** framework, its applications across various domains (including biomedical and medical contexts), and its advantages over traditional RAG methods. \n\nKey points from the document regarding medical applications include:\n\n1. **GraphRAG in Biomedical and Medical Domains**:  \n   - GraphRAG systems are highlighted for their utility in biomedical and medical contexts due to their a",
+    "mentions_insufficient": false,
+    "has_citation_or_page": true,
+    "error": null
+  },
+  {
+    "doc": "chemistry",
+    "document_id": "59118577-e022-4b09-974f-764933e2a4cf",
+    "question": "What quantitative values or properties appear in tables? Cite page and units.",
+    "status": 200,
+    "elapsed_s": 11.54,
+    "session_id": "d9d56477-96cf-4f3b-8900-a38be8f090df",
+    "ans_head": "The document contains a table with quantitative values for the percent mass of various elements. Here are the key values and their units, cited from the document:\n\n### Table Values from **Chemistri.pdf, Page 12** (Table 1.1)\n\nThe table provides the **percent mass** of elements in the Earth's crust and atmosphere. The values are as follows:\n\n| Element Symbol | Element Name | Percent Mass (%) |\n|----------------|--------------|------------------|\n| O              | Oxygen       | **49.20**        |\n| Si             | Silicon      | 25.67            |\n| Al             | Aluminum     | 7.50       ",
+    "mentions_insufficient": false,
+    "has_citation_or_page": true,
+    "error": null
+  },
+  {
+    "doc": "algebra",
+    "document_id": "6df2ad7b-4944-4e55-96c9-f5f00374a932",
+    "question": "Is there a dosing or medical prescribing table in this document? If not, say insufficient evidence.",
+    "status": 200,
+    "elapsed_s": 5.74,
+    "session_id": "49b9e43c-16de-42ca-a59b-574228b4d9b7",
+    "ans_head": "Insufficient evidence.\n\nThe provided document excerpts focus entirely on mathematical concepts such as real numbers, exponents, order of operations, and algebraic properties. There are no references to medical dosing, prescribing tables, or any healthcare-related content [Source: AlgebraAndTrigo.pdf, Pages 1-7]. The material is purely educational in nature, aimed at teaching algebraic principles and number classification [Source: AlgebraAndTrigo.pdf, Page 1]. Therefore, no dosing or medical prescribing information can be extracted from these pages.",
+    "mentions_insufficient": true,
+    "has_citation_or_page": true,
+    "error": null
+  }
+]

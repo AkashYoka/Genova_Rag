@@ -241,6 +241,21 @@ class VerifiedCell:
                 "with a neighboring cell or another table.\n"
                 "Preserve value and units exactly as verified."
             )
+        companions = self.evidence.get("same_row_companions") or []
+        companion_lines = ""
+        if companions:
+            bits = [
+                f"{c.get('header')}: {c.get('value')}"
+                for c in companions
+                if isinstance(c, dict) and c.get("value")
+            ]
+            if bits:
+                companion_lines = (
+                    "- Same-row companions (use these exact texts for "
+                    "schedule/frequency/axis labels; do not invent from another row): "
+                    + "; ".join(bits)
+                    + "\n"
+                )
         return (
             f"{VERIFIED_BLOCK_MARKER}\n"
             "Your final answer MUST use this exact cell value. "
@@ -250,6 +265,7 @@ class VerifiedCell:
             f"- Value: {self.value}\n"
             f"- Row: {row_s}\n"
             f"- Column: {col_s}\n"
+            f"{companion_lines}"
             f"{provenance}"
             f"- Status: {self.status}\n"
             "- Coordinate verification: python_sql_hydrate\n"

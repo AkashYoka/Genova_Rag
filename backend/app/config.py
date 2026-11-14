@@ -261,6 +261,11 @@ class Settings(BaseSettings):
     # matrices (same section, different applicability) are comparable.
     TABLE_RAG_SIBLING_EXPAND: bool = True
     TABLE_RAG_SELECTOR_ENABLED: bool = True
+    # Iterative evidence retrieval: when the table analyst reports missing
+    # evidence, run targeted follow-up retrieve() rounds before answering.
+    TABLE_RAG_ITERATIVE_ENABLED: bool = True
+    TABLE_RAG_MAX_ITERATIONS: int = 2
+    TABLE_RAG_ITERATIVE_TOP_K: int = 6
     # Per-query RAG debug payload (redacted by default).
     RAG_DEBUG_ENABLED: bool = False
     RAG_DEBUG_REDACT: bool = True

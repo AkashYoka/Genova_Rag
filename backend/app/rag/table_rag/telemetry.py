@@ -36,6 +36,9 @@ class TableRagTrace:
     numeric_match: Dict[str, Any] = field(default_factory=dict)
     cell_verification: Dict[str, Any] = field(default_factory=dict)
     remaining_conflicts: List[str] = field(default_factory=list)
+    # Iterative evidence retrieval audit.
+    iteration_count: int = 0
+    retrieval_rounds: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -162,6 +165,28 @@ def record_reconcile_action(action: str) -> None:
     if trace is None:
         return
     trace.reconcile_action = str(action or "none")
+
+
+def record_iteration(
+    *,
+    round_i: int,
+    queries: Optional[List[str]] = None,
+    new_chunk_count: int = 0,
+    outcome: str = "",
+) -> None:
+    """Record one iterative evidence-retrieval round."""
+    trace = table_rag_trace_var.get()
+    if trace is None:
+        return
+    trace.iteration_count = max(int(trace.iteration_count or 0), int(round_i or 0))
+    trace.retrieval_rounds.append(
+        {
+            "round": int(round_i or 0),
+            "queries": [str(q) for q in (queries or []) if q],
+            "new_chunk_count": int(new_chunk_count or 0),
+            "outcome": str(outcome or ""),
+        }
+    )
 
 
 def emit_table_rag_trace() -> Optional[Dict[str, Any]]:

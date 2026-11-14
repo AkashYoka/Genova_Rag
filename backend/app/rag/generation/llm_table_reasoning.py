@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -55,10 +56,13 @@ Rules:
 10. If no supplied table can answer, return status="insufficient_evidence" or "not_found".
 11. Keep reasoning_summary short. Do not expose private chain-of-thought.
 12. Citations must reference supplied chunk_id / table_id / page when available.
+13. Prefer table content + footnotes + section_path over captions alone.
+14. If evidence is incomplete, also set answer_ready=false and optionally propose short additional_search_queries for missing document facts (not chain-of-thought). When evidence is sufficient, set answer_ready=true.
 
 Return JSON only (no markdown fences) matching:
 {
   "status": "answered | ambiguous | insufficient_evidence | not_found",
+  "answer_ready": true,
   "reasoning_summary": "Short explanation of table selection",
   "selected_chunks": [
     {
@@ -82,6 +86,7 @@ Return JSON only (no markdown fences) matching:
     }
   ],
   "missing_information": [],
+  "additional_search_queries": [],
   "answer": "Evidence-grounded short answer value or conclusion",
   "citations": []
 }
@@ -96,6 +101,17 @@ _AXIS_COL_RE = re.compile(
 )
 _Q_UNIT_NUM_RE = re.compile(
     r"(?i)(?P<num>\d+(?:\.\d+)?)\s*(?P<unit>[a-zA-Z%/μµ]{1,12})\b"
+)
+# Units that are grammatical/time/count words, not measurement axes.
+_AXIS_UNIT_STOP = frozenset(
+    {
+        "for", "and", "the", "with", "from", "that", "this", "which", "what",
+        "of", "in", "to", "or", "at", "by", "per", "on", "as", "an", "a",
+        "year", "years", "yr", "yrs", "week", "weeks", "day", "days",
+        "month", "months", "hour", "hours", "minute", "minutes",
+        "patient", "patients", "table", "page", "pages", "age", "ages",
+        "older", "old", "every", "times", "time", "dose", "doses",
+    }
 )
 _RANGE_IN_HEADER_RE = re.compile(
     r"(?i)(?P<lo_op>≥|=>|>=|>)?\s*(?P<lo>\d+(?:\.\d+)?)"
@@ -493,7 +509,19 @@ def _range_covers(header: str, number: float) -> Optional[bool]:
     return True
 
 
+def _is_unitless_range_header(header: str) -> bool:
+    """True when a header is a numeric range with no alphabetic unit tokens."""
+    if not _parse_range_bounds(header or ""):
+        return False
+    return re.search(r"[A-Za-z]", header or "") is None
+
+
 def _question_unit_values(question: str) -> List[Tuple[float, str]]:
+    """Extract measurement-like ``number + unit`` factors from the question.
+
+    Skips grammatical pairings (``1 for``, ``12 years``) so axis verification
+    does not treat narrative counts as table-band keys.
+    """
     out: List[Tuple[float, str]] = []
     for match in _Q_UNIT_NUM_RE.finditer(question or ""):
         try:
@@ -501,8 +529,133 @@ def _question_unit_values(question: str) -> List[Tuple[float, str]]:
         except ValueError:
             continue
         unit = match.group("unit").lower()
+        unit_root = unit.split("/")[0]
+        if unit in _AXIS_UNIT_STOP or unit_root in _AXIS_UNIT_STOP:
+            continue
         out.append((num, unit))
     return out
+
+
+def _table_axis_headers(table: Dict[str, Any]) -> List[str]:
+    headers = [str(h or "") for h in (table.get("headers") or []) if h]
+    body = table.get("rows") or table.get("body") or []
+    for row in body[:40]:
+        if isinstance(row, (list, tuple)) and row:
+            headers.append(str(row[0] or ""))
+    return headers
+
+
+def _missing_table_axis_unit(
+    question: str,
+    *,
+    selected_headers: Sequence[str],
+    table: Dict[str, Any],
+) -> Optional[str]:
+    """Reject cells that omit a unit axis present both in the question and table."""
+    factors = _question_unit_values(question)
+    if not factors or not table:
+        return None
+    selected = [str(h) for h in selected_headers if h]
+    table_headers = _table_axis_headers(table)
+    missing: List[str] = []
+    for _number, unit in factors:
+        table_has = any(
+            unit in h.lower() and _parse_range_bounds(h) for h in table_headers
+        )
+        if not table_has:
+            continue
+        if not any(unit in h.lower() for h in selected):
+            missing.append(unit)
+    if not missing:
+        return None
+    seen: set = set()
+    uniq: List[str] = []
+    for unit in missing:
+        if unit in seen:
+            continue
+        seen.add(unit)
+        uniq.append(unit)
+    return f"selected cell omits table axis unit(s) {uniq}"
+
+
+def _axis_hard_conflict(
+    question: str,
+    *,
+    row_headers: Sequence[str],
+    col_headers: Sequence[str],
+    table: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Return a conflict note when selected range headers exclude question axis values.
+
+    Domain-agnostic: uses only inequality/endpoint math on the supplied headers.
+    Unit-bearing headers are matched by unit token; remaining factors are checked
+    against unitless numeric range headers (typical row bands).
+    """
+    factors = _question_unit_values(question)
+    if not factors:
+        return None
+    headers = [str(h) for h in list(row_headers or []) + list(col_headers or []) if h]
+    if not headers:
+        return None
+
+    conflicts: List[str] = []
+    if table is not None:
+        omitted = _missing_table_axis_unit(
+            question, selected_headers=headers, table=table
+        )
+        if omitted:
+            conflicts.append(omitted)
+
+    remaining: List[Tuple[float, str]] = []
+    used: set = set()
+
+    for number, unit in factors:
+        unit_headers = [
+            h
+            for h in headers
+            if unit in h.lower() and _parse_range_bounds(h)
+        ]
+        if unit_headers:
+            if any(_range_covers(h, number) is True for h in unit_headers):
+                for h in unit_headers:
+                    if _range_covers(h, number) is True:
+                        used.add(h)
+                        break
+            elif any(_range_covers(h, number) is False for h in unit_headers):
+                conflicts.append(
+                    f"{number:g} {unit} excluded by selected header(s) "
+                    f"{unit_headers}"
+                )
+            continue
+        remaining.append((number, unit))
+
+    unitless = [
+        h
+        for h in headers
+        if h not in used and _is_unitless_range_header(h)
+    ]
+    # Unitless row/axis bands (e.g. ">300-400") must cover at least one
+    # remaining measurement factor. Extra value-like amounts (prescribed mg,
+    # prices) that do not fit the band are ignored when another factor does.
+    if unitless and remaining:
+        covered = [
+            (number, unit)
+            for number, unit in remaining
+            if any(_range_covers(h, number) is True for h in unitless)
+        ]
+        if not covered:
+            excluded = [
+                f"{number:g} {unit}"
+                for number, unit in remaining
+                if any(_range_covers(h, number) is False for h in unitless)
+            ]
+            if excluded:
+                conflicts.append(
+                    f"unitless range header(s) {unitless} exclude remaining "
+                    f"axis factor(s) {excluded}"
+                )
+
+    return "; ".join(conflicts) if conflicts else None
 
 
 def _axis_consistency_bonus(
@@ -512,6 +665,10 @@ def _axis_consistency_bonus(
     col_headers: Sequence[str],
 ) -> int:
     """Reward headers that cover the question's unit-bearing numbers; penalize misses."""
+    if _axis_hard_conflict(
+        question, row_headers=row_headers, col_headers=col_headers
+    ):
+        return -120
     factors = _question_unit_values(question)
     if not factors:
         return 0
@@ -520,27 +677,75 @@ def _axis_consistency_bonus(
         return 0
     bonus = 0
     for number, unit in factors:
-        unit_headers = [h for h in headers if unit in h.lower()]
-        # Also allow bare numeric range headers when unit appears nearby in header path.
+        unit_headers = [
+            h for h in headers if unit in h.lower() and _parse_range_bounds(h)
+        ]
         if not unit_headers:
-            unit_headers = [
-                h
-                for h in headers
-                if _parse_range_bounds(h) and re.search(r"\d", h)
-            ]
+            unit_headers = [h for h in headers if _is_unitless_range_header(h)]
         matched = False
         conflict = False
         for header in unit_headers:
             covers = _range_covers(header, number)
             if covers is True:
                 matched = True
-            elif covers is False and unit in header.lower():
+            elif covers is False:
                 conflict = True
         if matched:
             bonus += 40
         elif conflict:
             bonus -= 80
     return bonus
+
+
+def _axis_coverage_hints(
+    question: str, candidates: Sequence[Dict[str, Any]]
+) -> str:
+    """List which supplied range headers cover each unit-bearing question factor."""
+    factors = _question_unit_values(question)
+    if not factors or not candidates:
+        return ""
+    lines: List[str] = []
+    for item in candidates[:8]:
+        table = item.get("table") or {}
+        tid = str(item.get("table_id") or table.get("table_id") or "")
+        headers = [str(h or "") for h in (table.get("headers") or []) if h]
+        # Include first-column row labels (common axis bands).
+        body = table.get("rows") or table.get("body") or []
+        row_labels: List[str] = []
+        for row in body[:24]:
+            if isinstance(row, (list, tuple)) and row:
+                row_labels.append(str(row[0] or ""))
+        axis_headers = headers + row_labels
+        per_factor: List[str] = []
+        for number, unit in factors:
+            covering = [
+                h
+                for h in axis_headers
+                if _parse_range_bounds(h) and _range_covers(h, number) is True
+            ]
+            unit_cover = [h for h in covering if unit in h.lower()]
+            unitless_cover = [h for h in covering if _is_unitless_range_header(h)]
+            chosen = unit_cover or unitless_cover or covering
+            seen: set = set()
+            chosen_u: List[str] = []
+            for h in chosen:
+                if h in seen:
+                    continue
+                seen.add(h)
+                chosen_u.append(h)
+            per_factor.append(
+                f"{number:g} {unit} → {chosen_u[:6] or ['(no covering range header)']}"
+            )
+        if per_factor:
+            lines.append(f"- {tid}: " + "; ".join(per_factor))
+    if not lines:
+        return ""
+    return (
+        "Axis coverage (honor inequality symbols; pick headers that cover "
+        "each question factor):\n"
+        + "\n".join(lines)
+        + "\n\n"
+    )
 
 
 def _caption_overlap_hints(
@@ -805,6 +1010,35 @@ def _score_verified_evidence(
     return score
 
 
+def _same_row_companions(
+    table: Dict[str, Any],
+    row_index: int,
+    col_index: int,
+) -> List[Dict[str, str]]:
+    """Collect non-empty same-row cells that look like schedule/axis companions."""
+    headers = [str(h or "") for h in (table.get("headers") or [])]
+    rows = table.get("rows") or []
+    if not (0 <= row_index < len(rows)):
+        return []
+    row = rows[row_index]
+    if not isinstance(row, (list, tuple)):
+        return []
+    out: List[Dict[str, str]] = []
+    for c_i, cell in enumerate(row):
+        if c_i == col_index:
+            continue
+        text = str(cell if cell is not None else "").strip()
+        if not text:
+            continue
+        header = headers[c_i] if c_i < len(headers) else f"col_{c_i}"
+        blob = f"{header} {text}"
+        if _AXIS_COL_RE.search(blob) or re.search(
+            r"(?i)\b(every|weekly|daily|monthly|quarterly|annually)\b", text
+        ):
+            out.append({"header": header, "value": text})
+    return out[:4]
+
+
 def _build_verified_cell(
     ev: Dict[str, Any],
     *,
@@ -833,6 +1067,7 @@ def _build_verified_cell(
         page_i = int(page) if page is not None else None
     except (TypeError, ValueError):
         page_i = None
+    companions = _same_row_companions(table, row_index, col_index)
     return VerifiedCell(
         value=value,
         row_headers=row_headers,
@@ -852,6 +1087,7 @@ def _build_verified_cell(
             "reasoning_summary": str(payload.get("reasoning_summary") or ""),
             "unit": str(ev.get("unit") or ""),
             "source_context": str(ev.get("source_context") or ""),
+            "same_row_companions": companions,
         },
         status=STATUS_MATCHED,
         table_id=table_id,
@@ -894,6 +1130,27 @@ def _try_verify_evidence_item(
         if not found:
             return None
         r_i, c_i, value = found
+
+    # Axis checks use grid headers from coordinates (authoritative), not only
+    # the LLM's free-text row/column_reference which can misstate the band.
+    grid_row_headers, grid_col_headers = _headers_for(table, r_i, c_i)
+    conflict = _axis_hard_conflict(
+        question,
+        row_headers=grid_row_headers,
+        col_headers=grid_col_headers,
+        table=table,
+    )
+    if conflict:
+        logger.info(
+            "Rejecting table evidence for axis conflict table=%s value=%s "
+            "row=%s col=%s detail=%s",
+            table_id or (item.get("table_id")),
+            value,
+            grid_row_headers,
+            grid_col_headers,
+            conflict,
+        )
+        return None
 
     verified = _build_verified_cell(
         ev,
@@ -1016,6 +1273,7 @@ def reason_over_tables(
     *,
     client: Any = None,
     settings: Any = None,
+    feedback: str = "",
 ) -> Dict[str, Any]:
     """Call the LLM for structured table selection/extraction."""
     settings = settings or get_settings()
@@ -1052,16 +1310,26 @@ def reason_over_tables(
         # Surrounding prose / footnotes from the retrieved chunk when present.
         preview = str(chunk.get("text") or "").strip()
         if preview:
-            rendered = f"{rendered}\n\nchunk_text_preview:\n{preview[:1200]}"
+            preview_cap = 800 if len(ranked) >= 6 else 1200
+            rendered = (
+                f"{rendered}\n\nchunk_text_preview:\n{preview[:preview_cap]}"
+            )
         blocks.append(rendered)
 
     overlap = _caption_overlap_hints(question, ranked)
+    axis_hints = _axis_coverage_hints(question, ranked)
+    feedback_block = (
+        f"Prior selection rejected:\n{feedback.strip()}\n\n" if feedback.strip() else ""
+    )
     user_prompt = (
         f"User question:\n{(question or '').strip()}\n\n"
         "Compare sibling tables using caption, purpose, applicability, "
         "section_path, and footnotes before extracting a cell. "
-        "Honor range-boundary symbols when matching axis factors.\n\n"
+        "Honor range-boundary symbols when matching axis factors. "
+        "Never select a range header that excludes a question axis value.\n\n"
+        f"{feedback_block}"
         f"{overlap}"
+        f"{axis_hints}"
         f"Candidate tables ({len(blocks)}):\n\n"
         + "\n\n-----\n\n".join(blocks)
     )
@@ -1079,6 +1347,8 @@ def reason_over_tables(
                 "selected_chunks": [],
                 "selected_evidence": [],
                 "missing_information": [],
+                "additional_search_queries": [],
+                "answer_ready": False,
                 "answer": "",
                 "citations": [],
             }
@@ -1090,14 +1360,14 @@ def reason_over_tables(
     except Exception:
         model = getattr(settings, "LLM_MODEL", None)
 
-    try:
+    def _call_selector(prompt: str, *, max_tokens: int) -> Dict[str, Any]:
         response = client.chat_completion(
             messages=[
                 {"role": "system", "content": TABLE_REASONING_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": prompt},
             ],
             model=model,
-            max_tokens=1200,
+            max_tokens=max_tokens,
             temperature=0.0,
             stream=False,
         )
@@ -1106,17 +1376,64 @@ def reason_over_tables(
             content = response.choices[0].message.content or ""
         except Exception:
             content = ""
-        parsed = _extract_json(content)
-        if not isinstance(parsed, dict):
-            return {
+        parsed_local = _extract_json(content)
+        return parsed_local if isinstance(parsed_local, dict) else {}
+
+    started = time.perf_counter()
+    try:
+        parsed = _call_selector(user_prompt, max_tokens=1200)
+        # One compact retry when the first response is truncated/non-JSON.
+        if not parsed:
+            compact_blocks = []
+            for item in ranked[:6]:
+                table = item.get("table") or {}
+                chunk = item.get("chunk") or {}
+                record = {
+                    "table_id": item.get("table_id") or table.get("table_id"),
+                    "table": table,
+                    "pages": table.get("pages")
+                    or chunk.get("pages")
+                    or [table.get("page") or chunk.get("page")],
+                    "section": chunk.get("section") or table.get("section") or "",
+                    "caption": table.get("caption") or chunk.get("caption") or "",
+                    "chunk_id": chunk.get("chunk_id") or chunk.get("id") or "",
+                }
+                rendered = render_indexed_table_for_selector(record)
+                compact_blocks.append(rendered)
+            compact_prompt = (
+                f"User question:\n{(question or '').strip()}\n\n"
+                "Return JSON only. Prefer exact [row_idx,col_idx] cells.\n\n"
+                f"Candidate tables ({len(compact_blocks)}):\n\n"
+                + "\n\n-----\n\n".join(compact_blocks)
+            )
+            parsed = _call_selector(compact_prompt, max_tokens=1200)
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        if not parsed:
+            parsed = {
                 "status": "insufficient_evidence",
                 "reasoning_summary": "selector_parse_failed",
                 "selected_chunks": [],
                 "selected_evidence": [],
                 "missing_information": [],
+                "additional_search_queries": [],
+                "answer_ready": False,
                 "answer": "",
                 "citations": [],
             }
+        try:
+            from app.rag.table_rag.telemetry import record_selector_metrics
+
+            record_selector_metrics(
+                status=str(parsed.get("status") or ""),
+                latency_ms=latency_ms,
+                candidate_table_ids=[
+                    str(item.get("table_id") or "")
+                    for item in ranked
+                    if item.get("table_id")
+                ],
+            )
+        except Exception:
+            pass
         return parsed
     except Exception as exc:
         logger.warning("Table reasoning LLM call failed: %s", exc)
@@ -1126,6 +1443,8 @@ def reason_over_tables(
             "selected_chunks": [],
             "selected_evidence": [],
             "missing_information": [],
+            "additional_search_queries": [],
+            "answer_ready": False,
             "answer": "",
             "citations": [],
         }
@@ -1212,6 +1531,60 @@ def interpret_table_question(
     if isinstance(payload, dict):
         payload.setdefault("question", q)
     outcome = verify_llm_evidence(payload, candidates, question=q)
+
+    # One corrective selector pass when the first pick fails axis-boundary math.
+    if isinstance(outcome, InsufficientEvidence) and isinstance(payload, dict):
+        conflict_notes: List[str] = []
+        by_id = _candidate_index(candidates)
+        for ev in list(payload.get("selected_evidence") or []):
+            item = by_id.get(str(ev.get("table_id") or "")) or by_id.get(
+                str(ev.get("chunk_id") or "")
+            )
+            if not item:
+                continue
+            table = item.get("table") or {}
+            r_i, c_i = ev.get("row_index"), ev.get("col_index")
+            row_headers, col_headers = [], []
+            try:
+                if r_i is not None and c_i is not None:
+                    row_headers, col_headers = _headers_for(
+                        table, int(r_i), int(c_i)
+                    )
+            except Exception:
+                row_headers, col_headers = [], []
+            note = _axis_hard_conflict(
+                q,
+                row_headers=row_headers,
+                col_headers=col_headers,
+                table=table,
+            )
+            if note:
+                conflict_notes.append(
+                    f"table={ev.get('table_id')} value={ev.get('value')}: {note}"
+                )
+        if conflict_notes:
+            retry_payload = reason_over_tables(
+                q,
+                candidates,
+                client=client,
+                settings=settings,
+                feedback=(
+                    "Selected range headers excluded question axis values. "
+                    "Re-select cells whose row/column range headers cover every "
+                    "unit-bearing factor.\n" + "\n".join(conflict_notes[:6])
+                ),
+            )
+            if isinstance(retry_payload, dict):
+                retry_payload.setdefault("question", q)
+                retry_outcome = verify_llm_evidence(
+                    retry_payload, candidates, question=q
+                )
+                if isinstance(retry_outcome, VerifiedCell) or (
+                    isinstance(retry_outcome, InsufficientEvidence)
+                    and retry_outcome.status != STATUS_VERIFICATION_FAILED
+                ):
+                    payload = retry_payload
+                    outcome = retry_outcome
 
     return _result_from_outcome(
         outcome,

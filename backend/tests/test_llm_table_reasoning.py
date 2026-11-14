@@ -215,6 +215,87 @@ def test_verify_llm_evidence_rejects_hallucinated_value():
     assert out.status == STATUS_VERIFICATION_FAILED
 
 
+def test_verify_rejects_range_header_that_excludes_question_axis():
+    """Fail closed when selected band endpoints exclude a unit-bearing factor."""
+    chunk = {
+        "chunk_id": "c_range",
+        "filename": "spec.pdf",
+        "page": 5,
+        "chunk_type": "table",
+        "table_id": "t_range",
+        "caption": "Table 1. Lookup by mass and grade",
+        "score": 0.9,
+        "table": {
+            "table_id": "t_range",
+            "caption": "Table 1. Lookup by mass and grade",
+            "page": 5,
+            "headers": ["Grade", ">60-70 kg", ">70-90 kg"],
+            "rows": [
+                [">200-300", "225", "225"],
+                [">300-400", "225", "300"],
+            ],
+        },
+        "text": "lookup",
+    }
+    cands = collect_table_candidates([chunk])
+    # Wrong weight band for 78 kg (">60-70 kg" excludes 78).
+    payload = {
+        "status": "answered",
+        "answer": "225",
+        "question": "Value for grade 350 IU/mL at 78 kg?",
+        "selected_evidence": [
+            {
+                "table_id": "t_range",
+                "chunk_id": "c_range",
+                "row_index": 1,
+                "col_index": 1,
+                "row_reference": ">300-400",
+                "column_reference": ">60-70 kg",
+                "value": "225",
+            }
+        ],
+    }
+    out = verify_llm_evidence(payload, cands, question=payload["question"])
+    assert out.status == STATUS_VERIFICATION_FAILED
+
+    # Correct band for 78 kg.
+    payload["selected_evidence"][0]["col_index"] = 2
+    payload["selected_evidence"][0]["column_reference"] = ">70-90 kg"
+    payload["selected_evidence"][0]["value"] = "300"
+    payload["answer"] = "300"
+    out_ok = verify_llm_evidence(payload, cands, question=payload["question"])
+    assert isinstance(out_ok, VerifiedCell)
+    assert out_ok.value == "300"
+
+
+def test_verify_rejects_exclusive_lower_bound_miss():
+    """Exclusive lower bounds like '>300-400' must not accept the endpoint 300."""
+    from app.rag.generation.llm_table_reasoning import (
+        _axis_hard_conflict,
+        _range_covers,
+    )
+
+    assert _range_covers(">300-400", 300.0) is False
+    assert _range_covers(">200-300", 300.0) is True
+    assert _range_covers(">70-90 kg", 78.0) is True
+    assert _range_covers(">60-70 kg", 78.0) is False
+    conflict = _axis_hard_conflict(
+        "IgE 300 IU/mL weight 70 kg",
+        row_headers=[">300-400"],
+        col_headers=[">60-70 kg"],
+    )
+    assert conflict
+    assert "300" in conflict
+
+    # Prescribed comparator amounts must not poison a covering axis band.
+    ok = _axis_hard_conflict(
+        "Adult 80 kg, IgE 250 IU/mL prescribed 75 mg",
+        row_headers=[">200-300"],
+        col_headers=[">70-90 kg"],
+    )
+    assert ok is None
+
+
 def test_verify_llm_evidence_ambiguous():
     cands = collect_table_candidates([_finance_chunk(), _engineering_chunk()])
     payload = {
