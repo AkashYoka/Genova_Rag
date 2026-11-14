@@ -290,7 +290,7 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             pct = 70 + int((stored / total) * 20)
             _update_progress(document_id, min(pct, 90), "embedding")
 
-        chunk_count = store_chunks(
+        indexed_chunk_count = store_chunks(
             chunks=store_chunk_list,
             document_id=document_id,
             filename=original_name,
@@ -298,7 +298,9 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
             on_progress=_on_embed_progress,
         )
 
-        # Navigation hierarchy uses content chunks only (not TableRAG index rows).
+        # Document/navigation chunks only — exclude TableRAG retrieval index rows
+        # (table_card / row windows). UI ``chunk_count`` should match what users
+        # browse in the hierarchy, not the inflated Chroma/BM25 total.
         hierarchy_chunks = [
             c
             for c in store_chunk_list
@@ -311,6 +313,7 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
                 "table_row_window",
             )
         ]
+        chunk_count = len(hierarchy_chunks)
 
         # ── Hierarchical navigation index ──────────────────────────────────
         # Chroma/BM25 remain the retrieval stores. These rows power the
@@ -427,10 +430,11 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         db.commit()
 
         logger.info(
-            "Document %s ingested: %s pages, %s chunks",
+            "Document %s ingested: %s pages, %s document chunks (%s indexed)",
             document_id,
             page_count,
             chunk_count,
+            indexed_chunk_count,
         )
 
     except Exception as e:
