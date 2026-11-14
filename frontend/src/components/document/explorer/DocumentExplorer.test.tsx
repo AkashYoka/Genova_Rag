@@ -44,8 +44,11 @@ vi.mock("@xyflow/react", () => {
     useReactFlow: () => ({
       fitView: vi.fn(() => Promise.resolve()),
       setViewport: vi.fn(() => Promise.resolve()),
+      setCenter: vi.fn(() => Promise.resolve()),
       getViewport: () => ({ x: 0, y: 0, zoom: 0.85 }),
+      getNodes: () => [],
     }),
+    useViewport: () => ({ x: 0, y: 0, zoom: 0.85 }),
   };
 });
 

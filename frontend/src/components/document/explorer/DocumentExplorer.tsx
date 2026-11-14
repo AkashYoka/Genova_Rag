@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -35,6 +35,11 @@ import {
   findSectionPath,
   flattenSections,
 } from "@/lib/document-hierarchy";
+import {
+  collectExpandableSectionIds,
+  type SectionChunksLoading,
+  type SectionChunksMap,
+} from "@/lib/hierarchy-tree-model";
 import { queueDocChat } from "@/lib/chat-attachments";
 import type {
   ContentsViewMode,
@@ -57,20 +62,6 @@ interface DocumentExplorerProps {
   documentId: string;
   fallbackName?: string;
   pageCount?: number;
-}
-
-function collectExpandableIds(sections: SectionTreeNode[]): string[] {
-  const ids: string[] = [];
-  const walk = (nodes: SectionTreeNode[]) => {
-    for (const node of nodes) {
-      if (node.children?.length) {
-        ids.push(node.section_id);
-        walk(node.children);
-      }
-    }
-  };
-  walk(sections);
-  return ids;
 }
 
 export function DocumentExplorer({
@@ -99,6 +90,15 @@ export function DocumentExplorer({
   const [loadingRelated, setLoadingRelated] = useState(false);
   const [chunksError, setChunksError] = useState<string | null>(null);
   const [relatedError, setRelatedError] = useState<string | null>(null);
+  const [chunksBySection, setChunksBySection] = useState<SectionChunksMap>({});
+  const [loadingBySection, setLoadingBySection] =
+    useState<SectionChunksLoading>({});
+  const chunksBySectionRef = useRef<SectionChunksMap>({});
+  const chunkFetchInflight = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    chunksBySectionRef.current = chunksBySection;
+  }, [chunksBySection]);
 
   const loadRoot = useCallback(
     async (opts?: { bustCache?: boolean }) => {
@@ -136,18 +136,64 @@ export function DocumentExplorer({
     void loadRoot();
   }, [loadRoot]);
 
-  // Seed Tree map with top-level parents expanded for a useful first view.
+  // Tree starts fully collapsed (document → top-level sections only).
+
+  // Lazily load section chunks for expanded branches (paragraph/table leaves).
   useEffect(() => {
-    if (!hierarchy?.sections?.length) return;
-    setExpandedIds((prev) => {
-      if (prev.size > 0) return prev;
-      return new Set(
-        hierarchy.sections
-          .filter((section) => (section.children?.length ?? 0) > 0)
-          .map((section) => section.section_id),
-      );
+    if (!hierarchy) return;
+    let cancelled = false;
+    const pending = [...expandedIds].filter((sectionId) => {
+      const section = findSectionById(hierarchy.sections, sectionId);
+      if (!section) return false;
+      if ((section.chunk_count ?? 0) <= 0 && (section.tables?.length ?? 0) <= 0) {
+        return false;
+      }
+      if (chunksBySectionRef.current[sectionId] !== undefined) return false;
+      if (chunkFetchInflight.current.has(sectionId)) return false;
+      return true;
     });
-  }, [hierarchy]);
+    if (!pending.length) return;
+
+    for (const id of pending) chunkFetchInflight.current.add(id);
+    setLoadingBySection((prev) => {
+      const next = { ...prev };
+      for (const id of pending) next[id] = true;
+      return next;
+    });
+
+    void Promise.all(
+      pending.map(async (sectionId) => {
+        try {
+          const resp = await fetchSectionChunks(documentId, sectionId, {
+            includeContent: true,
+            limit: 500,
+          });
+          if (cancelled) return;
+          setChunksBySection((prev) => ({
+            ...prev,
+            [sectionId]: resp.chunks ?? [],
+          }));
+        } catch {
+          if (cancelled) return;
+          setChunksBySection((prev) => ({
+            ...prev,
+            [sectionId]: [],
+          }));
+        } finally {
+          chunkFetchInflight.current.delete(sectionId);
+          if (cancelled) return;
+          setLoadingBySection((prev) => ({
+            ...prev,
+            [sectionId]: false,
+          }));
+        }
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hierarchy, expandedIds, documentId]);
 
   const flatSections = useMemo(
     () => (hierarchy ? flattenSections(hierarchy.sections) : []),
@@ -185,9 +231,15 @@ export function DocumentExplorer({
       return;
     }
 
+    const cached = chunksBySectionRef.current[selectedSectionId];
+    if (cached) {
+      setChunks(cached);
+      setLoadingChunks(false);
+    }
+
     let cancelled = false;
     const run = async () => {
-      setLoadingChunks(true);
+      if (!cached) setLoadingChunks(true);
       setLoadingRelated(true);
       setChunksError(null);
       setRelatedError(null);
@@ -198,12 +250,17 @@ export function DocumentExplorer({
           fetchRelatedSections(documentId, selectedSectionId),
         ]);
         if (cancelled) return;
-        setChunks(chunkResp.chunks ?? []);
+        const loaded = chunkResp.chunks ?? [];
+        setChunks(loaded);
+        setChunksBySection((prev) => ({
+          ...prev,
+          [selectedSectionId]: loaded,
+        }));
         setSectionTables(tableResp?.tables ?? selectedSection?.tables ?? []);
         setRelated(relatedResp);
       } catch (err) {
         if (cancelled) return;
-        setChunks([]);
+        if (!cached) setChunks([]);
         setRelated(null);
         const message =
           err instanceof Error ? err.message : "Failed to load section details.";
@@ -266,13 +323,29 @@ export function DocumentExplorer({
     });
   };
 
-  const selectChunk = (chunkId: string) => {
-    if (!selectedSectionId) return;
+  const selectChunk = (chunkId: string, sectionId?: string) => {
+    const targetSection = sectionId || selectedSectionId;
+    if (!targetSection) return;
     if (!chunkId) {
-      setSelection({ kind: "section", sectionId: selectedSectionId });
+      setSelection({ kind: "section", sectionId: targetSection });
       return;
     }
-    setSelection({ kind: "chunk", sectionId: selectedSectionId, chunkId });
+    setSelection({ kind: "chunk", sectionId: targetSection, chunkId });
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (hierarchy) {
+        for (const node of findSectionPath(hierarchy.sections, targetSection)) {
+          next.add(node.section_id);
+        }
+      } else {
+        next.add(targetSection);
+      }
+      return next;
+    });
+  };
+
+  const selectTreeChunk = (sectionId: string, chunkId: string) => {
+    selectChunk(chunkId, sectionId);
   };
 
   const openInChat = () => {
@@ -336,7 +409,7 @@ export function DocumentExplorer({
       loadingRelated={loadingRelated}
       chunksError={chunksError}
       relatedError={relatedError}
-      onSelectChunk={selectChunk}
+      onSelectChunk={(chunkId) => selectChunk(chunkId)}
       onSelectSection={selectSection}
       onBackToContents={() => setSelection({ kind: "document" })}
       onBackToParent={
@@ -453,22 +526,30 @@ export function DocumentExplorer({
         <div className="relative min-h-0 flex-1 bg-[var(--gd-surface)]">
           <HierarchyTreeMap
             documentName={documentName}
+            pageCount={resolvedPageCount}
             partCount={hierarchy.section_count}
             sections={hierarchy.sections}
-            flatSections={flatSections}
             expandedIds={expandedIds}
             selectedSectionId={selectedSectionId}
+            selectedChunkId={
+              selection.kind === "chunk" ? selection.chunkId : null
+            }
+            chunksBySection={chunksBySection}
+            loadingBySection={loadingBySection}
             onToggleExpand={onToggleExpand}
             onSelectSection={selectSection}
+            onSelectChunk={selectTreeChunk}
             onExpandAll={() =>
-              setExpandedIds(new Set(collectExpandableIds(hierarchy.sections)))
+              setExpandedIds(
+                new Set(collectExpandableSectionIds(hierarchy.sections)),
+              )
             }
             onCollapseAll={() => setExpandedIds(new Set())}
           />
           {!selectedSection ? (
             <div className="pointer-events-none absolute bottom-4 left-4 z-10 max-w-sm rounded-xl border border-[var(--gd-border)] bg-[var(--gd-surface)]/95 px-3 py-2 text-[11px] text-[var(--gd-muted)] shadow-sm backdrop-blur-sm">
-              Click a part to read summary, source text, tables, and related
-              sections.
+              Expand a section to browse paragraphs and tables in the tree.
+              Click any node for details.
             </div>
           ) : null}
         </div>

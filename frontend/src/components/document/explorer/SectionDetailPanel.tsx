@@ -50,8 +50,9 @@ function ChunkReader({
         Back to part
       </Button>
       <div className="text-xs text-[var(--gd-muted)]">
-        Source text · chunk #{chunk.chunk_index}
-        {chunk.chunk_type ? ` · ${chunk.chunk_type}` : ""}
+        {String(chunk.chunk_type || "").toLowerCase().includes("table")
+          ? "Table"
+          : "Paragraph"}
         {page ? ` · ${page}` : ""}
       </div>
       <pre className="max-h-[min(64vh,640px)] overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] p-5 font-[family-name:var(--font-geist-mono),ui-monospace,monospace] text-[13px] leading-relaxed text-[var(--gd-text)]">
@@ -173,6 +174,9 @@ export function SectionDetailPanel({
                 chunk.page_start,
                 chunk.page_end,
               );
+              const isTable = String(chunk.chunk_type || "")
+                .toLowerCase()
+                .includes("table");
               return (
                 <button
                   key={chunk.chunk_id}
@@ -181,8 +185,7 @@ export function SectionDetailPanel({
                   className="w-full rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] px-4 py-3 text-left transition-colors hover:border-[var(--gd-accent)] cursor-pointer"
                 >
                   <div className="mb-1.5 flex flex-wrap gap-2 text-[11px] text-[var(--gd-muted)]">
-                    <span>Chunk #{chunk.chunk_index}</span>
-                    {chunk.chunk_type ? <span>{chunk.chunk_type}</span> : null}
+                    <span>{isTable ? "Table" : "Paragraph"}</span>
                     {chunkPage ? <span>{chunkPage}</span> : null}
                   </div>
                   <p className="line-clamp-4 text-sm leading-relaxed text-[var(--gd-text)]">

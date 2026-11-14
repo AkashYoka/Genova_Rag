@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
   Background,
@@ -20,6 +21,7 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useViewport,
   type Edge,
   type Node,
   type NodeProps,
@@ -28,12 +30,15 @@ import "@xyflow/react/dist/style.css";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
 import {
-  formatPageRange,
-  sectionSignalChips,
-} from "@/lib/document-hierarchy";
+  buildEnrichedTree,
+  countVisibleNodes,
+  type EnrichedTreeNode,
+  type SectionChunksLoading,
+  type SectionChunksMap,
+  type TreeNodeKind,
+} from "@/lib/hierarchy-tree-model";
 import type { SectionTreeNode } from "@/types/document-hierarchy";
 
-/** Map xyflow chrome to Genova desk tokens (light + dark). */
 const FLOW_THEME_VARS = {
   "--xy-background-color": "var(--gd-ground)",
   "--xy-edge-stroke-default": "var(--gd-border)",
@@ -53,24 +58,30 @@ const FLOW_THEME_VARS = {
 } as CSSProperties;
 
 const ROOT_ID = "__doc_root__";
-const NODE_W = 260;
-const NODE_H = 104;
-/** Horizontal gap between sibling branches (vertical tree). */
-const GAP_X = 28;
-/** Vertical gap between depth levels. */
-const GAP_Y = 56;
-const PAD = 32;
-/** Keep the map readable — never shrink below this on fit. */
-const FIT_MIN_ZOOM = 0.55;
-const FIT_MAX_ZOOM = 1.15;
+const NODE_W = 268;
+const GAP_X = 26;
+const GAP_Y = 44;
+const PAD = 36;
 
-type PartNodeData = {
-  kind: "root" | "section";
+function nodeHeight(kind: TreeNodeKind): number {
+  if (kind === "document") return 88;
+  if (kind === "table") return 128;
+  if (kind === "paragraph") return 118;
+  if (kind === "loading") return 64;
+  return 108;
+}
+
+type MapNodeData = {
+  kind: TreeNodeKind;
   title: string;
   subtitle?: string;
   pageLabel?: string | null;
-  partIndex?: number;
-  chips?: string[];
+  preview?: string;
+  tableHeaders?: string[];
+  tableShape?: string;
+  childCount?: number;
+  sectionId?: string;
+  chunkId?: string;
   selected?: boolean;
   hasChildren?: boolean;
   expanded?: boolean;
@@ -78,139 +89,197 @@ type PartNodeData = {
   onToggleExpand?: () => void;
 };
 
-type PartNode = Node<PartNodeData, "part">;
+type MapNode = Node<MapNodeData, "docPart">;
 
-/** Top-down tree: depth grows downward, siblings fan left→right. */
-function buildGraph(opts: {
-  documentName: string;
-  partCount: number;
-  sections: SectionTreeNode[];
-  flatIndex: Map<string, number>;
-  expandedIds: Set<string>;
-  selectedSectionId: string | null;
-  onSelectSection: (sectionId: string) => void;
-  onToggleExpand: (sectionId: string) => void;
-}): { nodes: PartNode[]; edges: Edge[] } {
-  const {
-    documentName,
-    partCount,
-    sections,
-    flatIndex,
-    expandedIds,
-    selectedSectionId,
-    onSelectSection,
-    onToggleExpand,
-  } = opts;
+type TreeSelection =
+  | { kind: "section"; sectionId: string }
+  | { kind: "chunk"; sectionId: string; chunkId: string };
 
-  const nodes: PartNode[] = [];
+function layoutTree(
+  root: EnrichedTreeNode,
+  opts: {
+    expandedIds: Set<string>;
+    selected: TreeSelection | null;
+    onSelect: (selection: TreeSelection) => void;
+    onToggleExpand: (sectionId: string) => void;
+  },
+): { nodes: MapNode[]; edges: Edge[] } {
+  const nodes: MapNode[] = [];
   const edges: Edge[] = [];
   let nextLeafX = PAD;
+  const depthMaxHeight = new Map<number, number>();
 
-  const layoutSection = (
-    node: SectionTreeNode,
-    parentId: string,
+  const selectedId =
+    opts.selected?.kind === "chunk"
+      ? `chunk:${opts.selected.chunkId}`
+      : opts.selected?.kind === "section"
+        ? opts.selected.sectionId
+        : null;
+
+  const measure = (node: EnrichedTreeNode, depth: number) => {
+    const height = nodeHeight(node.kind);
+    depthMaxHeight.set(
+      depth,
+      Math.max(depthMaxHeight.get(depth) ?? 0, height),
+    );
+    for (const child of node.children) measure(child, depth + 1);
+  };
+  measure(root, 0);
+
+  const depthY = (depth: number): number => {
+    let y = PAD;
+    for (let d = 0; d < depth; d += 1) {
+      y += (depthMaxHeight.get(d) ?? nodeHeight("section")) + GAP_Y;
+    }
+    return y;
+  };
+
+  const walk = (
+    node: EnrichedTreeNode,
+    parentId: string | null,
     depth: number,
   ): { x: number } => {
-    const children = node.children ?? [];
-    const expanded = expandedIds.has(node.section_id);
-    const visibleChildren =
-      children.length && expanded ? children : ([] as SectionTreeNode[]);
-
+    const height = nodeHeight(node.kind);
+    const visibleChildren = node.children;
     let x: number;
+
     if (visibleChildren.length === 0) {
       x = nextLeafX;
       nextLeafX += NODE_W + GAP_X;
     } else {
-      const childXs = visibleChildren.map((child) =>
-        layoutSection(child, node.section_id, depth + 1).x,
+      const childXs = visibleChildren.map(
+        (child) => walk(child, node.id, depth + 1).x,
       );
       x = (childXs[0] + childXs[childXs.length - 1]) / 2;
     }
 
-    const chips = sectionSignalChips(node).slice(0, 2);
-    const partIndex = (flatIndex.get(node.section_id) ?? 0) + 1;
+    const isSection = node.kind === "section";
+    const expanded = isSection && opts.expandedIds.has(node.id);
+    const canExpand =
+      isSection &&
+      (node.childCount > 0 || (node.children?.length ?? 0) > 0);
 
     nodes.push({
-      id: node.section_id,
-      type: "part",
+      id: node.id,
+      type: "docPart",
       position: {
         x,
-        y: PAD + depth * (NODE_H + GAP_Y),
+        y: depthY(depth),
       },
+      style: { width: NODE_W, height },
       data: {
-        kind: "section",
-        title: node.title || "Untitled section",
-        pageLabel: formatPageRange(node.page_start, node.page_end),
-        partIndex,
-        chips,
-        selected: selectedSectionId === node.section_id,
-        hasChildren: children.length > 0,
-        expanded,
-        onSelect: () => onSelectSection(node.section_id),
-        onToggleExpand: children.length
-          ? () => onToggleExpand(node.section_id)
-          : undefined,
+        kind: node.kind,
+        title: node.title,
+        subtitle: node.subtitle,
+        pageLabel: node.pageLabel,
+        preview: node.preview,
+        tableHeaders: node.tableHeaders,
+        tableShape: node.tableShape,
+        childCount: node.childCount,
+        sectionId: node.sectionId,
+        chunkId: node.chunkId,
+        selected:
+          selectedId === node.id ||
+          (node.kind === "document" && !selectedId),
+        hasChildren: canExpand || visibleChildren.length > 0,
+        expanded: node.kind === "document" ? true : expanded,
+        onSelect: () => {
+          if (node.kind === "document") return;
+          if (node.kind === "loading") return;
+          if (node.chunkId && node.sectionId) {
+            opts.onSelect({
+              kind: "chunk",
+              sectionId: node.sectionId,
+              chunkId: node.chunkId,
+            });
+            return;
+          }
+          if (node.sectionId) {
+            opts.onSelect({ kind: "section", sectionId: node.sectionId });
+          }
+        },
+        onToggleExpand:
+          canExpand && node.sectionId
+            ? () => opts.onToggleExpand(node.sectionId!)
+            : undefined,
       },
       draggable: false,
+      selectable: node.kind !== "document" && node.kind !== "loading",
     });
 
-    edges.push({
-      id: `${parentId}->${node.section_id}`,
-      source: parentId,
-      target: node.section_id,
-      type: "smoothstep",
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        width: 14,
-        height: 14,
-        color: "var(--gd-border)",
-      },
-      style: {
-        stroke: "var(--gd-border)",
-        strokeWidth: 1.5,
-      },
-    });
+    if (parentId) {
+      edges.push({
+        id: `${parentId}->${node.id}`,
+        source: parentId,
+        target: node.id,
+        type: "smoothstep",
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 12,
+          height: 12,
+          color: "var(--gd-border)",
+        },
+        style: {
+          stroke: "var(--gd-border)",
+          strokeWidth: 1.4,
+        },
+      });
+    }
 
     return { x };
   };
 
-  const topXs: number[] = [];
-  for (const section of sections) {
-    topXs.push(layoutSection(section, ROOT_ID, 1).x);
-  }
-
-  const rootX =
-    topXs.length > 0 ? (topXs[0] + topXs[topXs.length - 1]) / 2 : PAD;
-
-  nodes.unshift({
-    id: ROOT_ID,
-    type: "part",
-    position: { x: rootX, y: PAD },
-    data: {
-      kind: "root",
-      title: documentName,
-      subtitle: `${partCount} part${partCount === 1 ? "" : "s"}`,
-      selected: !selectedSectionId,
-      hasChildren: sections.length > 0,
-      expanded: true,
-      onSelect: undefined,
-    },
-    draggable: false,
-    selectable: false,
-  });
-
+  walk(root, null, 0);
   return { nodes, edges };
 }
 
-function PartNodeView({ data }: NodeProps<PartNode>) {
-  const isRoot = data.kind === "root";
+function KindBadge({ kind }: { kind: TreeNodeKind }) {
+  const label =
+    kind === "document"
+      ? "Document"
+      : kind === "section"
+        ? "Section"
+        : kind === "paragraph"
+          ? "Paragraph"
+          : kind === "table"
+            ? "Table"
+            : "…";
+  const tone =
+    kind === "table"
+      ? "border-[color-mix(in_oklab,var(--gd-accent)_35%,var(--gd-border))] text-[var(--gd-accent)]"
+      : kind === "paragraph"
+        ? "border-[var(--gd-border)] text-[var(--gd-muted)]"
+        : kind === "document"
+          ? "border-[var(--gd-accent)] text-[var(--gd-accent)]"
+          : "border-[var(--gd-border)] text-[var(--gd-muted)]";
+  return (
+    <span
+      className={cn(
+        "rounded-md border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.06em]",
+        tone,
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function DocPartNodeView({ data }: NodeProps<MapNode>) {
+  const isRoot = data.kind === "document";
+  // Overview zoom: compact copy so Fit View stays readable without relayout.
+  const { zoom } = useViewport();
+  const compact = zoom < 0.55;
+
   return (
     <div
       className={cn(
-        "w-[260px] rounded-xl border bg-[var(--gd-surface)] px-3.5 py-3 shadow-sm transition-colors",
+        "h-full w-[268px] overflow-hidden rounded-xl border bg-[var(--gd-surface)] px-3.5 py-3 shadow-sm transition-colors",
         data.selected
           ? "border-[var(--gd-accent)] ring-2 ring-[var(--gd-accent-soft)]"
           : "border-[var(--gd-border)] hover:border-[var(--gd-muted)]",
+        data.kind === "table" &&
+          "bg-[color-mix(in_oklab,var(--gd-surface)_92%,var(--gd-accent)_8%)]",
+        data.kind === "loading" && "opacity-80",
       )}
     >
       <Handle
@@ -220,58 +289,80 @@ function PartNodeView({ data }: NodeProps<PartNode>) {
       />
       <button
         type="button"
-        className="w-full cursor-pointer text-left"
+        className="flex h-full w-full cursor-pointer flex-col text-left"
         onClick={() => data.onSelect?.()}
-        disabled={isRoot}
+        disabled={isRoot || data.kind === "loading"}
       >
         <div className="flex items-start justify-between gap-2">
-          <p
-            className={cn(
-              "line-clamp-2 text-[12px] leading-snug text-[var(--gd-text)]",
-              data.selected || isRoot ? "font-semibold" : "font-medium",
-            )}
-            title={data.title}
-          >
-            {data.title}
-          </p>
-          {data.partIndex != null ? (
+          <KindBadge kind={data.kind} />
+          {data.pageLabel ? (
             <span className="shrink-0 text-[10px] tabular-nums text-[var(--gd-muted)]">
-              Part {data.partIndex}
+              {data.pageLabel}
             </span>
           ) : null}
         </div>
-        {data.subtitle ? (
-          <p className="mt-1 text-[11px] text-[var(--gd-muted)]">{data.subtitle}</p>
-        ) : null}
-        {data.pageLabel ? (
-          <p className="mt-1 text-[11px] tabular-nums text-[var(--gd-muted)]">
-            {data.pageLabel}
+        <p
+          className={cn(
+            "mt-1.5 text-[12px] leading-snug text-[var(--gd-text)]",
+            compact ? "line-clamp-1" : "line-clamp-2",
+            data.selected || isRoot ? "font-semibold" : "font-medium",
+          )}
+          title={data.title}
+        >
+          {data.title}
+        </p>
+        {!compact && data.subtitle ? (
+          <p className="mt-1 line-clamp-1 text-[11px] text-[var(--gd-muted)]">
+            {data.subtitle}
           </p>
         ) : null}
-        {data.chips && data.chips.length > 0 ? (
-          <div className="mt-1.5 flex flex-wrap gap-1">
-            {data.chips.map((chip, idx) => (
-              <span
-                key={`${chip}:${idx}`}
-                className="max-w-full truncate rounded-full border border-[var(--gd-border)] px-1.5 py-0.5 text-[10px] text-[var(--gd-muted)]"
-                title={chip}
-              >
-                {chip}
-              </span>
-            ))}
+        {!compact && data.kind === "paragraph" && data.preview ? (
+          <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-[var(--gd-muted)]">
+            {data.preview}
+          </p>
+        ) : null}
+        {!compact && data.kind === "table" ? (
+          <div className="mt-1.5 space-y-1">
+            {data.tableHeaders && data.tableHeaders.length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {data.tableHeaders.map((header, headerIdx) => (
+                  <span
+                    key={`${headerIdx}:${header}`}
+                    className="max-w-[7.5rem] truncate rounded border border-[var(--gd-border)] px-1 py-0.5 text-[9px] text-[var(--gd-muted)]"
+                    title={header}
+                  >
+                    {header}
+                  </span>
+                ))}
+              </div>
+            ) : data.preview ? (
+              <pre className="line-clamp-2 overflow-hidden whitespace-pre-wrap font-[family-name:var(--font-geist-mono),ui-monospace,monospace] text-[9px] leading-snug text-[var(--gd-muted)]">
+                {data.preview}
+              </pre>
+            ) : null}
           </div>
+        ) : null}
+        {!compact &&
+        data.kind === "section" &&
+        data.preview &&
+        !data.subtitle ? (
+          <p className="mt-1.5 line-clamp-2 text-[11px] text-[var(--gd-muted)]">
+            {data.preview}
+          </p>
         ) : null}
       </button>
       {data.hasChildren && data.onToggleExpand ? (
         <button
           type="button"
-          className="mt-2 text-[10px] text-[var(--gd-accent)] hover:underline cursor-pointer"
+          className="mt-1.5 text-[10px] text-[var(--gd-accent)] hover:underline cursor-pointer"
           onClick={(e) => {
             e.stopPropagation();
             data.onToggleExpand?.();
           }}
         >
-          {data.expanded ? "Collapse" : "Expand"}
+          {data.expanded
+            ? "Collapse"
+            : `Expand${data.childCount ? ` (${data.childCount})` : ""}`}
         </button>
       ) : null}
       <Handle
@@ -283,103 +374,226 @@ function PartNodeView({ data }: NodeProps<PartNode>) {
   );
 }
 
-const nodeTypes = { part: memo(PartNodeView) };
+const nodeTypes = { docPart: memo(DocPartNodeView) };
 
 function HierarchyTreeMapCanvas({
   documentName,
+  pageCount,
   partCount,
   sections,
-  flatSections,
   expandedIds,
   selectedSectionId,
+  selectedChunkId,
+  chunksBySection,
+  loadingBySection,
   onSelectSection,
+  onSelectChunk,
   onToggleExpand,
   onExpandAll,
   onCollapseAll,
 }: {
   documentName: string;
+  pageCount?: number | null;
   partCount: number;
   sections: SectionTreeNode[];
-  flatSections: SectionTreeNode[];
   expandedIds: Set<string>;
   selectedSectionId: string | null;
+  selectedChunkId?: string | null;
+  chunksBySection: SectionChunksMap;
+  loadingBySection: SectionChunksLoading;
   onSelectSection: (sectionId: string) => void;
+  onSelectChunk: (sectionId: string, chunkId: string) => void;
   onToggleExpand: (sectionId: string) => void;
   onExpandAll?: () => void;
   onCollapseAll?: () => void;
 }) {
-  const { fitView, setViewport, getViewport } = useReactFlow();
+  const { fitView, getNodes, getViewport, setViewport, setCenter } =
+    useReactFlow();
   const { resolvedTheme } = useTheme();
   const colorMode = resolvedTheme === "dark" ? "dark" : "light";
-  const flatIndex = useMemo(() => {
-    const map = new Map<string, number>();
-    flatSections.forEach((section, idx) => map.set(section.section_id, idx));
-    return map;
-  }, [flatSections]);
 
-  const graph = useMemo(
+  const selection = useMemo<TreeSelection | null>(() => {
+    if (!selectedSectionId) return null;
+    if (selectedChunkId) {
+      return {
+        kind: "chunk",
+        sectionId: selectedSectionId,
+        chunkId: selectedChunkId,
+      };
+    }
+    return { kind: "section", sectionId: selectedSectionId };
+  }, [selectedSectionId, selectedChunkId]);
+
+  const enrichedRoot = useMemo(
     () =>
-      buildGraph({
+      buildEnrichedTree({
         documentName,
-        partCount,
+        pageCount,
+        sectionCount: partCount,
         sections,
-        flatIndex,
         expandedIds,
-        selectedSectionId,
-        onSelectSection,
-        onToggleExpand,
+        chunksBySection,
+        loadingBySection,
       }),
     [
       documentName,
+      pageCount,
       partCount,
       sections,
-      flatIndex,
       expandedIds,
-      selectedSectionId,
-      onSelectSection,
-      onToggleExpand,
+      chunksBySection,
+      loadingBySection,
     ],
+  );
+
+  const visibleCount = useMemo(
+    () => countVisibleNodes(enrichedRoot),
+    [enrichedRoot],
+  );
+
+  const onSelect = useCallback(
+    (next: TreeSelection) => {
+      if (next.kind === "chunk") {
+        onSelectChunk(next.sectionId, next.chunkId);
+        return;
+      }
+      onSelectSection(next.sectionId);
+    },
+    [onSelectChunk, onSelectSection],
+  );
+
+  const graph = useMemo(
+    () =>
+      layoutTree(enrichedRoot, {
+        expandedIds,
+        selected: selection,
+        onSelect,
+        onToggleExpand,
+      }),
+    [enrichedRoot, expandedIds, selection, onSelect, onToggleExpand],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
-  const fitKeyRef = useRef("");
+  const initialFitDoneRef = useRef(false);
 
-  const fitReadable = useCallback(() => {
-    void fitView({
-      padding: 0.18,
-      duration: 280,
-      minZoom: FIT_MIN_ZOOM,
-      maxZoom: FIT_MAX_ZOOM,
-    }).then(() => {
-      const vp = getViewport();
-      if (vp.zoom < FIT_MIN_ZOOM) {
-        void setViewport({ ...vp, zoom: FIT_MIN_ZOOM }, { duration: 180 });
+  /** Readable opening zoom — matches the collapsed Tree screenshot (~0.62). */
+  const INITIAL_ZOOM = 0.62;
+
+  const centerOnRoot = useCallback(
+    (zoom: number, duration = 220) => {
+      const visible = typeof getNodes === "function" ? getNodes() : [];
+      const root = visible.find((node) => node.id === ROOT_ID);
+      if (root && typeof setCenter === "function") {
+        void setCenter(
+          root.position.x + NODE_W / 2,
+          root.position.y + 120,
+          { zoom, duration },
+        );
+        return;
       }
-    });
-  }, [fitView, getViewport, setViewport]);
+      if (typeof setViewport === "function") {
+        void setViewport({ x: 0, y: 0, zoom }, { duration });
+      }
+    },
+    [getNodes, setCenter, setViewport],
+  );
+
+  const fitReadable = useCallback(
+    (mode: "overview" | "branch" | "initial" = "overview") => {
+      const visible = typeof getNodes === "function" ? getNodes() : [];
+      if (!visible.length) {
+        void fitView({
+          padding: 0.2,
+          duration: 280,
+          minZoom: INITIAL_ZOOM,
+          maxZoom: INITIAL_ZOOM,
+        });
+        return;
+      }
+
+      if (mode === "initial") {
+        // Collapsed opening view: keep labels readable; sides may clip (pan/minimap).
+        centerOnRoot(INITIAL_ZOOM, 0);
+        return;
+      }
+
+      if (mode === "branch" && selectedSectionId) {
+        const focusNodes = visible.filter((node) => {
+          if (node.id === ROOT_ID || node.id === selectedSectionId) return true;
+          const data = node.data as MapNodeData;
+          return data.sectionId === selectedSectionId;
+        });
+        void fitView({
+          nodes: focusNodes.length ? focusNodes : visible,
+          padding: 0.28,
+          duration: 280,
+          minZoom: 0.45,
+          maxZoom: 1.25,
+        });
+        return;
+      }
+
+      // Explicit Fit view: try full visible graph, then enforce a readable floor.
+      const padding = visibleCount > 60 ? 0.1 : visibleCount > 25 ? 0.14 : 0.2;
+      const readableFloor = visibleCount > 30 ? 0.45 : 0.5;
+      void fitView({
+        nodes: visible,
+        padding,
+        duration: 280,
+        minZoom: 0.08,
+        maxZoom: visibleCount > 80 ? 0.95 : 1.2,
+      }).then(() => {
+        const vp =
+          typeof getViewport === "function"
+            ? getViewport()
+            : { x: 0, y: 0, zoom: 1 };
+        if (vp.zoom >= readableFloor) return;
+        centerOnRoot(readableFloor, 220);
+      });
+    },
+    [
+      fitView,
+      getNodes,
+      getViewport,
+      centerOnRoot,
+      selectedSectionId,
+      visibleCount,
+    ],
+  );
 
   useEffect(() => {
     setNodes(graph.nodes);
     setEdges(graph.edges);
   }, [graph.nodes, graph.edges, setNodes, setEdges]);
 
+  // One-shot readable initial viewport for the collapsed tree.
   useEffect(() => {
-    const key = `${expandedIds.size}:${selectedSectionId ?? ""}:${sections.length}`;
-    if (fitKeyRef.current === key) return;
-    fitKeyRef.current = key;
+    if (initialFitDoneRef.current) return;
+    if (!graph.nodes.length) return;
     const timer = window.setTimeout(() => {
-      fitReadable();
-    }, 60);
+      fitReadable("initial");
+      initialFitDoneRef.current = true;
+    }, 50);
     return () => window.clearTimeout(timer);
-  }, [expandedIds, selectedSectionId, sections.length, fitReadable]);
+  }, [graph.nodes.length, fitReadable]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (!initialFitDoneRef.current) return;
+      window.setTimeout(() => fitReadable("initial"), 120);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [fitReadable]);
 
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
+    (_: ReactMouseEvent, node: Node) => {
       if (node.id === ROOT_ID) return;
-      onSelectSection(node.id);
+      const data = node.data as MapNodeData;
+      data.onSelect?.();
     },
-    [onSelectSection],
+    [],
   );
 
   if (!sections.length) {
@@ -392,11 +606,12 @@ function HierarchyTreeMapCanvas({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--gd-rule)] px-4 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--gd-rule)] px-4 py-2">
         <p className="text-[11px] text-[var(--gd-muted)]">
-          Drag to pan (x/y) · scroll to zoom · click a part for details
+          Drag to pan · scroll to zoom · expand branches for paragraphs & tables
+          · {visibleCount} visible nodes
         </p>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {onExpandAll ? (
             <button
               type="button"
@@ -410,15 +625,27 @@ function HierarchyTreeMapCanvas({
             <button
               type="button"
               className="text-[11px] text-[var(--gd-muted)] hover:text-[var(--gd-text)] cursor-pointer"
-              onClick={onCollapseAll}
+              onClick={() => {
+                onCollapseAll();
+                window.setTimeout(() => fitReadable("initial"), 80);
+              }}
             >
               Collapse all
+            </button>
+          ) : null}
+          {selectedSectionId ? (
+            <button
+              type="button"
+              className="text-[11px] text-[var(--gd-muted)] hover:text-[var(--gd-text)] cursor-pointer"
+              onClick={() => fitReadable("branch")}
+            >
+              Focus branch
             </button>
           ) : null}
           <button
             type="button"
             className="text-[11px] text-[var(--gd-muted)] hover:text-[var(--gd-text)] cursor-pointer"
-            onClick={fitReadable}
+            onClick={() => fitReadable("overview")}
           >
             Fit view
           </button>
@@ -435,15 +662,9 @@ function HierarchyTreeMapCanvas({
           colorMode={colorMode}
           className="hierarchy-tree-map"
           style={FLOW_THEME_VARS}
-          fitView
-          fitViewOptions={{
-            padding: 0.18,
-            minZoom: FIT_MIN_ZOOM,
-            maxZoom: FIT_MAX_ZOOM,
-          }}
-          minZoom={0.4}
-          maxZoom={1.85}
-          defaultViewport={{ x: 0, y: 0, zoom: 0.85 }}
+          minZoom={0.05}
+          maxZoom={1.9}
+          defaultViewport={{ x: 0, y: 0, zoom: 0.62 }}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable
@@ -456,6 +677,7 @@ function HierarchyTreeMapCanvas({
           defaultEdgeOptions={{
             type: "smoothstep",
           }}
+          onlyRenderVisibleElements={visibleCount > 120}
         >
           <Background
             gap={22}
@@ -475,11 +697,15 @@ function HierarchyTreeMapCanvas({
             className="!overflow-hidden !rounded-lg !border !border-[var(--gd-border)] !bg-[var(--gd-surface)]"
             bgColor="var(--gd-surface)"
             maskColor="color-mix(in oklab, var(--gd-ground) 70%, transparent)"
-            nodeColor={(node) =>
-              node.id === selectedSectionId || node.id === ROOT_ID
-                ? "var(--gd-accent)"
-                : "var(--gd-raised)"
-            }
+            nodeColor={(node) => {
+              const kind = (node.data as MapNodeData | undefined)?.kind;
+              if (node.id === selectedSectionId || node.id === ROOT_ID) {
+                return "var(--gd-accent)";
+              }
+              if (kind === "table") return "color-mix(in oklab, var(--gd-accent) 55%, var(--gd-raised))";
+              if (kind === "paragraph") return "var(--gd-muted)";
+              return "var(--gd-raised)";
+            }}
             nodeStrokeColor="var(--gd-border)"
           />
         </ReactFlow>
@@ -488,15 +714,19 @@ function HierarchyTreeMapCanvas({
   );
 }
 
-/** Visual document-part hierarchy map (Tree mode) — top-down sections only. */
+/** Visual document hierarchy map — recursive sections + content leaves. */
 export function HierarchyTreeMap(props: {
   documentName: string;
+  pageCount?: number | null;
   partCount: number;
   sections: SectionTreeNode[];
-  flatSections: SectionTreeNode[];
   expandedIds: Set<string>;
   selectedSectionId: string | null;
+  selectedChunkId?: string | null;
+  chunksBySection: SectionChunksMap;
+  loadingBySection: SectionChunksLoading;
   onSelectSection: (sectionId: string) => void;
+  onSelectChunk: (sectionId: string, chunkId: string) => void;
   onToggleExpand: (sectionId: string) => void;
   onExpandAll?: () => void;
   onCollapseAll?: () => void;
