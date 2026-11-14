@@ -262,20 +262,25 @@ def score(ans: str, expect: dict) -> dict:
         # Should not claim off-label indication for approved asthma. Mentions
         # that describe a dose/schedule deviation are not indication claims.
         off_ctx = _blank_dosing_off_label(low)
+        # "no indication of an off-label use" is a negation, not an affirmation.
+        denies_off = bool(
+            re.search(
+                r"off[- ]?label.{0,40}(no|not|none|absent)"
+                r"|not (categorically )?off[- ]?label"
+                r"|\bno\b.{0,20}off[- ]?label"
+                r"|\bno indication of (an )?off[- ]?label",
+                off_ctx,
+            )
+        )
         strong_off = bool(
             re.search(
                 r"off[- ]?label (indication|use|usage).{0,20}(yes|present)"
-                r"|indication.{0,30}off[- ]?label",
+                r"|(?<!\bno )(?<!\bno indication of an )"
+                r"(?<!\bno indication of )indication.{0,30}off[- ]?label",
                 off_ctx,
             )
-        ) and not re.search(
-            r"not off[- ]?label|off[- ]?label.{0,20}(no|none|not)",
-            off_ctx,
-        )
-        ok("not_off_label_indication", not strong_off or re.search(
-            r"off[- ]?label.{0,40}(no|not)|not (categorically )?off[- ]?label",
-            off_ctx,
-        ) is not None)
+        ) and not denies_off
+        ok("not_off_label_indication", not strong_off or denies_off)
 
     if expect.get("dosing_deviation") is True:
         ok(
@@ -371,6 +376,12 @@ def main() -> None:
         json={"email": "dev@genova.ai", "password": "localdev123"},
     ).json()["access_token"]
     h = {"Authorization": f"Bearer {tok}"}
+    # Clear sticky answer cache on the live server so code fixes are not masked.
+    try:
+        cleared = c.post("/api/v1/chat/cache/clear", headers=h)
+        print(f"cache clear: {cleared.status_code} {cleared.text[:120]}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"cache clear skipped: {exc}", flush=True)
 
     sess = c.post(
         "/api/v1/chat/sessions",

@@ -39,6 +39,9 @@ def test_seed_creates_builtin_domains_and_global_templates(db_session):
     assert "education" in domains
     assert "legal" in domains
     assert "research" in domains
+    assert "trading" in domains
+    assert "chemistry" in domains
+    assert "mathematics" in domains
     general = db_session.query(PromptDomain).filter_by(slug="general").one()
     assert general.is_fallback is True
 
@@ -52,6 +55,83 @@ def test_seed_creates_builtin_domains_and_global_templates(db_session):
         .one()
     )
     assert "cite" in global_system.content.lower() or "Source:" in global_system.content
+
+
+def test_persona_domains_have_eight_required_sections():
+    from app.services.prompt_management.defaults import (
+        DOMAIN_SYSTEM_DEFAULTS,
+        PERSONA_SECTION_MARKERS,
+    )
+
+    personas = {
+        "general": "General Document Analyst",
+        "medical": "Medical Document Analyst",
+        "research": "Research Analyst",
+        "trading": "Trading Analyst",
+        "chemistry": "Chemistry Analyst",
+        "mathematics": "Mathematics Analyst",
+    }
+    for slug, title in personas.items():
+        text = DOMAIN_SYSTEM_DEFAULTS[slug]
+        assert title in text, slug
+        for marker in PERSONA_SECTION_MARKERS:
+            assert marker in text, f"{slug} missing {marker}"
+        # Principle-driven only — no fixture answers.
+        for banned in ("Xolair", "CRSwNP", "8,850.00", "AlgebraAndTrigo"):
+            assert banned not in text, f"{slug} hardcodes {banned}"
+    # Medical keeps PV principles.
+    medical = DOMAIN_SYSTEM_DEFAULTS["medical"]
+    assert "PHARMACOVIGILANCE" in medical
+    assert "SCOPE LOCK" in medical
+
+
+def test_seed_does_not_clobber_customized_overlay(db_session):
+    domain = db_session.query(PromptDomain).filter_by(slug="research").one()
+    tpl = (
+        db_session.query(PromptTemplate)
+        .filter(
+            PromptTemplate.domain_id == domain.id,
+            PromptTemplate.prompt_type == "system",
+            PromptTemplate.is_active.is_(True),
+        )
+        .one()
+    )
+    tpl.content = "CUSTOM RESEARCH ANALYST PROMPT — do not overwrite"
+    tpl.is_default = False
+    tpl.version = 7
+    db_session.commit()
+
+    ensure_default_prompts(db_session)
+    db_session.commit()
+
+    refreshed = (
+        db_session.query(PromptTemplate)
+        .filter(PromptTemplate.id == tpl.id)
+        .one()
+    )
+    assert refreshed.content == "CUSTOM RESEARCH ANALYST PROMPT — do not overwrite"
+    assert refreshed.version == 7
+
+
+def test_filename_hints_map_smoke_pdfs_to_personas():
+    from app.services.prompt_management.detector import infer_domain_from_filename
+
+    allowed = [
+        "general",
+        "medical",
+        "research",
+        "trading",
+        "chemistry",
+        "mathematics",
+        "education",
+        "finance",
+    ]
+    assert infer_domain_from_filename("Trading.pdf", allowed) == "trading"
+    assert infer_domain_from_filename("Research.pdf", allowed) == "research"
+    assert infer_domain_from_filename("Medical.pdf", allowed) == "medical"
+    assert infer_domain_from_filename("Chemistr.pdf", allowed) == "chemistry"
+    assert infer_domain_from_filename("AlgebraAndTrigo.pdf", allowed) == "mathematics"
+    assert infer_domain_from_filename("random-notes.pdf", allowed) is None
 
 
 def test_resolve_prompts_uses_medical_overlay(db_session, monkeypatch):
@@ -213,7 +293,10 @@ def test_medical_system_holds_principles_task_is_slim(db_session):
 
 
 def test_elevated_domains_have_epistemic_rules():
-    from app.services.prompt_management.defaults import DOMAIN_SYSTEM_DEFAULTS
+    from app.services.prompt_management.defaults import (
+        DOMAIN_SYSTEM_DEFAULTS,
+        PERSONA_SECTION_MARKERS,
+    )
 
     markers = {
         "finance": ("reporting period", "GAAP"),
@@ -223,10 +306,15 @@ def test_elevated_domains_have_epistemic_rules():
         "education": ("learner", "formulas"),
         "general": ("plain-language", "explicitly"),
         "payment": ("INVOICE / LINE-ITEM", "OCR"),
+        "trading": ("Trading Analyst", "instrument"),
+        "chemistry": ("Chemistry Analyst", "conditions"),
+        "mathematics": ("Mathematics Analyst", "notation"),
     }
     for slug, needles in markers.items():
         text = DOMAIN_SYSTEM_DEFAULTS[slug]
-        assert "Epistemic rules:" in text or slug == "payment"
+        assert "ROLE" in text and "ABSTAIN" in text, slug
+        for marker in PERSONA_SECTION_MARKERS:
+            assert marker in text, f"{slug} missing {marker}"
         for needle in needles:
             assert needle.lower() in text.lower(), f"{slug} missing {needle}"
 

@@ -265,6 +265,24 @@ def invalidate_cache(user_id: str, document_id: str, question: str) -> None:
     _lru_delete(key)
 
 
+def clear_response_cache() -> int:
+    """Drop all in-process LRU answer entries (and Redis DB if connected).
+
+    Used by E2E batteries after code changes so stale answers cannot mask fixes.
+    Returns the number of LRU keys cleared.
+    """
+    global _lru_store
+    cleared = len(_lru_store)
+    _lru_store = {}
+    r = _get_redis()
+    if r is not None:
+        try:
+            r.flushdb()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Redis flushdb failed during cache clear: %s", exc)
+    return cleared
+
+
 # ---------------------------------------------------------------------------
 # Refresh-token reuse detection (rotation / theft detection)
 # ---------------------------------------------------------------------------

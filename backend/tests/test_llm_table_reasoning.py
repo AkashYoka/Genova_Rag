@@ -69,6 +69,76 @@ def test_is_structured_lookup_question_domain_agnostic():
     assert not is_structured_lookup_question("Summarize the introduction")
 
 
+def test_prose_question_with_table_chunks_stays_soft_on_miss():
+    """Unrelated tables must not hard-gate a missed-dose prose question."""
+
+    class _Msg:
+        content = """{
+          "status": "not_found",
+          "reasoning_summary": "Tables only contain adverse reaction data and do not include administration guidelines.",
+          "selected_chunks": [],
+          "selected_evidence": [],
+          "missing_information": [],
+          "additional_search_queries": [],
+          "answer": "",
+          "citations": []
+        }"""
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Client:
+        def chat_completion(self, **kwargs):
+            return _Resp()
+
+    result = interpret_table_question(
+        "If a dose is missed, when should the patient make up that dose?",
+        [_finance_chunk()],
+        client=_Client(),
+    )
+    assert result.is_structured_lookup is True
+    assert result.insufficient is not None
+    assert result.insufficient.soft is True
+
+
+def test_wrong_table_not_found_is_soft_for_iteration():
+    class _Msg:
+        content = """{
+          "status": "not_found",
+          "reasoning_summary": "The provided tables only contain adverse reaction data and do not include dosing information.",
+          "selected_chunks": [],
+          "selected_evidence": [],
+          "missing_information": [],
+          "additional_search_queries": [],
+          "answer": "",
+          "citations": []
+        }"""
+
+    class _Choice:
+        message = _Msg()
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Client:
+        def chat_completion(self, **kwargs):
+            return _Resp()
+
+    result = interpret_table_question(
+        "For patients older than 6 months with BSA 0.51 to 0.80 m2 "
+        "what is the recommended oral once-daily dose?",
+        [_finance_chunk()],
+        client=_Client(),
+    )
+    assert result.is_structured_lookup
+    assert result.insufficient is not None
+    assert result.insufficient.soft is True
+    assert result.sources_update.get("soft_insufficient") is True
+
+
 def test_collect_table_candidates_dedupes_and_prefers_rows():
     thin = dict(_finance_chunk())
     thin["table"] = {

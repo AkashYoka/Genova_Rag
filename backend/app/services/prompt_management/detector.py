@@ -23,18 +23,38 @@ _cache: Dict[str, tuple[float, "DomainDetectionResult"]] = {}
 # Domains that are interchangeable for product behavior / scoring.
 DOMAIN_ALIASES: Dict[str, frozenset[str]] = {
     "payment": frozenset({"payment", "finance"}),
-    "finance": frozenset({"payment", "finance"}),
+    "finance": frozenset({"payment", "finance", "trading"}),
+    "trading": frozenset({"trading", "finance"}),
     "research": frozenset({"research", "technical"}),
     "technical": frozenset({"research", "technical"}),
+    "education": frozenset({"education", "chemistry", "mathematics"}),
+    "chemistry": frozenset({"chemistry", "education"}),
+    "mathematics": frozenset({"mathematics", "education"}),
 }
 
 _FILENAME_DOMAIN_HINTS: List[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"prescrib|ndc|dosage|contraindic|anaphylaxis|pharmac", re.I), "medical"),
+    (re.compile(r"trading|ohlc|candlestick|equit(y|ies)|portfolio|securit", re.I), "trading"),
+    (
+        re.compile(
+            r"medical|prescrib|ndc|dosage|contraindic|anaphylaxis|pharmac|xolair|avastin",
+            re.I,
+        ),
+        "medical",
+    ),
     (re.compile(r"invoice|igst|cgst|sgst|vendor|gst|tds|payment", re.I), "payment"),
-    (re.compile(r"graph\d|graphrag|arxiv|survey|paper", re.I), "research"),
+    (
+        re.compile(r"research|graph\d|graphrag|arxiv|survey|paper", re.I),
+        "research",
+    ),
     (re.compile(r"roadmap|engineer|api[_-]?doc|sdk|readme", re.I), "technical"),
-    (re.compile(r"calculus|chemistry|upsc|textbook|syllabus|math-", re.I), "education"),
+    (re.compile(r"chemistr|stoichiometr|periodic|molec|organic.?chem", re.I), "chemistry"),
+    (
+        re.compile(r"algebra|trigo|mathematics|calculus|geometry|theorem|math-", re.I),
+        "mathematics",
+    ),
+    (re.compile(r"upsc|textbook|syllabus|education", re.I), "education"),
     (re.compile(r"contract|nda|clause|agreement", re.I), "legal"),
+    (re.compile(r"finance|balance.?sheet|10-k|income.?statement", re.I), "finance"),
 ]
 
 _CLASSIFY_SYSTEM = """You classify the domain of a user question for a document-grounded assistant.
@@ -48,10 +68,15 @@ Return ONLY valid JSON with this schema:
 Rules:
 - Choose from the allowed domain slugs only.
 - Prefer the domain of the ATTACHED documents over chat history when they conflict.
+- Trading / market / securities / price-volume docs (e.g. Trading.pdf) → trading (prefer trading over finance when both exist).
+- Research papers / surveys / GraphRAG (e.g. Research.pdf) → research (prefer research over technical).
+- Prescribing / clinical / medical labels (e.g. Medical.pdf) → medical.
+- Chemistry notes / property tables (e.g. Chemistr.pdf / Chemistry.pdf) → chemistry (prefer chemistry over education).
+- Algebra / trigonometry / math texts (e.g. AlgebraAndTrigo.pdf) → mathematics (prefer mathematics over education).
 - Invoice / GST / taxable / TDS / vendor bill → payment (prefer payment over finance).
-- Academic papers, surveys, GraphRAG research → research (prefer research over technical).
 - Software roadmaps, APIs, engineering how-tos → technical.
-- Vague questions with no attached documents → general with confidence <= 0.4.
+- Financial statements / banking without trading focus → finance.
+- Vague or uncertain questions with no clear specialty → general with confidence <= 0.4.
 - World-knowledge questions unrelated to documents (capitals, weather, etc.) → general with confidence <= 0.4.
 - When attached documents span multiple domains, set the primary domain to the one most needed by the question and list the others in secondary_domains; do not ignore a clearly referenced second domain.
 - Never invent a domain outside the allowed list.
@@ -187,21 +212,60 @@ def _question_domain_hints(question: str, allowed: Sequence[str]) -> List[str]:
         "cli",
         "sdk",
     )
+    trading_toks = (
+        "trading",
+        "ohlc",
+        "candlestick",
+        "ticker",
+        "equity",
+        "portfolio",
+        "bid-ask",
+        "market price",
+    )
+    chemistry_toks = (
+        "chemistry",
+        "stoichiometr",
+        "mole fraction",
+        "periodic table",
+        "chemical reaction",
+        "compound",
+        "molarity",
+    )
+    mathematics_toks = (
+        "algebra",
+        "trigonometry",
+        "theorem",
+        "derivative",
+        "integral",
+        "equation",
+        "geometry",
+        "proof that",
+    )
     education_toks = (
         "textbook",
-        "calculus",
-        "derivative",
-        "limits",
         "mcq",
         "revision",
         "upsc",
-        "chemistry concept",
+        "syllabus",
+        "course module",
+    )
+    finance_toks = (
+        "balance sheet",
+        "income statement",
+        "gaap",
+        "ebitda",
+        "10-k",
+        "fiscal year",
     )
     mapping = [
         (payment_toks, "payment"),
         (medical_toks, "medical"),
+        (trading_toks, "trading"),
         (research_toks, "research"),
+        (chemistry_toks, "chemistry"),
+        (mathematics_toks, "mathematics"),
         (technical_toks, "technical"),
+        (finance_toks, "finance"),
         (education_toks, "education"),
     ]
     for toks, slug in mapping:
@@ -281,18 +345,41 @@ def _document_signals(db: Session, document_ids: Sequence[str], allowed: Sequenc
 
 
 def _prefer_alias(slug: str, question: str, allowed: Sequence[str]) -> str:
-    """Normalize finance→payment and technical→research when question/docs imply it."""
+    """Normalize near-duplicate domains when question/docs imply a sharper persona."""
     q = (question or "").lower()
-    if slug == "finance" and "payment" in allowed:
-        if any(t in q for t in ("invoice", "igst", "cgst", "sgst", "gst", "tds", "taxable")):
+    invoice_toks = ("invoice", "igst", "cgst", "sgst", "gst", "tds", "taxable")
+    trading_toks = ("trading", "ohlc", "candlestick", "ticker", "equity", "portfolio")
+    if slug in {"finance", "trading"} and "payment" in allowed:
+        if any(t in q for t in invoice_toks):
             return "payment"
-        return "payment" if "payment" in allowed else slug
+    if slug == "finance" and "trading" in allowed and any(t in q for t in trading_toks):
+        return "trading"
     if slug == "technical" and "research" in allowed:
-        if any(t in q for t in ("graphrag", "survey", "arxiv", "paper", "limitation", "relational knowledge")):
+        if any(
+            t in q
+            for t in (
+                "graphrag",
+                "survey",
+                "arxiv",
+                "paper",
+                "limitation",
+                "relational knowledge",
+            )
+        ):
             return "research"
     if slug == "research" and "technical" in allowed:
         if any(t in q for t in ("roadmap", "api endpoint", "cli", "sdk", "engineer skills")):
             return "technical"
+    if slug == "education":
+        if "chemistry" in allowed and any(
+            t in q for t in ("chemistry", "mole", "compound", "stoichiometr", "reaction")
+        ):
+            return "chemistry"
+        if "mathematics" in allowed and any(
+            t in q
+            for t in ("algebra", "trigonometry", "theorem", "equation", "derivative", "integral")
+        ):
+            return "mathematics"
     return slug if slug in allowed else slug
 
 
@@ -530,8 +617,13 @@ def _llm_classify(
         "retrieved_context_preview": (retrieved_context or "")[:1500],
         "recent_chat": history_bits,
         "preference_notes": [
+            "Trading.pdf / market docs → trading (not finance) when both exist",
+            "Research.pdf / GraphRAG/survey/paper → research (not technical)",
+            "Medical.pdf / prescribing → medical",
+            "Chemistr.pdf / Chemistry.pdf → chemistry (not education)",
+            "AlgebraAndTrigo.pdf / algebra/trig → mathematics (not education)",
             "invoice/GST → payment (not finance) when both exist",
-            "GraphRAG/survey/paper → research (not technical) when both exist",
+            "uncertain / vague → general",
             "Ignore chat history when it conflicts with currently attached documents",
         ],
     }

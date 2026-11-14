@@ -113,9 +113,11 @@ _AXIS_UNIT_STOP = frozenset(
         "older", "old", "every", "times", "time", "dose", "doses",
     }
 )
+# Include ASCII hyphen, en/em dashes, and Unicode minus (U+2212) — PDFs/OCR
+# frequently emit − instead of - in axis labels like ">200−300".
 _RANGE_IN_HEADER_RE = re.compile(
     r"(?i)(?P<lo_op>≥|=>|>=|>)?\s*(?P<lo>\d+(?:\.\d+)?)"
-    r"\s*[-–—to]+\s*"
+    r"\s*[-–—−\u2212to]+\s*"
     r"(?P<hi_op>≤|<=|<)?\s*(?P<hi>\d+(?:\.\d+)?)"
 )
 _STOP_TOKENS = frozenset(
@@ -478,9 +480,17 @@ def _candidate_index(candidates: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str
     return out
 
 
+def _normalize_range_header(header: str) -> str:
+    """Fold Unicode dash variants so range parsing is OCR-stable."""
+    text = header or ""
+    for ch in ("\u2212", "\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015"):
+        text = text.replace(ch, "-")
+    return text
+
+
 def _parse_range_bounds(header: str) -> Optional[Tuple[float, float, bool, bool]]:
     """Return (lo, hi, lo_inclusive, hi_inclusive) from a range header, if any."""
-    match = _RANGE_IN_HEADER_RE.search(header or "")
+    match = _RANGE_IN_HEADER_RE.search(_normalize_range_header(header or ""))
     if not match:
         return None
     lo = float(match.group("lo"))
@@ -635,18 +645,28 @@ def _axis_hard_conflict(
         if h not in used and _is_unitless_range_header(h)
     ]
     # Unitless row/axis bands (e.g. ">300-400") must cover at least one
-    # remaining measurement factor. Extra value-like amounts (prescribed mg,
-    # prices) that do not fit the band are ignored when another factor does.
+    # remaining *axis* measurement factor. Value-like amounts (prescribed mg,
+    # prices) must not "cover" an IgE/weight-style unitless band — they can
+    # coincidentally fall inside a wrong row and silence a real conflict.
     if unitless and remaining:
-        covered = [
+        axis_pool = [
             (number, unit)
             for number, unit in remaining
+            if unit.lower().split("/")[0]
+            not in {"mg", "g", "mcg", "µg", "ug", "ml", "usd", "eur", "%"}
+            or "/" in unit.lower()  # keep iu/ml, mg/kg style axis compounds
+        ]
+        # If the only remaining factors are value amounts, fall back to them.
+        pool = axis_pool or list(remaining)
+        covered = [
+            (number, unit)
+            for number, unit in pool
             if any(_range_covers(h, number) is True for h in unitless)
         ]
         if not covered:
             excluded = [
                 f"{number:g} {unit}"
-                for number, unit in remaining
+                for number, unit in pool
                 if any(_range_covers(h, number) is False for h in unitless)
             ]
             if excluded:
@@ -1068,6 +1088,19 @@ def _build_verified_cell(
     except (TypeError, ValueError):
         page_i = None
     companions = _same_row_companions(table, row_index, col_index)
+    caption = str(table.get("caption") or chunk.get("caption") or "")
+    headers = [str(h or "") for h in (table.get("headers") or [])]
+    unit = str(ev.get("unit") or "").strip()
+    if not unit:
+        unit_blob = " ".join([caption, *headers, *row_headers, *col_headers])
+        um = re.search(
+            r"(?i)(?:dose|amount|value|strength|qty|quantity|total|price|cost)"
+            r"\s*\(\s*([A-Za-zμµ%]{1,12})\s*\)"
+            r"|\(\s*([A-Za-zμµ%]{1,8})\s*\)",
+            unit_blob,
+        )
+        if um:
+            unit = (um.group(1) or um.group(2) or "").strip()
     return VerifiedCell(
         value=value,
         row_headers=row_headers,
@@ -1077,15 +1110,15 @@ def _build_verified_cell(
         page=page_i,
         filename=str(chunk.get("filename") or chunk.get("source") or ""),
         confidence=0.0,
-        table_headers=[str(h or "") for h in (table.get("headers") or [])],
+        table_headers=headers,
         evidence={
-            "table_caption": str(table.get("caption") or chunk.get("caption") or ""),
+            "table_caption": caption,
             "table_section": str(chunk.get("section") or ""),
             "chunk_id": str(chunk.get("chunk_id") or chunk.get("id") or chunk_id),
             "original_cell_text": value,
             "verification": "llm_select_python_verify",
             "reasoning_summary": str(payload.get("reasoning_summary") or ""),
-            "unit": str(ev.get("unit") or ""),
+            "unit": unit,
             "source_context": str(ev.get("source_context") or ""),
             "same_row_companions": companions,
         },
@@ -1484,6 +1517,228 @@ def _result_from_outcome(
     )
 
 
+def _python_axis_lookup_fallback(
+    question: str,
+    candidates: Sequence[Dict[str, Any]],
+) -> Optional[VerifiedCell]:
+    """Deterministic axis scan when the LLM selector cannot pin a unique cell.
+
+    Domain-agnostic: for each candidate table, find numeric cells whose
+    row+column range headers cover every unit-bearing question factor and
+    do not hard-conflict. Prefer columns that look like value fields
+    (dose/amount/value/…). Require a unique winning value across matches.
+    """
+    factors = _question_unit_values(question)
+    if len(factors) < 2:
+        return None
+    matches: List[Tuple[int, Dict[str, Any], int, int, str]] = []
+    for item in candidates or []:
+        table = item.get("table") or {}
+        rows = table.get("rows") or []
+        headers = [str(h or "") for h in (table.get("headers") or [])]
+        if not rows or not headers:
+            continue
+        for r_i, row in enumerate(rows):
+            if not isinstance(row, (list, tuple)):
+                continue
+            for c_i in range(1, len(row)):  # col 0 is typically the row axis
+                cell = str(row[c_i] if row[c_i] is not None else "").strip()
+                if not cell or not re.search(r"\d", cell):
+                    continue
+                # Skip schedule/frequency cells.
+                col_h = headers[c_i] if c_i < len(headers) else ""
+                if re.search(r"(?i)\bfreq|frequency|schedule|interval\b", col_h):
+                    continue
+                if re.search(r"(?i)^every\s+\d+", cell):
+                    continue
+                row_headers, col_headers = _headers_for(table, r_i, c_i)
+                if _axis_hard_conflict(
+                    question,
+                    row_headers=row_headers,
+                    col_headers=col_headers,
+                    table=table,
+                ):
+                    continue
+                # Require every factor to be covered by selected headers (or
+                # unit-matched elsewhere on the selected axes).
+                covered_ok = True
+                selected = [str(h) for h in list(row_headers) + list(col_headers) if h]
+                for number, unit in factors:
+                    unit_headers = [
+                        h
+                        for h in selected
+                        if unit in h.lower() and _parse_range_bounds(h)
+                    ]
+                    if unit_headers:
+                        if not any(
+                            _range_covers(h, number) is True for h in unit_headers
+                        ):
+                            covered_ok = False
+                            break
+                        continue
+                    unitless = [
+                        h for h in selected if _is_unitless_range_header(h)
+                    ]
+                    if unit.lower().split("/")[0] in {
+                        "mg",
+                        "g",
+                        "mcg",
+                        "ml",
+                        "usd",
+                        "eur",
+                        "%",
+                    } and "/" not in unit.lower():
+                        # Prescribed/value amounts need not match axis bands.
+                        continue
+                    if unitless and not any(
+                        _range_covers(h, number) is True for h in unitless
+                    ):
+                        covered_ok = False
+                        break
+                if not covered_ok:
+                    continue
+                score = 0
+                blob = " ".join(selected + headers + [str(table.get("caption") or "")])
+                if re.search(
+                    r"(?i)\b(dose|amount|value|price|cost|qty|quantity|total|limit|strength)\b",
+                    blob,
+                ):
+                    score += 3
+                if re.search(r"(?i)\b(dose|amount|value)\b", col_h):
+                    score += 2
+                matches.append((score, item, r_i, c_i, cell))
+    if not matches:
+        return None
+    # Prefer tables whose caption/section aligns with question cues (age band,
+    # table number, cohort) so sibling matrices do not cancel uniqueness.
+    q_l = (question or "").lower()
+    for i, (score, item, r_i, c_i, cell) in enumerate(matches):
+        table = item.get("table") or {}
+        chunk = item.get("chunk") or {}
+        meta = " ".join(
+            [
+                str(table.get("caption") or ""),
+                str(chunk.get("caption") or ""),
+                str(chunk.get("section") or ""),
+            ]
+        ).lower()
+        bonus = 0
+        if re.search(r"\btable\s*1\b", q_l) and re.search(r"\btable\s*1\b", meta):
+            bonus += 5
+        if re.search(r"\btable\s*2\b", q_l) and re.search(r"\btable\s*2\b", meta):
+            bonus += 5
+        if re.search(r"(>=?\s*12|12 years|adult)", q_l) and re.search(
+            r"(12 years|adult|older)", meta
+        ):
+            bonus += 3
+        if re.search(r"(pediatric|6\s*to|<\s*12|children)", q_l) and re.search(
+            r"(pediatric|6\s*to|<\s*12|children)", meta
+        ):
+            bonus += 3
+        if re.search(r"\basthma\b", q_l) and re.search(r"\basthma\b", meta):
+            bonus += 2
+        if re.search(r"\bcrsw?np\b", q_l) and "crsw" in meta.replace(" ", ""):
+            bonus += 2
+        matches[i] = (score + bonus, item, r_i, c_i, cell)
+    matches.sort(key=lambda m: (-m[0], m[4]))
+    best_score = matches[0][0]
+    top = [m for m in matches if m[0] == best_score]
+    values = {_normalize_value(m[4]) for m in top}
+    if len(values) != 1:
+        # If the best-scoring table alone is unique, accept that table's cell.
+        best_item_id = str(
+            (top[0][1].get("table_id") or (top[0][1].get("table") or {}).get("table_id") or "")
+        )
+        same_table = [
+            m
+            for m in top
+            if str(
+                m[1].get("table_id")
+                or (m[1].get("table") or {}).get("table_id")
+                or ""
+            )
+            == best_item_id
+        ]
+        same_vals = {_normalize_value(m[4]) for m in same_table}
+        if len(same_vals) != 1:
+            return None
+        top = same_table
+    _score, item, r_i, c_i, cell = top[0]
+    table = item.get("table") or {}
+    table_id = str(item.get("table_id") or table.get("table_id") or "")
+    chunk = item.get("chunk") or {}
+    return _build_verified_cell(
+        {
+            "value": cell,
+            "table_id": table_id,
+            "chunk_id": str(chunk.get("chunk_id") or chunk.get("id") or ""),
+            "row_index": r_i,
+            "col_index": c_i,
+            "unit": "",
+            "source_context": "python_axis_lookup_fallback",
+        },
+        item=item,
+        value=cell,
+        row_index=r_i,
+        col_index=c_i,
+        payload={
+            "reasoning_summary": (
+                "Deterministic axis lookup fallback after LLM selector miss"
+            )
+        },
+    )
+
+
+def _should_soft_wrong_table_miss(
+    question: str,
+    outcome: InsufficientEvidence,
+    payload: Any,
+) -> bool:
+    """True when not_found means wrong/unusable tables, not a hard cell conflict.
+
+    Softening lets iterative retrieval + prose RAG continue. Hard abstain remains
+    for ambiguous multi-cell conflicts and structural verification failures.
+    """
+    status = str(outcome.status or "").strip().lower()
+    if status not in {STATUS_NOT_FOUND, "insufficient_evidence"}:
+        return False
+    if outcome.candidate_values and len(outcome.candidate_values) > 1:
+        return False
+    raw = payload if isinstance(payload, dict) else {}
+    selected = raw.get("selected_evidence") or []
+    if raw.get("additional_search_queries") or raw.get("missing_information"):
+        return True
+    reason = str(outcome.reason or "").strip().lower()
+    signals = (
+        "do not include",
+        "does not include",
+        "not include",
+        "only contain",
+        "only contains",
+        "not present",
+        "not addressed",
+        "adverse reaction",
+        "different table",
+        "wrong table",
+        "not in either",
+        "cannot answer",
+        "no dosing",
+        "dosing information",
+        "administration guideline",
+        "not found in",
+        "no row–column",
+        "no row-column",
+        "no verified table",
+    )
+    if any(s in reason for s in signals):
+        return True
+    # Do not soft every structured not_found. When the right dosing table is
+    # already retrieved but the selector missed the cell, hard insufficient is
+    # safer than an unpinned prose guess. Soft only for explicit wrong-table
+    # language (above) or when the analyst already requested follow-up evidence.
+    return False
+
+
 def interpret_table_question(
     question: str,
     chunks: List[Dict[str, Any]],
@@ -1495,14 +1750,20 @@ def interpret_table_question(
     settings = settings or get_settings()
     q = (question or "").strip()
     table_chunks_present = any(_is_table_chunk(c) for c in (chunks or []))
-    if not is_structured_lookup_question(q) and not table_chunks_present:
+    structured_q = is_structured_lookup_question(q)
+    # Prose questions with no tables: skip. Prose questions that merely
+    # co-retrieved unrelated tables still attempt selection, but any miss is
+    # forced soft so reconcile cannot hard-abstain over a text answer.
+    if not structured_q and not table_chunks_present:
         return TableInterpretationResult(is_structured_lookup=False)
+    soft_only = bool(not structured_q and table_chunks_present)
 
     if not bool(getattr(settings, "TABLE_RAG_SELECTOR_ENABLED", True)):
         return _result_from_outcome(
             InsufficientEvidence(
                 reason="LLM table reasoning disabled",
                 status=STATUS_SELECTOR_FAILED,
+                soft=True if soft_only else False,
             )
         )
 
@@ -1514,7 +1775,7 @@ def interpret_table_question(
             q, candidates, chunks, max_total=max_total
         )
     if not candidates:
-        # Soft: allow prose answer when no table chunks arrived.
+        # Soft: allow prose answer when no usable table grid arrived.
         if not table_chunks_present:
             return TableInterpretationResult(is_structured_lookup=False)
         return _result_from_outcome(
@@ -1586,9 +1847,94 @@ def interpret_table_question(
                     payload = retry_payload
                     outcome = retry_outcome
 
+    # Deterministic fallback when the LLM still cannot pin a unique cell.
+    if isinstance(outcome, InsufficientEvidence):
+        fallback = _python_axis_lookup_fallback(q, candidates)
+        if fallback is not None:
+            outcome = fallback
+            if isinstance(payload, dict):
+                payload = dict(payload)
+                payload["reasoning_summary"] = (
+                    str(payload.get("reasoning_summary") or "")
+                    + " | python_axis_lookup_fallback"
+                ).strip(" |")
+
+    # Classification / regimen-comparison questions often need prose about
+    # indication mismatch rather than a pinned matrix cell. Keep those soft so
+    # reconcile does not replace a grounded off-label / wrong-table answer.
+    if isinstance(outcome, InsufficientEvidence) and not outcome.soft:
+        prescribed = bool(
+            re.search(r"(?i)\b(prescribed|received|was given|got|administer)\b", q)
+        )
+        pure_lookup = bool(
+            re.search(
+                r"(?i)\b(what (is|are|dose)|label dose|recommended dose|"
+                r"from the (dosing )?table|according to table)\b",
+                q,
+            )
+        )
+        classify = bool(
+            re.search(
+                r"(?i)\b(off[- ]?label|adverse event|\bae\b|special situation|"
+                r"medication error|classify|appropriate|is that correct|"
+                r"wrong table|not asthma)\b",
+                q,
+            )
+        )
+        if (prescribed or classify) and not pure_lookup:
+            outcome = InsufficientEvidence(
+                reason=outcome.reason,
+                structured_lookup=outcome.structured_lookup,
+                status=outcome.status,
+                soft=True,
+                candidate_values=list(outcome.candidate_values or []),
+                candidate_table_ids=list(outcome.candidate_table_ids or []),
+                missing_dimensions=list(outcome.missing_dimensions or []),
+                structural_validation=dict(outcome.structural_validation or {}),
+            )
+
+    # Wrong-table / empty-selection misses: keep soft so iterative retrieval and
+    # prose fallback can run instead of hard-abstaining on the first AE/sibling
+    # table that cannot answer a dosing or mixed-evidence question.
+    if isinstance(outcome, InsufficientEvidence) and not outcome.soft:
+        if soft_only or _should_soft_wrong_table_miss(q, outcome, payload):
+            outcome = InsufficientEvidence(
+                reason=outcome.reason,
+                structured_lookup=outcome.structured_lookup,
+                status=outcome.status,
+                soft=True,
+                candidate_values=list(outcome.candidate_values or []),
+                candidate_table_ids=list(outcome.candidate_table_ids or []),
+                missing_dimensions=list(outcome.missing_dimensions or [])
+                or ["matching table for question axes"],
+                structural_validation=dict(outcome.structural_validation or {}),
+            )
+            if isinstance(payload, dict):
+                payload = dict(payload)
+                miss = [
+                    str(x).strip()
+                    for x in (payload.get("missing_information") or [])
+                    if str(x or "").strip()
+                ]
+                if not miss:
+                    payload["missing_information"] = [
+                        "table or passage that answers the question axes"
+                    ]
+                queries = [
+                    str(x).strip()
+                    for x in (payload.get("additional_search_queries") or [])
+                    if str(x or "").strip()
+                ]
+                if not queries and q:
+                    payload["additional_search_queries"] = [q]
+
     return _result_from_outcome(
         outcome,
-        reasoning_summary=str(payload.get("reasoning_summary") or ""),
+        reasoning_summary=str(
+            (payload or {}).get("reasoning_summary")
+            if isinstance(payload, dict)
+            else ""
+        ),
         raw_llm=payload if isinstance(payload, dict) else {},
     )
 

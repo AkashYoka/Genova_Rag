@@ -11,6 +11,7 @@ from app.services.prompt_management.defaults import (
     DOMAIN_META,
     DOMAIN_SYSTEM_DEFAULTS,
     DOMAIN_TASK_DEFAULTS,
+    PERSONA_SECTION_MARKERS,
     domain_overlay_name,
     global_system_default,
     global_task_defaults,
@@ -26,8 +27,28 @@ BUILTIN_ORDER = [
     ("legal", False, 40),
     ("research", False, 50),
     ("finance", False, 60),
+    ("trading", False, 65),
     ("technical", False, 70),
+    ("chemistry", False, 80),
+    ("mathematics", False, 90),
 ]
+
+# Domains whose stock overlays should elevate to the eight-section persona layout.
+_PERSONA_UPGRADE_SLUGS = frozenset(
+    {
+        "general",
+        "medical",
+        "payment",
+        "education",
+        "legal",
+        "research",
+        "finance",
+        "trading",
+        "technical",
+        "chemistry",
+        "mathematics",
+    }
+)
 
 
 def _snapshot(db: Session, template: PromptTemplate, note: str, user_id: Optional[str] = None) -> None:
@@ -118,7 +139,32 @@ def _should_upgrade_payment_overlay(content: str) -> bool:
     # Drop country-/fixture-specific invoice examples.
     if any(marker in text for marker in ("GSTIN", "CGST/SGST", "8,850.00", "HSN")):
         return True
+    if _missing_persona_sections(text):
+        return True
     return False
+
+
+def _missing_persona_sections(content: str) -> bool:
+    """True when most of the eight persona section headers are absent."""
+    text = content or ""
+    present = sum(1 for marker in PERSONA_SECTION_MARKERS if marker in text)
+    return present < 6
+
+
+def _should_upgrade_persona_overlay(slug: str, content: str) -> bool:
+    """Elevate stock DOMAIN FOCUS overlays to the eight-section persona layout.
+
+    Never upgrades content that no longer looks like a built-in DOMAIN FOCUS stub.
+    """
+    if slug not in _PERSONA_UPGRADE_SLUGS:
+        return False
+    text = (content or "").strip()
+    if not text.startswith("DOMAIN FOCUS"):
+        return False
+    # Customized prompts usually drop the stock header framing.
+    if slug == "medical" and "Never invent clinical guidance" not in text:
+        return False
+    return _missing_persona_sections(text)
 
 
 def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) -> None:
@@ -234,7 +280,10 @@ def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) 
         if (
             slug == "medical"
             and existing_overlay
-            and _should_upgrade_medical_overlay(existing_overlay.content)
+            and (
+                _should_upgrade_medical_overlay(existing_overlay.content)
+                or _should_upgrade_persona_overlay(slug, existing_overlay.content)
+            )
             and content.strip()
             and existing_overlay.content.strip() != content.strip()
         ):
@@ -261,6 +310,21 @@ def ensure_default_prompts(db: Session, *, upgrade_stock_overlays: bool = True) 
             existing_overlay.is_default = True
             _snapshot(db, existing_overlay, "Payment invoice line-item overlay upgrade")
             logger.info("Upgraded payment domain overlay with invoice line-item rules")
+            continue
+        if (
+            existing_overlay
+            and existing_overlay.is_default
+            and _should_upgrade_persona_overlay(slug, existing_overlay.content)
+            and content.strip()
+            and existing_overlay.content.strip() != content.strip()
+        ):
+            existing_overlay.content = content
+            existing_overlay.description = DOMAIN_META[slug]["purpose"]
+            existing_overlay.version = int(existing_overlay.version or 1) + 1
+            existing_overlay.is_active = True
+            existing_overlay.is_default = True
+            _snapshot(db, existing_overlay, "Persona analyst overlay upgrade")
+            logger.info("Upgraded %s domain overlay to persona analyst layout", slug)
             continue
         upsert_template(
             domain=domain,

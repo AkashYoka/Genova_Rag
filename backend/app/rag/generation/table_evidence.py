@@ -256,13 +256,28 @@ class VerifiedCell:
                     + "; ".join(bits)
                     + "\n"
                 )
+        unit = str(self.evidence.get("unit") or "").strip()
+        display_value = (
+            f"{self.value} {unit}".strip()
+            if unit and unit.lower() not in str(self.value).lower()
+            else str(self.value)
+        )
+        unit_rule = (
+            f"- Unit: {unit}\n"
+            "- Never replace this unit with an axis unit from another column "
+            "(e.g. do not rewrite a dose amount using IU/mL, kg, or mcg unless "
+            "that unit is the verified cell unit).\n"
+            if unit
+            else ""
+        )
         return (
             f"{VERIFIED_BLOCK_MARKER}\n"
             "Your final answer MUST use this exact cell value. "
             "Do not replace it with a neighboring cell, another table, or a guessed value.\n"
-            f"Your first sentence / takeaway MUST state this value verbatim: {self.value}.\n"
+            f"Your first sentence / takeaway MUST state this value verbatim: {display_value}.\n"
             "Any other conflicting numeric value in the takeaway is a critical error.\n"
-            f"- Value: {self.value}\n"
+            f"- Value: {display_value}\n"
+            f"{unit_rule}"
             f"- Row: {row_s}\n"
             f"- Column: {col_s}\n"
             f"{companion_lines}"

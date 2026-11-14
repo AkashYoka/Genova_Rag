@@ -17,7 +17,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
-from app.cache import get_cached_payload, get_cached_response, set_cached_response
+from app.cache import (
+    clear_response_cache,
+    get_cached_payload,
+    get_cached_response,
+    set_cached_response,
+)
 from app.database import get_db
 from app.exceptions import (
     AppException,
@@ -832,6 +837,21 @@ def generate_answer_stream(
         llm_provider=llm_provider,
         session_id=session_id,
     )
+
+
+@router.post(
+    "/cache/clear",
+    summary="Clear sticky RAG answer cache",
+    description=(
+        "Drops in-process LRU (and Redis DB when connected) answer cache entries. "
+        "Intended for E2E batteries after code changes."
+    ),
+)
+def clear_chat_response_cache(
+    user: User = Depends(get_current_user),
+):
+    cleared = clear_response_cache()
+    return {"cleared": cleared, "user_id": str(user.id)}
 
 
 @router.post(

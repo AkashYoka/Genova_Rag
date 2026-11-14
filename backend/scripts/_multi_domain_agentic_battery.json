@@ -1,0 +1,427 @@
+{
+  "doc_ids": {
+    "trading": "3e8616b1-baaa-4648-89d6-a3669c11d35f",
+    "research": "14d09766-cb93-4f4e-9232-27c75b42a971",
+    "medical": "37a6219e-4c06-456f-a35e-17adee8999c8",
+    "chemistry": "59118577-e022-4b09-974f-764933e2a4cf",
+    "algebra": "6df2ad7b-4944-4e55-96c9-f5f00374a932"
+  },
+  "results": [
+    {
+      "id": "T1",
+      "doc": "trading",
+      "document_id": "3e8616b1-baaa-4648-89d6-a3669c11d35f",
+      "persona_expected": "trading",
+      "question": "According to the document, what should a trader not do during a good harvest year?",
+      "status": 200,
+      "elapsed_s": 7.25,
+      "score": {
+        "pass": 3,
+        "total": 3,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true,
+          "page_or_source": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "According to the document, during a good harvest year, a trader should not sell rice. The document explicitly states:\n\n> \"I would say not to sell rice in a good harvest year. They forecast of a good harvest can lead to a bearish market. But it is rare that every granary in Japan has the same good harvest in any given year. Some granaries are sure to have a bad harvest, and the price is destined to rise in Osaka beginning in September and October. And there are people who start buying up in winter because everybody is speaking of a good harvest.\" [Source: Trading.pdf, Page 3]\n\nThe reasoning provided is that even though a good harvest is forecasted, not all regions will have a good harvest, an",
+      "error": null
+    },
+    {
+      "id": "T2",
+      "doc": "trading",
+      "document_id": "3e8616b1-baaa-4648-89d6-a3669c11d35f",
+      "persona_expected": "trading",
+      "question": "In section 2.1.1 'In trading the beginning is crucial', how many days should you wait from the moment you feel you could profit before buying or selling?",
+      "status": 200,
+      "elapsed_s": 14.88,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "any": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "According to section 2.1.1 'In trading the beginning is crucial', you should wait **three days** from the moment you feel you could profit before buying or selling.\n\nThe document states:\n\n> \"In trading, the beginning is crucial. If the beginning is bad, the ensuing course will continue in disorder. You should never rush when entering trading because rushing is the same as a bad beginning. When buying or selling, wait for three days from the moment you feel you could profit from a certain market condition. This is the rule.\" [Source: Trading.pdf, Page 2]\n\nThis rule is emphasized as part of the \"rule of the three\" that traders should follow when entering into a trade.",
+      "error": null
+    },
+    {
+      "id": "T3",
+      "doc": "trading",
+      "document_id": "3e8616b1-baaa-4648-89d6-a3669c11d35f",
+      "persona_expected": "trading",
+      "question": "Summarize the guidance about buying when everybody is weighed down and the market looks bearish.",
+      "status": 200,
+      "elapsed_s": 11.84,
+      "score": {
+        "pass": 2,
+        "total": 2,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "### Summary of Guidance on Buying When Everybody is Weighed Down and the Market Looks Bearish\n\nThe document provides several key pieces of guidance for traders on when and how to buy rice when the market appears bearish or when others are hesitant due to negative outlooks. Here is a summary of the relevant advice:\n\n---\n\n#### **1. Buy During Market Stagnation or Weakness**\nWhen the market appears bearish or stagnant, and others are reluctant to buy due to pessimism, this can be a strategic time to enter the market. The document emphasizes that **buying during such times can lead to significant profit opportunities** [Source: Trading.pdf, Page 12, Section 2.7.3].\n\n> *\"When the market is in thi",
+      "error": null
+    },
+    {
+      "id": "T4",
+      "doc": "trading",
+      "document_id": "3e8616b1-baaa-4648-89d6-a3669c11d35f",
+      "persona_expected": "trading",
+      "question": "What Xolair dose does this trading document recommend for asthma?",
+      "status": 200,
+      "elapsed_s": 21.61,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "abstain": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "The document provided focuses entirely on trading strategies, market analysis, and historical context related to rice trading and investment methods. There is no mention of asthma, Xolair, or any medical treatments within the document.\n\nTherefore, the document does not contain any information regarding the recommended Xolair dose for asthma.\n\n**Answer:** The document does not recommend any Xolair dose for asthma, as it does not discuss medical treatments or asthma management. [Source: Trading.pdf, Pages 1-18]",
+      "error": null
+    },
+    {
+      "id": "R1",
+      "doc": "research",
+      "document_id": "14d09766-cb93-4f4e-9232-27c75b42a971",
+      "persona_expected": "research",
+      "question": "From the opening title block, what survey topic does this paper cover, and name author Qinggang Zhang's role on the author list?",
+      "status": 200,
+      "elapsed_s": 11.7,
+      "score": {
+        "pass": 2,
+        "total": 2,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "The paper covers a comprehensive analysis of **GraphRAG**, detailing its taxonomy, mechanisms, challenges, and future research directions. It compares GraphRAG with traditional RAG systems and explores its applications across various domains.\n\nRegarding the author Qinggang Zhang, the document does not provide specific information about his role on the author list. The references section lists several authors and their works, but it does not detail the roles of individual authors within the paper itself [Source: Research.pdf, Page 19-21][Source: Research.pdf, Page 3].\n\nThe main focus of the paper, as indicated in the overview section, is to provide a detailed examination of GraphRAG, its adva",
+      "error": null
+    },
+    {
+      "id": "R2",
+      "doc": "research",
+      "document_id": "14d09766-cb93-4f4e-9232-27c75b42a971",
+      "persona_expected": "research",
+      "question": "According to the abstract, what three critical challenges do traditional RAG systems face?",
+      "status": 200,
+      "elapsed_s": 10.91,
+      "score": {
+        "pass": 3,
+        "total": 3,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true,
+          "any3": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "Based on the abstract of the survey paper, traditional RAG systems face three critical challenges:\n\n1. **Complex query understanding in professional domains**: Traditional RAG struggles to maintain logical consistency and professional accuracy throughout extended reasoning chains, particularly when dealing with technical constraints or domain-specific contexts [Source: Research.pdf, Page 2].\n\n2. **Difficulties in knowledge integration across distributed sources**: Domain knowledge is typically sparsely distributed across various documents and data sources. Traditional RAG methods using chunking sacrifice critical contextual information, making it difficult to resolve multi-hop questions and ",
+      "error": null
+    },
+    {
+      "id": "R3",
+      "doc": "research",
+      "document_id": "14d09766-cb93-4f4e-9232-27c75b42a971",
+      "persona_expected": "research",
+      "question": "How does the paper categorize GraphRAG models based on graph structure utilization?",
+      "status": 200,
+      "elapsed_s": 15.78,
+      "score": {
+        "pass": 2,
+        "total": 2,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "The paper categorizes GraphRAG models into three distinct paradigms based on how they utilize graph structures:\n\n1. **Knowledge-based GraphRAG**: This approach transforms unstructured textual documents into explicit and structured knowledge graphs (KGs). In this paradigm, nodes represent domain concepts and edges capture semantic relationships between them. This enables better representation of hierarchical relationships and complex knowledge dependencies, focusing on creating a structured knowledge representation for improved reasoning capability [Source: Research.pdf, Page 3].\n\n2. **Index-based GraphRAG**: This approach maintains the original textual form while utilizing graph structures p",
+      "error": null
+    },
+    {
+      "id": "R4",
+      "doc": "research",
+      "document_id": "14d09766-cb93-4f4e-9232-27c75b42a971",
+      "persona_expected": "research",
+      "question": "What pediatric Xolair dosing table does this GraphRAG survey recommend?",
+      "status": 200,
+      "elapsed_s": 16.37,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "abstain": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "The provided document excerpts do not contain any information regarding pediatric Xolair dosing tables or recommendations. The content focuses on GraphRAG applications, traditional RAG pipelines, open-source projects, and benchmark datasets, but there is no mention of Xolair or its dosing guidelines for pediatric patients.\n\nTherefore, I cannot provide a comprehensive answer based on the document context provided.\n\n**Conclusion:** The document does not contain relevant information about pediatric Xolair dosing tables. [Source: Research.pdf, Pages 3, 21, 22, 20]",
+      "error": null
+    },
+    {
+      "id": "M1",
+      "doc": "medical",
+      "document_id": "37a6219e-4c06-456f-a35e-17adee8999c8",
+      "persona_expected": "medical",
+      "question": "What is ROZLYTREK (entrectinib) indicated for in ROS1-positive disease?",
+      "status": 200,
+      "elapsed_s": 8.54,
+      "score": {
+        "pass": 3,
+        "total": 3,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true,
+          "any3": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "### Clinical Takeaway\nROZLYTREK (entrectinib) is indicated for the treatment of **adult patients with ROS1-positive metastatic non-small cell lung cancer (NSCLC)**, as detected by an FDA-approved test.\n\n### Labeled Indication\n- **Indication**: Adult patients with ROS1-positive metastatic non-small cell lung cancer (NSCLC), as detected by an FDA-approved test.\n- **Source**: The indication is clearly stated in the **Indications and Usage** section of the prescribing information.\n\n#### Key Points from the Document:\n- **Section Reference**: The indication is listed under **Section 1.1 ROS1-Positive Non-Small Cell Lung Cancer** in the full prescribing information [Source: Medical.pdf, Page 1].\n- ",
+      "error": null
+    },
+    {
+      "id": "M2",
+      "doc": "medical",
+      "document_id": "37a6219e-4c06-456f-a35e-17adee8999c8",
+      "persona_expected": "medical",
+      "question": "According to the footnote under the NTRK pediatric BSA dosing guidance, what target dose in mg/m2 are the BSA categories based on?",
+      "status": 200,
+      "elapsed_s": 17.38,
+      "score": {
+        "pass": 2,
+        "total": 2,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "page_or_source": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "Based on the document, the BSA categories and recommended dosage for pediatric patients with NTRK Gene Fusion-Positive Solid Tumors are based on closely matching exposures to a target dose of **300 mg/m²**.\n\n> \"*BSA categories and recommended dosage above are based on closely matching exposures to a target dose of 300 mg/m2*\"  \n> [Source: Medical.pdf, Page 3]\n\nThis target dose is explicitly stated in the footnote under the pediatric BSA dosing guidance in the Dosage and Administration section.",
+      "error": null
+    },
+    {
+      "id": "M3",
+      "doc": "medical",
+      "document_id": "37a6219e-4c06-456f-a35e-17adee8999c8",
+      "persona_expected": "medical",
+      "question": "If a ROZLYTREK dose is missed, when should the patient make up that dose according to the administration overview?",
+      "status": 200,
+      "elapsed_s": 26.99,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "any": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "### Missed Dose Guidance for ROZLYTREK\n\nAccording to the **Dosage and Administration** section of the ROZLYTREK prescribing information, the guidance for missed doses is as follows:\n\n- **If a dose of ROZLYTREK is missed, make up that dose unless the next dose is due within 12 hours** [Source: Medical.pdf, Page 3, Section 2.4 ROZLYTREK Administration Overview].\n\n**Key takeaway:** Patients should take the missed dose **only if the next scheduled dose is more than 12 hours away**. If the next dose is due within 12 hours, the missed dose should be skipped to avoid taking two doses too close together.\n\nThis instruction applies to all dosage forms of ROZLYTREK (capsules, oral suspension, or oral p",
+      "error": null
+    },
+    {
+      "id": "M4",
+      "doc": "medical",
+      "document_id": "37a6219e-4c06-456f-a35e-17adee8999c8",
+      "persona_expected": "medical",
+      "question": "What Xolair asthma IgE/weight dose does the ROZLYTREK label recommend?",
+      "status": 200,
+      "elapsed_s": 26.74,
+      "score": {
+        "pass": 0,
+        "total": 1,
+        "ok": false,
+        "checks": {
+          "abstain": false
+        }
+      },
+      "persona_ok": false,
+      "ans_head": "I couldn't find sufficient information in the uploaded documents to answer this question. The provided tables and text only contain adverse reaction incidence data for ROZLYTREK and do not include dosing information for Xolair or any reference to asthma IgE/weight dosing recommendations. The documents focus on ROZLYTREK's indications, dosing, and safety profile for ROS1-positive NSCLC and NTRK gene fusion-positive solid tumors, but do not address Xolair dosing regimens.",
+      "error": null
+    },
+    {
+      "id": "C1",
+      "doc": "chemistry",
+      "document_id": "59118577-e022-4b09-974f-764933e2a4cf",
+      "persona_expected": "chemistry",
+      "question": "What three domains do chemists use to study and describe the behavior of matter and energy?",
+      "status": 200,
+      "elapsed_s": 9.1,
+      "score": {
+        "pass": 3,
+        "total": 3,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true,
+          "any3": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "Chemists study and describe the behavior of matter and energy in three different domains:\n\n1. **Macroscopic Domain**: This is the realm of everyday things that are large enough to be sensed directly by human sight or touch. It includes observable properties and changes such as density, solubility, and flammability [Source: Chemistr.pdf, Page 3].\n   \n2. **Microscopic Domain**: This domain involves the imagination and includes aspects that are too small to be seen with the naked eye, such as atoms, molecules, ions, electrons, protons, and neutrons. It also encompasses chemical bonds and the changes in individual molecules [Source: Chemistr.pdf, Page 3].\n\n3. **Symbolic Domain**: This contains t",
+      "error": null
+    },
+    {
+      "id": "C2",
+      "doc": "chemistry",
+      "document_id": "59118577-e022-4b09-974f-764933e2a4cf",
+      "persona_expected": "chemistry",
+      "question": "According to Table 1.1 on elemental composition of Earth, what is the percent mass of oxygen?",
+      "status": 200,
+      "elapsed_s": 8.19,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "any": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "The percent mass of oxygen in the elemental composition of Earth, as shown in Table 1.1, is **49.20 %**.\n\nThis value is explicitly stated in the table, which lists oxygen (O) with a corresponding percent mass of 49.20% [Source: Chemistr.pdf, Page 12]. The table also confirms that oxygen is the most abundant element in the Earth's crust and atmosphere, constituting nearly one-half of the total quantity of the eleven elements that make up about 99% of the Earth's composition [Source: Chemistr.pdf, Page 12].",
+      "error": null
+    },
+    {
+      "id": "C3",
+      "doc": "chemistry",
+      "document_id": "59118577-e022-4b09-974f-764933e2a4cf",
+      "persona_expected": "chemistry",
+      "question": "Define a molecule as stated in this document, and give one elemental example that consists of pairs of atoms.",
+      "status": 200,
+      "elapsed_s": 16.62,
+      "score": {
+        "pass": 2,
+        "total": 2,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "A **molecule** is defined in the document as \"two or more atoms joined by strong forces called chemical bonds.\" These atoms in a molecule move around as a unit, similar to how cans of soda are linked in a six-pack or keys on a keyring [Source: Chemistr.pdf, Page 10].\n\nOne elemental example that consists of pairs of atoms is **hydrogen**. The document states that elements such as hydrogen, nitrogen, oxygen, and chlorine are composed of units that consist of pairs of atoms [Source: Chemistr.pdf, Page 10]. Specifically, it mentions:\n\n> \"Other elements, such as the gases hydrogen, nitrogen, oxygen, and chlorine, are composed of units that consist of pairs of atoms (Figure 1.11).\" [Source: Chemis",
+      "error": null
+    },
+    {
+      "id": "C4",
+      "doc": "chemistry",
+      "document_id": "59118577-e022-4b09-974f-764933e2a4cf",
+      "persona_expected": "chemistry",
+      "question": "What is the recommended ROZLYTREK dose for BSA ≥1.51 m2 in this chemistry textbook?",
+      "status": 200,
+      "elapsed_s": 25.42,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "abstain": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "I couldn't find any information about ROZLYTREK or dosing recommendations for BSA ≥1.51 m² in the provided documents. The available content focuses on the elemental composition of the Earth's crust and atmosphere, as well as general chemistry concepts such as phases of matter, classification of matter, and molecular structures [Source: Chemistr.pdf, Pages 10-13]. There is no mention of pharmaceuticals, dosing guidelines, or BSA-based dosing calculations in these excerpts.\n\nSpecifically:\n- The documents discuss elements like oxygen, silicon, and aluminum and their percent mass in the Earth's crust [Source: Chemistr.pdf, Page 12].\n- They describe molecules, chemical bonds, and classifications ",
+      "error": null
+    },
+    {
+      "id": "A1",
+      "doc": "algebra",
+      "document_id": "6df2ad7b-4944-4e55-96c9-f5f00374a932",
+      "persona_expected": "mathematics",
+      "question": "How does Example 1 write the integer 7 as a rational number?",
+      "status": 200,
+      "elapsed_s": 8.33,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "any": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "Example 1 in the document shows how to write the integer 7 as a rational number. A rational number is defined as a fraction where the numerator and denominator are integers, and the denominator is not zero [Source: AlgebraAndTrigo.pdf, Page 2].\n\n### Solution from Example 1:\nThe integer 7 is written as a rational number by expressing it as a fraction with the integer in the numerator and 1 in the denominator:\n\n**7 = \\(\\frac{7}{1}\\)**  \n\nThis follows the general rule that any integer \\(a\\) can be expressed as a rational number by writing it as \\(\\frac{a}{1}\\) [Source: AlgebraAndTrigo.pdf, Page 2].\n\n### Key Points:\n- **Rational Number Definition**: A number that can be expressed as \\(\\frac{m}{n",
+      "error": null
+    },
+    {
+      "id": "A2",
+      "doc": "algebra",
+      "document_id": "6df2ad7b-4944-4e55-96c9-f5f00374a932",
+      "persona_expected": "mathematics",
+      "question": "According to the How To section, what are the four steps for simplifying an expression using the order of operations?",
+      "status": 200,
+      "elapsed_s": 12.65,
+      "score": {
+        "pass": 4,
+        "total": 4,
+        "ok": true,
+        "checks": {
+          "any": true,
+          "any2": true,
+          "any3": true,
+          "any4": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "The How To section in the document outlines the four steps for simplifying an expression using the order of operations as follows:\n\n1. **Simplify any expressions within grouping symbols.** This includes parentheses ( ), brackets [ ], braces { }, fraction bars, radicals, and absolute value bars [Source: AlgebraAndTrigo.pdf, Page 5].\n2. **Simplify any expressions containing exponents or radicals.** This step involves evaluating powers and roots [Source: AlgebraAndTrigo.pdf, Page 5].\n3. **Perform any multiplication and division in order, from left to right.** This step requires handling all multiplication and division operations as they appear from left to right [Source: AlgebraAndTrigo.pdf, Pa",
+      "error": null
+    },
+    {
+      "id": "A3",
+      "doc": "algebra",
+      "document_id": "6df2ad7b-4944-4e55-96c9-f5f00374a932",
+      "persona_expected": "mathematics",
+      "question": "In the distributive property discussion, what is 4 · [12 + (−7)] equal to after distributing and simplifying?",
+      "status": 200,
+      "elapsed_s": 9.26,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "any": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "According to the document, the distributive property states that the product of a factor times a sum is the sum of the factor times each term in the sum. The example given is:\n\n> 4 · [12 + (−7)] = 4 · 12 + 4 · (−7) = 48 + (−28) = 20 [Source: AlgebraAndTrigo.pdf, Page 7]\n\nSo, after distributing and simplifying, **4 · [12 + (−7)] equals 20**.\n\n### Step-by-Step Breakdown:\n1. **Distribute the 4**: Multiply 4 by each term inside the brackets.\n   - \\( 4 \\cdot 12 = 48 \\)\n   - \\( 4 \\cdot (-7) = -28 \\)\n   \n2. **Add the results**:\n   - \\( 48 + (-28) = 48 - 28 = 20 \\)\n\nThus, the final simplified result is **20** [Source: AlgebraAndTrigo.pdf, Page 7].",
+      "error": null
+    },
+    {
+      "id": "A4",
+      "doc": "algebra",
+      "document_id": "6df2ad7b-4944-4e55-96c9-f5f00374a932",
+      "persona_expected": "mathematics",
+      "question": "Does this algebra chapter contain a medical dosing table for omalizumab?",
+      "status": 200,
+      "elapsed_s": 13.13,
+      "score": {
+        "pass": 1,
+        "total": 1,
+        "ok": true,
+        "checks": {
+          "abstain": true
+        }
+      },
+      "persona_ok": true,
+      "ans_head": "The uploaded document, titled *AlgebraAndTrigo.pdf*, focuses exclusively on algebraic concepts such as evaluating expressions, simplifying algebraic expressions, and applying the order of operations. There is no mention of medical dosing tables, omalizumab, or any pharmaceutical content within the provided excerpts.\n\n**Key observations from the document:**\n- The document covers algebraic essentials, including evaluating expressions, simplifying formulas, and applying the order of operations [Source: AlgebraAndTrigo.pdf, Page 11].\n- Examples and exercises involve mathematical expressions, rational and irrational numbers, and properties of real numbers—not clinical or pharmaceutical topics [So",
+      "error": null
+    }
+  ]
+}

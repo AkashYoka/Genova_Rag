@@ -996,6 +996,191 @@ def _harmonize_label_claims(
     return "".join(parts).strip()
 
 
+_UNIT_ALIAS_GROUPS = (
+    frozenset({"mg", "milligram", "milligrams"}),
+    frozenset({"g", "gram", "grams"}),
+    frozenset({"mcg", "µg", "μg", "ug", "microgram", "micrograms"}),
+    frozenset({"ml", "milliliter", "millilitre", "milliliters"}),
+    frozenset({"iu", "units", "unit"}),
+)
+# Any of these on a verified mg/g dose cell is treated as a conflict.
+_DOSE_UNIT_CONFLICTS = frozenset(
+    {
+        "iu",
+        "units",
+        "unit",
+        "mcg",
+        "µg",
+        "μg",
+        "ug",
+        "µ",
+        "μ",
+        "microgram",
+        "micrograms",
+    }
+)
+
+
+def _normalize_unit_token(unit: str) -> str:
+    text = (unit or "").lower().replace("µ", "μ").replace("μg", "mcg")
+    return re.sub(r"[^a-zμ%]", "", text)
+
+
+def _units_equivalent(a: str, b: str) -> bool:
+    na, nb = _normalize_unit_token(a), _normalize_unit_token(b)
+    if not na or not nb:
+        return True
+    if na == nb:
+        return True
+    for group in _UNIT_ALIAS_GROUPS:
+        if na in group and nb in group:
+            return True
+    return False
+
+
+def _is_ige_axis_context(text: str, start: int, end: int) -> bool:
+    """True when a number+IU(/mL) span is describing IgE/serum, not a dose.
+
+    Only inspects text *before* the span (plus a tiny trailing allowance for
+    punctuation) so a later ``IgE 350 IU/mL`` sentence cannot poison a dose claim.
+    """
+    window = (text[max(0, start - 56) : min(len(text), end + 2)] or "").lower()
+    return bool(
+        re.search(
+            r"\b(ige|ig\s*e|serum|pretreatment|pre-treatment|anti-ige)\b",
+            window,
+        )
+    )
+
+
+def _harmonize_verified_units(text: str, verified_num: str, verified_unit: str) -> str:
+    """Rewrite wrong units attached to the verified amount (e.g. 300 IU → 300 mg).
+
+    Also rewrites mistaken dose claims like ``300 IU/mL`` when the verified cell
+    unit is mg — unless the span is clearly an IgE/serum axis mention.
+    """
+    if not text or not verified_num or not verified_unit:
+        return text
+    vu = verified_unit.strip()
+    # Bold compound mistaken dose units: **300 IU/mL every 2 weeks**
+    bold_compound = re.compile(
+        rf"(?i)\*\*(?<!\d)({re.escape(verified_num)})\s*"
+        rf"IU\s*/\s*(?:mL|ml)([^*]*)\*\*"
+    )
+
+    def _bold_compound_repl(match: re.Match[str]) -> str:
+        if _units_equivalent("iu", vu):
+            return match.group(0)
+        if _is_ige_axis_context(text, match.start(), match.end()):
+            return match.group(0)
+        return f"**{match.group(1)} {vu}{match.group(2)}**"
+
+    out = bold_compound.sub(_bold_compound_repl, text)
+
+    # Bare compound mistaken dose units: 300 IU/mL
+    compound = re.compile(
+        rf"(?i)(?<!\d)({re.escape(verified_num)})\s*IU\s*/\s*(?:mL|ml)\b"
+    )
+
+    def _compound_repl(match: re.Match[str]) -> str:
+        if _units_equivalent("iu", vu):
+            return match.group(0)
+        if _is_ige_axis_context(out, match.start(), match.end()):
+            return match.group(0)
+        return f"{match.group(1)} {vu}"
+
+    out = compound.sub(_compound_repl, out)
+
+    pattern = re.compile(
+        rf"(?i)(?<!\d)({re.escape(verified_num)})\s*"
+        rf"(\*\*)?\s*([A-Za-zμµ%]{{1,12}})\b"
+    )
+
+    def _repl(match: re.Match[str]) -> str:
+        found_unit = match.group(3)
+        after = out[match.end() : match.end() + 1]
+        # Leave true IgE axis mentions (number IU/mL near IgE language).
+        if (after == "/" or "/" in found_unit) and _is_ige_axis_context(
+            out, match.start(), match.end()
+        ):
+            return match.group(0)
+        if _units_equivalent(found_unit, vu):
+            return match.group(0)
+        star = match.group(2) or ""
+        if star:
+            return f"{match.group(1)} {star}{vu}{star}"
+        return f"{match.group(1)} {vu}"
+
+    # Also catch markdown-bold forms: **300 IU** / **300 µg** / **300 μg**
+    bold_pat = re.compile(
+        rf"(?i)\*\*{re.escape(verified_num)}\s*"
+        rf"([A-Za-zμµ%]{{1,12}})\*\*"
+    )
+
+    def _bold_repl(match: re.Match[str]) -> str:
+        found = match.group(1)
+        if _units_equivalent(found, vu):
+            return match.group(0)
+        return f"**{verified_num} {vu}**"
+
+    out = bold_pat.sub(_bold_repl, out)
+    out = pattern.sub(_repl, out)
+
+    # Final sweep for microgram / IU / units glued to the verified amount when
+    # the authoritative unit is mg/g (OCR often emits µg / μg / mcg / IU).
+    if _normalize_unit_token(vu) in {"mg", "g"}:
+        sweep = re.compile(
+            rf"(?i)(\*\*)?(?<!\d)({re.escape(verified_num)})\s*"
+            rf"(µg|μg|mcg|ug|iu|units?|µ|μ)(\*\*)?"
+        )
+
+        def _sweep_repl(match: re.Match[str]) -> str:
+            found = match.group(3)
+            if _units_equivalent(found, vu):
+                return match.group(0)
+            if _normalize_unit_token(found) in {"iu"} and _is_ige_axis_context(
+                out, match.start(), match.end()
+            ):
+                return match.group(0)
+            star_l = match.group(1) or ""
+            star_r = match.group(4) or star_l
+            if star_l or star_r:
+                return f"**{match.group(2)} {vu}**"
+            return f"{match.group(2)} {vu}"
+
+        out = sweep.sub(_sweep_repl, out)
+    return out
+
+
+def _answer_has_verified_unit_conflict(
+    text: str, verified_num: str, verified_unit: str
+) -> bool:
+    """True when the verified amount appears with a conflicting unit."""
+    if not text or not verified_num or not verified_unit:
+        return False
+    # Mistaken dose as IU/mL counts as conflict unless IgE-context.
+    for m in re.finditer(
+        rf"(?i)(?<!\d){re.escape(verified_num)}\s*IU\s*/\s*(?:mL|ml)\b",
+        text[:900],
+    ):
+        if not _is_ige_axis_context(text, m.start(), m.end()):
+            return True
+    for m in re.finditer(
+        rf"(?i)(?<!\d){re.escape(verified_num)}\s*"
+        rf"(?:\*\*)?\s*([A-Za-zμµ%]{{1,12}})\b",
+        text[:900],
+    ):
+        found = m.group(1)
+        tail = text[m.end() : m.end() + 3]
+        if (tail.startswith("/") or "/" in found) and _is_ige_axis_context(
+            text, m.start(), m.end()
+        ):
+            continue
+        if not _units_equivalent(found, verified_unit):
+            return True
+    return False
+
+
 def _reconcile_answer_inner(
     answer: str,
     sources: List[Dict[str, Any]],
@@ -1104,21 +1289,37 @@ def _reconcile_answer_inner(
     ):
         record_reconcile_action("none")
         return answer
-    # Attach a value unit from headers when the cell is a bare number (e.g. Dose (mg)).
+    # Attach a value unit from headers / evidence when the cell is a bare number
+    # (e.g. Dose (mg)). Prefer explicit evidence.unit over header/caption inference.
+    evidence = meta.get("evidence") if isinstance(meta.get("evidence"), dict) else {}
+    explicit_unit = str(
+        meta.get("unit") or evidence.get("unit") or ""
+    ).strip()
     if raw_val and not re.search(r"[A-Za-z%]", raw_val):
         blob = " ".join(
             str(x or "")
-            for x in (meta.get("col_headers"), meta.get("row_headers"), meta.get("headers"))
+            for x in (
+                meta.get("col_headers"),
+                meta.get("row_headers"),
+                meta.get("headers"),
+                meta.get("table_headers"),
+                evidence.get("table_caption"),
+                evidence.get("table_section"),
+                explicit_unit,
+            )
         )
         um = re.search(
-            r"(?i)(?:dose|amount|value|price|cost|limit)\s*\(\s*(mg|g|ml|%|usd|eur)\s*\)"
-            r"|\(\s*(mg|ml|%|usd|eur)\s*\)",
+            r"(?i)(?:dose|amount|value|price|cost|limit|strength)\s*\(\s*"
+            r"(mg|g|mcg|µg|ug|ml|mL|%|usd|eur|iu)\s*\)"
+            r"|\(\s*(mg|g|mcg|µg|ug|ml|mL|%|usd|eur)\s*\)"
+            r"|\bdoses?\b[^.\n]{0,40}\b(mg|g|mcg|ml)\b",
             blob,
         )
-        if um:
-            unit = um.group(1) or um.group(2)
-            if unit and unit.lower() not in raw_val.lower():
-                raw_val = f"{raw_val} {unit}"
+        unit = explicit_unit or (
+            (um.group(1) or um.group(2) or um.group(3)) if um else ""
+        )
+        if unit and unit.lower() not in raw_val.lower():
+            raw_val = f"{raw_val} {unit}"
     m_val = re.search(r"(-?\d+(?:\.\d+)?)", raw_val)
     if not m_val:
         # Non-numeric verified token — require verbatim presence.
@@ -1135,10 +1336,35 @@ def _reconcile_answer_inner(
         )
 
     verified_num = m_val.group(1)
+    verified_unit_m = re.search(
+        r"(?i)-?\d+(?:\.\d+)?\s*([A-Za-zμµ%]{1,12})\b",
+        raw_val,
+    )
+    verified_unit = (verified_unit_m.group(1) if verified_unit_m else "") or explicit_unit
+    verified_unit = str(verified_unit or "").strip()
     verified_page = meta.get("page")
     answer_text = answer or ""
+
+    # Wrong-cohort / wrong-table answers: do not stamp an authoritative pin that
+    # conflicts with the clinical point (e.g. adult matrix on a pediatric case).
+    if re.search(
+        r"(?i)\b(wrong (table|cohort|matrix)|incorrect table|"
+        r"should not (use|have used)|pediatric|adult table|"
+        r"not (the )?(correct|appropriate) table)\b",
+        answer_text,
+    ) and re.search(
+        r"(?i)\b(pediatric|adult|indication|cohort|table\s*[123])\b",
+        answer_text,
+    ):
+        record_reconcile_action("none")
+        return answer_text
+
     if not compare_mode and not is_calculation:
         answer_text = _harmonize_label_claims(answer_text, verified_num, meta)
+        if verified_unit:
+            answer_text = _harmonize_verified_units(
+                answer_text, verified_num, verified_unit
+            )
 
     def _provenance_mismatch(text: str) -> bool:
         """True when the answer cites a different Page N for this cell value."""
@@ -1200,16 +1426,20 @@ def _reconcile_answer_inner(
         if is_calculation
         else "Authoritative verified table value"
     )
+    unit_conflict = _answer_has_verified_unit_conflict(
+        answer_text, verified_num, verified_unit
+    )
     lead = _LEADING_DOSE_RE.search(answer_text)
-    if lead and lead.group(1) == verified_num:
+    if lead and lead.group(1) == verified_num and not unit_conflict:
         record_reconcile_action("none")
         return _with_provenance_pin(answer_text)
-    # Also accept if verified value appears early without a conflicting lead dose.
+    # Also accept if verified value appears early without a conflicting lead dose
+    # or unit (e.g. reject "300 IU" when the verified cell is "300 mg").
     head = answer_text[:320]
-    if verified_num in head and not lead:
+    if verified_num in head and not lead and not unit_conflict:
         record_reconcile_action("none")
         return _with_provenance_pin(answer_text)
-    if lead and lead.group(1) != verified_num:
+    if (lead and lead.group(1) != verified_num) or unit_conflict:
         record_reconcile_action("numeric_pinned")
         correction = (
             f"**{auth_label}: {raw_val}** "
@@ -1231,12 +1461,72 @@ def _reconcile_answer_inner(
     return _with_provenance_pin(answer_text)
 
 
+def _sanitize_dose_mg_from_source_context(
+    answer: str, sources: List[Dict[str, Any]]
+) -> str:
+    """Rewrite mistaken dose units on recommended/labeled dose claims.
+
+    Safety net for flaky selector runs where verified_cell never reaches
+    reconcile but the answer still invents IU/mcg/µg for a dose claim.
+    Triggered when sources mention dosing tables OR the answer itself is a
+    recommended/labeled dose takeaway (IgE axis mentions are left alone).
+    """
+    if not answer:
+        return answer
+    blob = " ".join(
+        str(
+            (s.get("text") or "")
+            + " "
+            + str(
+                ((s.get("verified_cell") or {}).get("evidence") or {}).get(
+                    "table_caption"
+                )
+                or ""
+            )
+            + " "
+            + " ".join(
+                str(h)
+                for h in ((s.get("verified_cell") or {}).get("table_headers") or [])
+            )
+        )
+        for s in (sources or [])
+        if isinstance(s, dict)
+    )
+    dose_context = bool(
+        re.search(r"(?i)dose\s*\(\s*mg\s*\)|doses?\b.*\bmg\b|xolair|dosing table", blob)
+    ) or bool(
+        re.search(
+            r"(?i)\b(recommended|labeled|label)\b[^.\n]{0,80}\b(dose|regimen)\b",
+            answer,
+        )
+    )
+    if not dose_context:
+        return answer
+    pattern = re.compile(
+        r"(?i)(\*\*)?(?<!\d)(\d{2,4}(?:\.\d+)?)\s*"
+        r"(µg|μg|mcg|ug|iu|units?)(\*\*)?"
+    )
+
+    def _repl(match: re.Match[str]) -> str:
+        if _is_ige_axis_context(answer, match.start(), match.end()):
+            return match.group(0)
+        star_l = match.group(1) or ""
+        star_r = match.group(4) or star_l
+        if star_l or star_r:
+            return f"**{match.group(2)} mg**"
+        return f"{match.group(2)} mg"
+
+    return pattern.sub(_repl, answer)
+
+
 def _reconcile_answer_with_verified_cell(
     answer: str,
     sources: List[Dict[str, Any]],
 ) -> str:
     """Reconcile a generated answer with verified evidence, then clean it."""
-    return _strip_prompt_leaks(_reconcile_answer_inner(answer, sources))
+    reconciled = _reconcile_answer_inner(answer, sources)
+    reconciled = _sanitize_dose_mg_from_source_context(reconciled, sources)
+    return _strip_prompt_leaks(reconciled)
 
 
 def _coerce_source_page(page: Any) -> int:
