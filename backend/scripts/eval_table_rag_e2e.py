@@ -78,7 +78,7 @@ def _value_match(expected: Any, actual: Any) -> bool:
 
 
 def run_case(case: Dict[str, Any], *, user_id: str) -> Dict[str, Any]:
-    from app.rag.generation.table_interpretation import interpret_table_question
+    from app.rag.generation.llm_table_reasoning import interpret_table_question
     from app.rag.llm.agent import generate_answer
     from app.rag.retrieval.retriever import retrieve
     from app.rag.table_rag.representations import render_indexed_table_for_selector

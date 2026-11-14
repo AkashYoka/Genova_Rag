@@ -58,18 +58,18 @@ def _fake_table(*, method: str = "textract_detect") -> TableData:
 
 
 @pytest.fixture(autouse=True)
-def _hybrid_settings(monkeypatch):
+def _textract_primary_settings(monkeypatch):
     monkeypatch.setattr(
         parser,
         "get_settings",
         lambda: types.SimpleNamespace(
             PDF_LAYOUT_WRITE_DIAGNOSTICS=False,
-            PDF_DOCLING_TABLES_ENABLED=False,  # force Textract fallback path in these tests
+            PDF_DOCLING_TABLES_ENABLED=False,  # Textract-primary active path
             PDF_DOCLING_TABLEFORMER_MODE="accurate",
-            # Hybrid-path tests must opt into fallback (Docling-only default is false).
             PDF_TEXTRACT_FALLBACK_ENABLED=True,
             PDF_TEXTRACT_TABLES_ENABLED=True,
             PDF_TEXTRACT_TABULAR_ONLY=False,
+            PDF_TEXTRACT_ASYNC_MULTIPAGE=False,
             PDF_TEXTRACT_REGION="us-east-1",
             BEDROCK_REGION="us-east-1",
             PDF_OCR_ENABLED=True,
@@ -86,23 +86,31 @@ def _hybrid_settings(monkeypatch):
     )
 
 
-def test_parse_pdf_uses_textract_fallback_when_docling_disabled(monkeypatch, tmp_path):
+def test_parse_pdf_uses_textract_primary_when_docling_disabled(monkeypatch, tmp_path):
     pdf_path = tmp_path / "native.pdf"
     _make_text_pdf(pdf_path)
 
-    calls = {"textract": 0}
+    calls = {"textract_doc": 0}
 
-    def fake_extract(page, page_number):
-        calls["textract"] += 1
-        return [_fake_table()]
+    def fake_detect(filepath, *, page_sizes, doc=None):
+        calls["textract_doc"] += 1
+        return [_fake_table()], {
+            "api": "DetectDocumentText",
+            "analyze_document_tables": False,
+            "pages_processed": 1,
+        }
 
     monkeypatch.setattr(
-        "app.rag.ingestion.pdf_layout.textract_tables.extract_tables_from_page",
-        fake_extract,
+        "app.rag.ingestion.pdf_layout.textract_tables.extract_tables_from_pdf_detect",
+        fake_detect,
     )
     monkeypatch.setattr(
         "app.rag.ingestion.pdf_layout.textract_tables.usable_textract_tables",
         lambda tables: list(tables),
+    )
+    monkeypatch.setattr(
+        "app.rag.ingestion.pdf_layout.textract_tables.get_textract_api_usage",
+        lambda: {"detect_document_text_pages": 1, "analyze_document_tables_pages": 0},
     )
     monkeypatch.setattr(parser, "_repair_page_tables", lambda tables, filepath="": tables)
     monkeypatch.setattr(parser, "write_diagnostics", lambda _parsed: {})
@@ -110,13 +118,14 @@ def test_parse_pdf_uses_textract_fallback_when_docling_disabled(monkeypatch, tmp
     parsed = parser.parse_pdf(str(pdf_path), document_name="native.pdf")
 
     report = parsed.report["table_extraction"]
-    assert report["engine"] == "docling+textract_fallback"
+    assert report["engine"] == "textract_detect"
     assert report["table_count"] == 1
     assert report["failure_count"] == 0
-    assert calls["textract"] == 1
-    assert parsed.pages[0].metrics["table_source"] == "textract_fallback"
-    assert parsed.pages[0].metrics["table_engine"] == "docling+textract_fallback"
+    assert calls["textract_doc"] == 1
+    assert parsed.pages[0].metrics["table_source"] == "textract_detect"
+    assert parsed.pages[0].metrics["table_engine"] == "textract_detect"
     assert parsed.pages[0].metrics["textract_invoked"] is True
+    assert parsed.pages[0].metrics.get("textract_primary") is True
 
     table_chunks = [
         chunk for chunk in parsed.chunks if chunk.get("chunk_type") == "table"
@@ -134,12 +143,23 @@ def test_parse_pdf_reports_textract_failure_without_legacy_store(monkeypatch, tm
     pdf_path = tmp_path / "native.pdf"
     _make_text_pdf(pdf_path)
 
-    def boom(page, page_number):
+    def boom_detect(filepath, *, page_sizes, doc=None):
+        raise RuntimeError("synthetic textract failure")
+
+    def boom_page(page, page_number):
         raise RuntimeError("synthetic textract failure")
 
     monkeypatch.setattr(
+        "app.rag.ingestion.pdf_layout.textract_tables.extract_tables_from_pdf_detect",
+        boom_detect,
+    )
+    monkeypatch.setattr(
         "app.rag.ingestion.pdf_layout.textract_tables.extract_tables_from_page",
-        boom,
+        boom_page,
+    )
+    monkeypatch.setattr(
+        "app.rag.ingestion.pdf_layout.textract_tables.get_textract_api_usage",
+        lambda: {"detect_document_text_pages": 0, "analyze_document_tables_pages": 0},
     )
     monkeypatch.setattr(parser, "_repair_page_tables", lambda tables, filepath="": tables)
     monkeypatch.setattr(parser, "write_diagnostics", lambda _parsed: {})
@@ -156,14 +176,19 @@ def test_parse_pdf_reports_textract_failure_without_legacy_store(monkeypatch, tm
     report = parsed.report["table_extraction"]
     assert report["table_count"] == 0
     assert report["failure_count"] == 1
-    assert "synthetic textract failure" in report["failures"][0]["error"]
+    assert "synthetic textract failure" in (
+        report["failures"][0].get("error") or ""
+    ) or parsed.pages[0].metrics.get("textract_doc_error")
     assert parsed.pages[0].tables == []
     assert parsed.pages[0].metrics["table_source"] == "none"
-    assert parsed.pages[0].metrics.get("textract_error")
+    assert (
+        parsed.pages[0].metrics.get("textract_error")
+        or parsed.pages[0].metrics.get("textract_doc_error")
+    )
     assert not [
         chunk for chunk in parsed.chunks if chunk.get("chunk_type") == "table"
     ]
 
 
-def test_table_engine_is_hybrid_docling_textract():
-    assert parser._table_engine() == "docling+textract_fallback"
+def test_table_engine_is_textract_primary():
+    assert parser._table_engine() == "textract_detect"

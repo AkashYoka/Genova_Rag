@@ -1,13 +1,18 @@
 """AWS Textract DetectDocumentText → geometry tables → TableData.
 
-Sole production structured-table extractor. The parser gates calls via
-``_page_looks_tabular`` (when ``PDF_TEXTRACT_TABULAR_ONLY``) so ordinary text
-pages never hit AWS.
+Active production table extractor (Docling remains in-tree but disabled by
+default). Reconstructs row/column structure from WORD/LINE geometry because
+DetectDocumentText does **not** return native TABLE/CELL blocks.
 
-Uses DetectDocumentText on a per-page PNG (~$1.50 / 1,000 pages), then
-reconstructs row/column structure from WORD/LINE bounding boxes via the
-existing ``table_from_words`` / header-reconstruction path.
-IAM: textract:DetectDocumentText.
+Modes
+-----
+* Multipage PDFs (preferred): ``StartDocumentTextDetection`` /
+  ``GetDocumentTextDetection`` with S3 + NextToken pagination.
+* Single-page / per-page fallback: sync ``DetectDocumentText`` on a PNG.
+
+Never calls ``AnalyzeDocument`` (TABLES). Cost ~$1.50 / 1,000 pages.
+IAM: ``textract:DetectDocumentText``, ``textract:StartDocumentTextDetection``,
+``textract:GetDocumentTextDetection``.
 
 On client/API errors the parser records ``textract_error`` and leaves tables
 empty — there is no img2table or Tesseract table fallback. Body text is never
@@ -19,6 +24,9 @@ import logging
 import random
 import re
 import time
+import uuid
+from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from botocore.config import Config
@@ -40,6 +48,27 @@ logger = logging.getLogger(__name__)
 
 _textract_client = None
 _EXTRACTION_METHOD = "textract_detect"
+
+# Process-local API usage counters for cost / audit reporting.
+_API_USAGE: Dict[str, int] = {
+    "detect_document_text_pages": 0,
+    "start_document_text_detection_jobs": 0,
+    "get_document_text_detection_calls": 0,
+    "analyze_document_tables_pages": 0,  # must remain 0
+    "pages_via_async": 0,
+    "pages_via_sync": 0,
+}
+
+
+def get_textract_api_usage() -> Dict[str, int]:
+    """Return a copy of DetectDocumentText API usage counters."""
+    return dict(_API_USAGE)
+
+
+def reset_textract_api_usage() -> None:
+    """Test helper — clear API usage counters."""
+    for key in list(_API_USAGE.keys()):
+        _API_USAGE[key] = 0
 
 
 def _textract_region() -> str:
@@ -600,6 +629,9 @@ def _finalize_geometry_table(
         provenance={
             "engine": _EXTRACTION_METHOD,
             "page": table.page,
+            # DetectDocumentText has no native TABLE/CELL structure.
+            "text_derived": True,
+            "structurally_verified_table": False,
             "quality_notes": list((recon.warnings if recon else []) or []),
         },
         header_reconstruction=recon.to_dict(),
@@ -741,7 +773,10 @@ def _detect_document_text_bytes(png_bytes: bytes) -> Dict[str, Any]:
     last_err: Optional[Exception] = None
     for attempt in range(4):
         try:
-            return client.detect_document_text(Document={"Bytes": png_bytes})
+            resp = client.detect_document_text(Document={"Bytes": png_bytes})
+            _API_USAGE["detect_document_text_pages"] += 1
+            _API_USAGE["pages_via_sync"] += 1
+            return resp
         except Exception as exc:
             last_err = exc
             err = str(exc)
@@ -768,6 +803,216 @@ def _detect_document_text_bytes(png_bytes: bytes) -> Dict[str, Any]:
     return {"Blocks": []}
 
 
+def _await_document_text_detection(
+    client: Any,
+    job_id: str,
+    *,
+    timeout_s: float,
+    poll_s: float,
+) -> List[Dict[str, Any]]:
+    """Poll GetDocumentTextDetection until complete; collect all NextToken pages."""
+    deadline = time.time() + max(30.0, float(timeout_s))
+    poll = max(0.5, float(poll_s))
+    while time.time() < deadline:
+        _API_USAGE["get_document_text_detection_calls"] += 1
+        resp = client.get_document_text_detection(JobId=job_id, MaxResults=1000)
+        status = str(resp.get("JobStatus") or "")
+        if status == "IN_PROGRESS":
+            time.sleep(poll)
+            continue
+        if status == "FAILED":
+            raise RuntimeError(
+                resp.get("StatusMessage") or "StartDocumentTextDetection failed"
+            )
+        blocks = list(resp.get("Blocks") or [])
+        token = resp.get("NextToken")
+        while token:
+            _API_USAGE["get_document_text_detection_calls"] += 1
+            resp = client.get_document_text_detection(
+                JobId=job_id, NextToken=token, MaxResults=1000
+            )
+            blocks.extend(resp.get("Blocks") or [])
+            token = resp.get("NextToken")
+        return blocks
+    raise TimeoutError(
+        f"Textract StartDocumentTextDetection job {job_id} timed out after {timeout_s}s"
+    )
+
+
+def _upload_pdf_for_async_textract(filepath: str) -> Tuple[str, str, str]:
+    """Upload PDF to S3 for StartDocumentTextDetection.
+
+    Returns ``(bucket, key, user_id_for_cleanup)``.
+    """
+    from app.services import s3_storage
+
+    if not s3_storage.is_configured():
+        raise RuntimeError(
+            "S3 is required for multipage StartDocumentTextDetection. "
+            "Set AWS_S3_BUCKET or disable PDF_TEXTRACT_ASYNC_MULTIPAGE."
+        )
+    path = Path(filepath)
+    user_id = "textract_jobs"
+    safe_name = f"{uuid.uuid4().hex}_{path.name}"
+    key = s3_storage.upload_pdf(user_id, safe_name, str(path))
+    bucket = (get_settings().S3_BUCKET or get_settings().AWS_S3_BUCKET or "").strip()
+    return bucket, key, user_id
+
+
+def extract_tables_from_pdf_async(
+    filepath: str,
+    *,
+    page_sizes: Dict[int, Tuple[float, float]],
+    doc: Any = None,
+) -> Tuple[List[TableData], Dict[str, Any]]:
+    """Run Start/GetDocumentTextDetection on a multipage PDF and reconstruct tables.
+
+    Returns ``(tables, meta)``. Tables are text-derived (geometry), not native
+    Textract TABLE blocks. Never calls AnalyzeDocument.
+    """
+    settings = get_settings()
+    meta: Dict[str, Any] = {
+        "api": "StartDocumentTextDetection",
+        "analyze_document_tables": False,
+        "pages_processed": 0,
+        "job_id": "",
+        "s3_key": "",
+    }
+    if not bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)):
+        meta["skipped"] = "textract_disabled"
+        return [], meta
+    if not bool(getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)):
+        meta["skipped"] = "tables_disabled"
+        return [], meta
+
+    bucket, key, cleanup_user = _upload_pdf_for_async_textract(filepath)
+    meta["s3_key"] = key
+    client = get_textract_client()
+    try:
+        start = client.start_document_text_detection(
+            DocumentLocation={"S3Object": {"Bucket": bucket, "Name": key}}
+        )
+        _API_USAGE["start_document_text_detection_jobs"] += 1
+        job_id = str(start.get("JobId") or "")
+        meta["job_id"] = job_id
+        if not job_id:
+            raise RuntimeError("StartDocumentTextDetection returned empty JobId")
+
+        blocks = _await_document_text_detection(
+            client,
+            job_id,
+            timeout_s=float(
+                getattr(settings, "PDF_TEXTRACT_ASYNC_TIMEOUT_SECONDS", 900) or 900
+            ),
+            poll_s=float(
+                getattr(settings, "PDF_TEXTRACT_ASYNC_POLL_SECONDS", 2.0) or 2.0
+            ),
+        )
+        by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        for block in blocks:
+            page_no = int(block.get("Page") or 1)
+            by_page[page_no].append(block)
+
+        min_conf = float(settings.PDF_TEXTRACT_MIN_CONFIDENCE or 50.0)
+        tables: List[TableData] = []
+        for page_no in sorted(by_page.keys()):
+            width, height = page_sizes.get(page_no, (0.0, 0.0))
+            if width <= 0 or height <= 0:
+                continue
+            page_obj = None
+            if doc is not None:
+                try:
+                    page_obj = doc[page_no - 1]
+                except Exception:
+                    page_obj = None
+            page_tables = table_data_from_textract_blocks(
+                by_page[page_no],
+                page_number=page_no,
+                page_width=float(width),
+                page_height=float(height),
+                min_confidence=min_conf,
+                page=page_obj,
+            )
+            for table in page_tables:
+                prov = dict(table.provenance or {})
+                prov["textract_api"] = "StartDocumentTextDetection"
+                prov["text_derived"] = True
+                prov["structurally_verified_table"] = False
+                table.provenance = prov
+            tables.extend(page_tables)
+            _API_USAGE["detect_document_text_pages"] += 1
+            _API_USAGE["pages_via_async"] += 1
+
+        meta["pages_processed"] = len(by_page)
+        meta["table_count"] = len(tables)
+        meta["block_count"] = len(blocks)
+        return tables, meta
+    finally:
+        try:
+            from app.services import s3_storage
+
+            s3_storage.delete_pdf(cleanup_user, Path(key).name, key=key)
+        except Exception as exc:
+            logger.warning("Could not delete temp Textract S3 object %s: %s", key, exc)
+
+
+def extract_tables_from_pdf_detect(
+    filepath: str,
+    *,
+    page_sizes: Dict[int, Tuple[float, float]],
+    doc: Any = None,
+) -> Tuple[List[TableData], Dict[str, Any]]:
+    """Extract text-derived tables via DetectDocumentText for an entire PDF.
+
+    Multipage + async enabled → Start/GetDocumentTextDetection.
+    Otherwise → sync per-page PNG DetectDocumentText.
+    """
+    settings = get_settings()
+    page_count = len(page_sizes) or 0
+    async_on = bool(getattr(settings, "PDF_TEXTRACT_ASYNC_MULTIPAGE", True))
+    if page_count > 1 and async_on:
+        try:
+            return extract_tables_from_pdf_async(
+                filepath, page_sizes=page_sizes, doc=doc
+            )
+        except Exception as exc:
+            logger.warning(
+                "Async StartDocumentTextDetection failed for %s (%s); "
+                "falling back to sync per-page DetectDocumentText",
+                Path(filepath).name,
+                exc,
+            )
+            # Continue to sync path below.
+
+    meta: Dict[str, Any] = {
+        "api": "DetectDocumentText",
+        "analyze_document_tables": False,
+        "pages_processed": 0,
+        "mode": "sync_per_page",
+    }
+    if not bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)):
+        meta["skipped"] = "textract_disabled"
+        return [], meta
+    if not bool(getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)):
+        meta["skipped"] = "tables_disabled"
+        return [], meta
+    if doc is None:
+        meta["skipped"] = "no_doc_handle"
+        return [], meta
+
+    tables: List[TableData] = []
+    for page_no in sorted(page_sizes.keys()):
+        try:
+            page = doc[page_no - 1]
+        except Exception:
+            continue
+        page_tables = extract_tables_from_page(page, page_no)
+        tables.extend(page_tables)
+        meta["pages_processed"] = int(meta["pages_processed"]) + 1
+    meta["table_count"] = len(tables)
+    return tables, meta
+
+
 def extract_tables_from_page(page, page_number: int) -> List[TableData]:
     """Render a PDF page and extract tables via DetectDocumentText + geometry.
 
@@ -775,7 +1020,7 @@ def extract_tables_from_page(page, page_number: int) -> List[TableData]:
     falling back to native/OCR table extractors.
     """
     settings = get_settings()
-    # Docling-only phase: both flags must be true before any AWS call.
+    # Both flags must be true before any AWS call.
     if not bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)):
         return []
     if not settings.PDF_TEXTRACT_TABLES_ENABLED:
@@ -800,7 +1045,7 @@ def extract_tables_from_page(page, page_number: int) -> List[TableData]:
         blocks = list(resp.get("Blocks") or [])
         page_width = float(page.rect.width)
         page_height = float(page.rect.height)
-        return table_data_from_textract_blocks(
+        tables = table_data_from_textract_blocks(
             blocks,
             page_number=page_number,
             page_width=page_width,
@@ -808,6 +1053,13 @@ def extract_tables_from_page(page, page_number: int) -> List[TableData]:
             min_confidence=float(settings.PDF_TEXTRACT_MIN_CONFIDENCE or 50.0),
             page=page,
         )
+        for table in tables:
+            prov = dict(table.provenance or {})
+            prov["textract_api"] = "DetectDocumentText"
+            prov["text_derived"] = True
+            prov["structurally_verified_table"] = False
+            table.provenance = prov
+        return tables
     except Exception as exc:
         logger.warning(
             "Textract DetectDocumentText failed on page %s: %s — no table fallback",
@@ -818,10 +1070,17 @@ def extract_tables_from_page(page, page_number: int) -> List[TableData]:
 
 
 def usable_textract_tables(tables: Sequence[TableData]) -> List[TableData]:
-    """Filter to tables with a usable grid (≥2 cols and ≥1 body row)."""
+    """Filter to tables with a usable grid (≥2 cols and ≥1 body row).
+
+    Header-only reconstructions (common TOC / multi-column prose false
+    positives from DetectDocumentText geometry) are dropped.
+    """
     usable: List[TableData] = []
     for table in tables:
-        width = max(len(table.headers or []), max((len(r) for r in table.rows), default=0))
-        if width >= 2 and (table.rows or table.headers):
+        width = max(
+            len(table.headers or []),
+            max((len(r) for r in table.rows), default=0),
+        )
+        if width >= 2 and list(table.rows or []):
             usable.append(table)
     return usable

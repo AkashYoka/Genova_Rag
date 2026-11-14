@@ -212,7 +212,7 @@ def extract_hybrid(pdf: Path) -> Dict[str, Any]:
 def validate_tablerag_path(hybrid: Dict[str, Any], pdf_name: str) -> Dict[str, Any]:
     """Chunk/index/persist path using hybrid page tables (in-memory)."""
     from app.rag.table_rag.indexing import expand_table_rag_chunks
-    from app.rag.generation.table_calculator import compute_from_operands
+    compute_from_operands = None  # removed hardcoded calculator
 
     chunks: List[Dict[str, Any]] = []
     for page in hybrid.get("pages") or []:

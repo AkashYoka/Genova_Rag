@@ -126,7 +126,7 @@ def main() -> int:
     from app.rag.embeddings.embeddings import embed_query
     from app.rag.retrieval.retriever import retrieve
     from app.rag.retrieval.bm25 import query_bm25
-    from app.rag.generation.table_interpretation import interpret_table_question
+    from app.rag.generation.llm_table_reasoning import interpret_table_question
     from app.rag.llm.agent import _format_context
 
     settings = get_settings()

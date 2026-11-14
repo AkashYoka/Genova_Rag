@@ -87,7 +87,7 @@ def main() -> int:
     args = parser.parse_args()
 
     from app.config import get_settings
-    from app.rag.generation.table_interpretation import interpret_table_question
+    from app.rag.generation.llm_table_reasoning import interpret_table_question
     from app.rag.ingestion.pdf_layout.parser import parse_pdf
     from app.rag.llm.agent import generate_answer
     from app.rag.retrieval.retriever import retrieve

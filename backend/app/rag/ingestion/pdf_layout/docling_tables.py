@@ -476,7 +476,8 @@ def extract_tables_from_pdf(
     Windows CPU hosts. Set batch size to 0 for a single full-document convert.
     """
     settings = get_settings()
-    if not getattr(settings, "PDF_DOCLING_TABLES_ENABLED", True):
+    # Default False: Docling stays intact but is off in the active path.
+    if not getattr(settings, "PDF_DOCLING_TABLES_ENABLED", False):
         return []
 
     batch_size = int(getattr(settings, "PDF_DOCLING_PAGE_BATCH_SIZE", 4) or 0)

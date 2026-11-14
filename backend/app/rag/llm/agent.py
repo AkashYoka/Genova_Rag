@@ -718,7 +718,7 @@ def _apply_table_interpretation(
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """Prepend verified / insufficient table evidence; annotate sources."""
     try:
-        from app.rag.generation.table_interpretation import interpret_table_question
+        from app.rag.generation.llm_table_reasoning import interpret_table_question
 
         interpretation = interpret_table_question(question, chunks)
     except Exception as exc:
@@ -780,7 +780,7 @@ def _streaming_gate_message(sources: List[Dict[str, Any]]) -> Optional[str]:
     resolved before the first token. Soft or merely-missing evidence still
     streams normal prose (over-abstention avoidance).
     """
-    from app.rag.generation.structured_lookup import (
+    from app.rag.generation.table_evidence import (
         ANSWER_STATE_AMBIGUOUS,
         ANSWER_STATE_INVALID,
         answer_state_from_sources,
@@ -810,7 +810,7 @@ def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
     table_ids = hard.get("candidate_table_ids") or []
     reason = str(hard.get("reason") or "").strip()
     verification = str(hard.get("verification_status") or status)
-    from app.rag.generation.structured_lookup import (
+    from app.rag.generation.table_evidence import (
         ANSWER_STATE_INVALID,
         ANSWER_STATE_INSUFFICIENT,
         answer_state_for_status,
@@ -870,8 +870,8 @@ def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
     lines = [
         "Inconclusive — no uniquely verified table cell is available.",
         "Insufficient table evidence: no row–column cell in the retrieved "
-        "tables matches these patient values, so I am not stating a labeled "
-        "dose/frequency or on-label/off-label conclusion.",
+        "tables uniquely answers this question, so I am not inventing a "
+        "matrix value.",
     ]
     if evidence_caption or evidence_page:
         where = []
@@ -982,7 +982,7 @@ def _reconcile_answer_inner(
     Hard ambiguous / failed verification: replace any definitive conclusion with
     a clarification-only response (never append a warning under a confident answer).
     """
-    from app.rag.generation.structured_lookup import answer_state_from_sources
+    from app.rag.generation.table_evidence import answer_state_from_sources
     from app.rag.table_rag.telemetry import record_answer_state, record_reconcile_action
 
     decision = answer_state_from_sources(sources)
@@ -1024,8 +1024,8 @@ def _reconcile_answer_inner(
             # Hard not_found / other: replace definitive matrix claims.
             body = (answer or "").strip()
             if re.search(
-                r"(?i)\b(label recommends?|on[- ]label|off[- ]label|"
-                r"verified label|authoritative verified|clinical takeaway)\b",
+                r"(?i)\b(label recommends?|verified label|authoritative verified|"
+                r"clinical takeaway|matrix value|table recommends?)\b",
                 body,
             ):
                 record_reconcile_action("abstain_replaced")
@@ -1053,6 +1053,29 @@ def _reconcile_answer_inner(
         or (meta.get("evidence") or {}).get("prescribed_value") is not None
     )
     is_calculation = bool(meta.get("calculation"))
+    # Do not pin axis/category labels (row-header text mistaken as the cell).
+    # Generic safeguard: value equals a row header AND column is not a value field.
+    row_headers = [str(h or "").strip() for h in (meta.get("row_headers") or []) if h]
+    col_blob = " ".join(str(h or "") for h in (meta.get("col_headers") or []))
+    if row_headers and any(
+        raw_val.lower() == h.lower() for h in row_headers
+    ) and not re.search(
+        r"(?i)\b(dose|amount|value|price|cost|rate|qty|quantity|total|limit|strength|result)\b",
+        col_blob,
+    ):
+        record_reconcile_action("none")
+        return answer
+    # Do not pin schedule/frequency cells as the authoritative matrix value —
+    # they corrupt dose answers when selected as the sole verified token.
+    if re.search(r"(?i)\bfreq|frequency|schedule|interval\b", col_blob) or (
+        re.search(r"(?i)^every\s+\d+", raw_val)
+        and not re.search(
+            r"(?i)\b(dose|amount|value|price|cost|rate|qty|quantity|total|limit|strength|result)\b",
+            col_blob,
+        )
+    ):
+        record_reconcile_action("none")
+        return answer
     # Attach a value unit from headers when the cell is a bare number (e.g. Dose (mg)).
     if raw_val and not re.search(r"[A-Za-z%]", raw_val):
         blob = " ".join(

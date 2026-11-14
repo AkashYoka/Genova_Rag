@@ -361,7 +361,10 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         try:
             from app.rag.utils.summarizer import generate_document_summary
 
-            summary = generate_document_summary(filepath, max_sentences=2)
+            # Pass existing chunks so summary never re-runs parse_pdf / Textract.
+            summary = generate_document_summary(
+                filepath, max_sentences=2, chunks=list(chunks or [])
+            )
             if summary:
                 doc.summary = summary
                 db.commit()

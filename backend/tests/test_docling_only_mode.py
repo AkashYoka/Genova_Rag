@@ -51,7 +51,23 @@ def test_table_engine_label_docling_only(monkeypatch):
         "app.rag.ingestion.pdf_layout.parser._textract_fallback_allowed",
         lambda settings=None: False,
     )
+    monkeypatch.setattr(
+        "app.rag.ingestion.pdf_layout.parser.get_settings",
+        lambda: SimpleNamespace(PDF_DOCLING_TABLES_ENABLED=True),
+    )
     assert _table_engine() == "docling_only"
+
+
+def test_table_engine_label_textract_primary(monkeypatch):
+    monkeypatch.setattr(
+        "app.rag.ingestion.pdf_layout.parser._textract_fallback_allowed",
+        lambda settings=None: True,
+    )
+    monkeypatch.setattr(
+        "app.rag.ingestion.pdf_layout.parser.get_settings",
+        lambda: SimpleNamespace(PDF_DOCLING_TABLES_ENABLED=False),
+    )
+    assert _table_engine() == "textract_detect"
 
 
 def test_extract_tables_from_page_skips_aws_when_fallback_disabled(monkeypatch):

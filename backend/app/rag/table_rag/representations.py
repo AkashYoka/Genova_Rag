@@ -305,9 +305,28 @@ def render_indexed_table_for_selector(
     understanding = data.get("llm_understanding") or {}
     dims = []
     footnotes = []
+    purpose = ""
+    subject = ""
+    app_cues: List[str] = []
+    app_attrs: List[str] = []
     if isinstance(understanding, dict):
         dims = [str(d) for d in (understanding.get("differentiating_dimensions") or []) if d]
         footnotes = understanding.get("footnotes") or []
+        purpose = str(understanding.get("purpose") or "").strip()
+        subject = str(understanding.get("subject") or "").strip()
+        app_cues = [
+            str(c).strip()
+            for c in (understanding.get("applicability_cues") or [])
+            if str(c).strip()
+        ]
+        for attr in understanding.get("applicability_attributes") or []:
+            if isinstance(attr, dict):
+                key = str(attr.get("key") or "").strip()
+                val = str(attr.get("value") or "").strip()
+                if key or val:
+                    app_attrs.append(f"{key}={val}" if key else val)
+            elif attr:
+                app_attrs.append(str(attr))
 
     lines: List[str] = [
         f"table_id: {table_id or 'unknown'}",
@@ -317,6 +336,14 @@ def render_indexed_table_for_selector(
         lines.append(f"section_path: {section}")
     if caption:
         lines.append(f"caption: {caption}")
+    if purpose:
+        lines.append(f"purpose: {purpose}")
+    if subject:
+        lines.append(f"subject: {subject}")
+    if app_cues:
+        lines.append("applicability: " + "; ".join(app_cues[:12]))
+    if app_attrs:
+        lines.append("applicability_attrs: " + "; ".join(app_attrs[:12]))
     if dims:
         lines.append("differentiating_dimensions: " + "; ".join(dims))
     if footnotes:

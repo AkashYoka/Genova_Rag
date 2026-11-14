@@ -17,13 +17,13 @@ _TABLE_CUE_RE = re.compile(
     r"(?i)\b("
     r"table|chart|grid|matrix|schedule|lookup|"
     r"row|column|cell|intersection|"
-    r"dose|dosing|dosage|frequency|every\s+\d+\s+(?:weeks?|days?|hours?|months?)|"
+    r"frequency|every\s+\d+\s+(?:weeks?|days?|hours?|months?)|"
     r"amount|rate|threshold|parameter|range|"
     r"compare|versus|vs\.?|higher|lower|maximum|minimum|total"
     r")\b"
 )
 _NUMERIC_UNIT_RE = re.compile(
-    r"(?i)\b\d+(?:\.\d+)?\s*(?:mg|kg|g|ml|l|%|\$|iu/?mL|ppm|mhz|gb|mb|"
+    r"(?i)\b\d+(?:\.\d+)?\s*(?:[a-zA-Zμµ%/²³°$]{1,12}|"
     r"weeks?|days?|hours?|months?)\b"
 )
 _PARAGRAPH_CUE_RE = re.compile(
@@ -103,9 +103,7 @@ def route_query(question: str) -> QueryRoute:
     if table_cue:
         return QueryRoute(QueryModality.TABLE, "explicit_table_language")
 
-    if multi_numeric and any(
-        u in " ".join(numeric).lower() for u in ("mg", "kg", "iu", "%")
-    ):
+    if multi_numeric:
         # Numerical question without explicit "table" — still prefer tables.
         if paragraph_cue:
             return QueryRoute(

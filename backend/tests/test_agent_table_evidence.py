@@ -1,7 +1,7 @@
 """Answer-stage verified table evidence helpers."""
 from __future__ import annotations
 
-from app.rag.generation.structured_lookup import VERIFIED_BLOCK_MARKER, VerifiedCell
+from app.rag.generation.table_evidence import VERIFIED_BLOCK_MARKER, VerifiedCell
 from app.rag.llm.agent import _reconcile_answer_with_verified_cell
 
 

@@ -236,7 +236,7 @@ def _run_questions(
     document_id: str,
     with_answer: bool,
 ) -> List[Dict[str, Any]]:
-    from app.rag.generation.table_interpretation import interpret_table_question
+    from app.rag.generation.llm_table_reasoning import interpret_table_question
     from app.rag.llm.agent import generate_answer
     from app.rag.retrieval.retriever import retrieve
     from app.rag.table_rag import route_query

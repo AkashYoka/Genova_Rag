@@ -1,33 +1,57 @@
-"""Answer-time table interpretation and verified cell lookup."""
+"""Answer-time table interpretation via LLM-driven evidence selection."""
 
-from app.rag.generation.structured_lookup import (
+from app.rag.generation.llm_table_reasoning import (
+    TableInterpretationResult,
+    collect_table_candidates,
+    interpret_table_question,
+    is_structured_lookup_question,
+    verify_llm_evidence,
+)
+from app.rag.generation.table_evidence import (
+    ANSWER_STATE_AMBIGUOUS,
+    ANSWER_STATE_INSUFFICIENT,
+    ANSWER_STATE_INVALID,
+    ANSWER_STATE_NOT_APPLICABLE,
+    ANSWER_STATE_VERIFIED,
     STATUS_AMBIGUOUS,
+    STATUS_EMPTY_CELL,
+    STATUS_INVALID_TABLE_STRUCTURE,
     STATUS_MATCHED,
     STATUS_NOT_FOUND,
     STATUS_OUT_OF_RANGE,
-    STATUS_INVALID_TABLE_STRUCTURE,
+    STATUS_SELECTOR_FAILED,
+    STATUS_VERIFICATION_FAILED,
+    VERIFIED_BLOCK_MARKER,
+    AnswerStateDecision,
     InsufficientEvidence,
     VerifiedCell,
-    lookup_cell_in_table,
-)
-from app.rag.generation.table_interpretation import interpret_table_question
-from app.rag.generation.table_selection import select_eligible_table_chunks
-from app.rag.generation.table_selector import (
-    interpret_with_selector,
-    verify_lookup_decision,
+    answer_state_for_status,
+    answer_state_from_sources,
 )
 
 __all__ = [
+    "ANSWER_STATE_AMBIGUOUS",
+    "ANSWER_STATE_INSUFFICIENT",
+    "ANSWER_STATE_INVALID",
+    "ANSWER_STATE_NOT_APPLICABLE",
+    "ANSWER_STATE_VERIFIED",
     "STATUS_AMBIGUOUS",
+    "STATUS_EMPTY_CELL",
+    "STATUS_INVALID_TABLE_STRUCTURE",
     "STATUS_MATCHED",
     "STATUS_NOT_FOUND",
     "STATUS_OUT_OF_RANGE",
-    "STATUS_INVALID_TABLE_STRUCTURE",
+    "STATUS_SELECTOR_FAILED",
+    "STATUS_VERIFICATION_FAILED",
+    "VERIFIED_BLOCK_MARKER",
+    "AnswerStateDecision",
     "InsufficientEvidence",
+    "TableInterpretationResult",
     "VerifiedCell",
+    "answer_state_for_status",
+    "answer_state_from_sources",
+    "collect_table_candidates",
     "interpret_table_question",
-    "interpret_with_selector",
-    "lookup_cell_in_table",
-    "select_eligible_table_chunks",
-    "verify_lookup_decision",
+    "is_structured_lookup_question",
+    "verify_llm_evidence",
 ]

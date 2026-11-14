@@ -184,27 +184,36 @@ class Settings(BaseSettings):
     PDF_OCR_TESSDATA_DIR: str = ""  # blank → TESSDATA_PREFIX / system tessdata
     PDF_TABLE_MAX_CHARS: int = 4000
     PDF_TABLE_SPLIT_ROWS: int = 40
-    # Primary PDF table extractor: Docling + TableFormer Accurate.
-    # Fallback: AWS Textract DetectDocumentText + geometry reconstruction.
-    # IAM (fallback): textract:DetectDocumentText. Cost ~$0.0015/page fallback.
-    # No Camelot / AnalyzeDocument / img2table table extractors.
-    PDF_DOCLING_TABLES_ENABLED: bool = True
+    # Active PDF table extractor: AWS Textract DetectDocumentText + geometry
+    # reconstruction (text-derived tables). Docling code remains intact but is
+    # disabled in the active path by default.
+    # Multipage PDFs use StartDocumentTextDetection / GetDocumentTextDetection
+    # (S3). Single-page / per-page fallback uses sync DetectDocumentText.
+    # IAM: textract:DetectDocumentText, textract:StartDocumentTextDetection,
+    # textract:GetDocumentTextDetection. Cost ~$1.50 / 1,000 pages.
+    # No Camelot / AnalyzeDocument TABLES / img2table table extractors.
+    PDF_DOCLING_TABLES_ENABLED: bool = False
     PDF_DOCLING_TABLEFORMER_MODE: str = "accurate"  # accurate | fast
     PDF_DOCLING_DO_OCR: bool = True
     # Convert large PDFs in page batches to avoid Docling/torch std::bad_alloc.
     # 0 = single full-document convert (legacy). Recommended: 4–8 on Windows CPU.
     PDF_DOCLING_PAGE_BATCH_SIZE: int = 4
-    # Quality gate: failed Docling pages/regions fall back to DetectDocumentText.
+    # Quality gate for structured extractors (Docling when re-enabled).
     PDF_TABLE_QUALITY_MIN_COLS: int = 2
     PDF_TABLE_QUALITY_MIN_ROWS: int = 1
     PDF_TABLE_QUALITY_MAX_EMPTY_CELL_RATIO: float = 0.65
     PDF_TABLE_QUALITY_MIN_STRUCTURE_CONFIDENCE: float = 0.35
-    # Master switch for DetectDocumentText fallback. False = Docling-only phase
-    # (no AWS Textract API calls). Keep Textract code for future reactivation.
-    PDF_TEXTRACT_FALLBACK_ENABLED: bool = False
+    # Master switch for DetectDocumentText. Required for the active Textract path.
+    # Name retained for env compatibility (historically a Docling fallback flag).
+    PDF_TEXTRACT_FALLBACK_ENABLED: bool = True
     # Legacy alias; both FALLBACK_ENABLED and TABLES_ENABLED must be true to run.
     PDF_TEXTRACT_TABLES_ENABLED: bool = True
     PDF_TEXTRACT_TABULAR_ONLY: bool = True
+    # Multipage PDFs: async Start/GetDocumentTextDetection via S3 (preferred).
+    # False forces sync per-page PNG DetectDocumentText only.
+    PDF_TEXTRACT_ASYNC_MULTIPAGE: bool = True
+    PDF_TEXTRACT_ASYNC_POLL_SECONDS: float = 2.0
+    PDF_TEXTRACT_ASYNC_TIMEOUT_SECONDS: int = 900
     PDF_TEXTRACT_REGION: str = ""  # blank → BEDROCK_REGION / AWS_REGION
     PDF_TEXTRACT_DPI: int = 0  # 0 → reuse PDF_OCR_DPI
     PDF_TEXTRACT_TIMEOUT_SECONDS: int = 60
@@ -245,7 +254,12 @@ class Settings(BaseSettings):
     # Default ~P15–P20 of typical weak matches; calibrate via scripts/calibrate_table_rag.py.
     TABLE_RAG_REWRITE_FALLBACK_THRESHOLD: float = 0.018
     # Coordinate selector: top-K hydrated tables sent to the LLM.
-    TABLE_RAG_SELECTOR_TOP_K: int = 4
+    # 4 was too aggressive: sibling dosing/spec matrices often ranked 5–10 and
+    # never reached the selector, causing abstentions or wrong-table answers.
+    TABLE_RAG_SELECTOR_TOP_K: int = 8
+    # Pull other tables that share a section with a retrieved hit so sibling
+    # matrices (same section, different applicability) are comparable.
+    TABLE_RAG_SIBLING_EXPAND: bool = True
     TABLE_RAG_SELECTOR_ENABLED: bool = True
     # Per-query RAG debug payload (redacted by default).
     RAG_DEBUG_ENABLED: bool = False

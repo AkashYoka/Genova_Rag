@@ -151,7 +151,7 @@ def main() -> int:
     from app.rag.table_rag.representations import table_summary_text
     from app.rag.table_rag.understanding import apply_understanding_to_table
     from app.rag.table_rag.schema import TableUnderstanding as TU
-    from app.rag.generation.structured_lookup import lookup_cell_in_table
+    from app.rag.generation.table_evidence import lookup_cell_in_table
     from app.rag.table_rag.routing import route_query
 
     settings = get_settings()

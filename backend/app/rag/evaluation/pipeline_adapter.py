@@ -60,7 +60,7 @@ def run_live_pipeline_case(
     Uses ``retrieve`` + ``interpret_table_question`` + ``generate_answer`` —
     the same path as production chat, not a simplified eval-only retriever.
     """
-    from app.rag.generation.table_interpretation import interpret_table_question
+    from app.rag.generation.llm_table_reasoning import interpret_table_question
     from app.rag.llm.agent import generate_answer
     from app.rag.retrieval.retriever import retrieve
     from app.rag.table_rag.telemetry import (
