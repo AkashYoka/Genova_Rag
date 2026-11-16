@@ -52,3 +52,4 @@ frontend/test-results/
 # Local AWS feasibility test artifacts
 .aws-feasibility-efs/
 
+experiments/
