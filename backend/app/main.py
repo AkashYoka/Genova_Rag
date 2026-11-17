@@ -113,7 +113,17 @@ app.state.limiter = limiter
 # ── Request ID Middleware ─────────────────────────────
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
-    request_id = str(uuid.uuid4())[:8]
+    # Prefer the full UUID already set by StructuredLoggingMiddleware so chat
+    # traces and X-Request-ID stay aligned. Fall back to a new UUID only when
+    # middleware did not run (e.g. some TestClient edge paths).
+    existing = getattr(request.state, "request_id", None)
+    incoming = request.headers.get("X-Request-ID")
+    if existing:
+        request_id = str(existing)
+    elif incoming:
+        request_id = str(incoming)
+    else:
+        request_id = str(uuid.uuid4())
     request.state.request_id = request_id
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
@@ -306,6 +316,7 @@ from app.routes.document_hierarchy import router as document_hierarchy_router
 from app.routes.chat import router as chat_router
 from app.routes.github import router as github_router
 from app.routes.admin import router as admin_router
+from app.routes.ai_traces import router as ai_traces_router
 from app.routes.workspaces import router as workspaces_router
 from app.routes.usage import router as usage_router
 from app.routes.prompts import router as prompts_router
@@ -316,6 +327,7 @@ app.include_router(document_hierarchy_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(github_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(ai_traces_router, prefix="/api/v1")
 app.include_router(prompts_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(health_router, prefix="/api/v1")

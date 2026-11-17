@@ -589,6 +589,8 @@ class ChatResponse(BaseModel):
     sources: List[SourceChunk] = []
     document_id: Optional[str] = None
     quiz: Optional[QuizPayload] = None
+    # Admin observability: unique id for the full processing lifecycle.
+    trace_id: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -1192,6 +1194,147 @@ class ReindexResponse(BaseModel):
     task_id: Optional[str] = None
     chunk_strategy: str
     message: str
+
+
+# ── Admin AI Traces ───────────────────────────────────
+
+
+class AITraceListItem(BaseModel):
+    trace_id: str
+    user_id: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
+    question: str
+    request_type: str = "rag"
+    status: str = "success"
+    created_at: Optional[datetime] = None
+    duration_ms: Optional[float] = None
+    total_tokens: Optional[int] = None
+    retrieved_chunk_count: Optional[int] = None
+    final_answer_status: Optional[str] = None
+    early_exit: bool = False
+    model_name: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class AITraceSummaryStats(BaseModel):
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+    partial: int = 0
+    avg_duration_ms: Optional[float] = None
+
+
+class AITraceListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    summary: AITraceSummaryStats
+    items: List[AITraceListItem]
+
+
+class AITraceStepOut(BaseModel):
+    id: str
+    sequence: int
+    name: str
+    status: str
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    duration_ms: Optional[float] = None
+    input_summary: Optional[str] = None
+    output_summary: Optional[str] = None
+    error_message: Optional[str] = None
+    metadata: Optional[Any] = None
+
+
+class AITraceRetrievalOut(BaseModel):
+    id: str
+    sequence: int
+    search_query: Optional[str] = None
+    search_method: Optional[str] = None
+    document_ids: List[Any] = []
+    document_names: List[Any] = []
+    chunk_ids: List[Any] = []
+    chunks: List[Any] = []
+    filters: Optional[Any] = None
+    rejected: Optional[Any] = None
+    selected_chunk_ids: List[Any] = []
+    result_count: Optional[int] = None
+    duration_ms: Optional[float] = None
+    metadata: Optional[Any] = None
+
+
+class AITraceLLMCallOut(BaseModel):
+    id: str
+    sequence: int
+    model_name: Optional[str] = None
+    provider: Optional[str] = None
+    system_prompt_version: Optional[str] = None
+    temperature: Optional[float] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cached_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    estimated_cost_usd: Optional[float] = None
+    cost_type: Optional[str] = None
+    pricing_note: Optional[str] = None
+    latency_ms: Optional[float] = None
+    retry_count: Optional[int] = None
+    validation_result: Optional[str] = None
+    status: str = "success"
+    error_message: Optional[str] = None
+    system_prompt: Optional[str] = None
+    user_prompt: Optional[str] = None
+    context_text: Optional[str] = None
+    raw_response: Optional[str] = None
+    chunks_sent_to_llm: Optional[List[Any]] = None
+    metadata: Optional[Any] = None
+
+
+class AITraceFeedbackLink(BaseModel):
+    feedback_id: Optional[str] = None
+    message_id: Optional[str] = None
+    feedback: Optional[str] = None
+    reason: Optional[str] = None
+    comment: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class AITraceDetailResponse(BaseModel):
+    trace_id: str
+    user_id: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
+    session_id: Optional[str] = None
+    message_id: Optional[str] = None
+    document_id: Optional[str] = None
+    question: str
+    request_type: str = "rag"
+    status: str = "success"
+    early_exit: bool = False
+    early_exit_reason: Optional[str] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    duration_ms: Optional[float] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    cached_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    model_name: Optional[str] = None
+    provider: Optional[str] = None
+    retrieved_chunk_count: Optional[int] = None
+    final_answer: Optional[str] = None
+    final_answer_status: Optional[str] = None
+    error_summary: Optional[str] = None
+    warnings: List[Any] = []
+    metadata: Dict[str, Any] = {}
+    steps: List[AITraceStepOut] = []
+    retrievals: List[AITraceRetrievalOut] = []
+    llm_calls: List[AITraceLLMCallOut] = []
+    feedback: List[AITraceFeedbackLink] = []
+    duration_breakdown: List[Dict[str, Any]] = []
 
 
 SectionTreeNode.model_rebuild()

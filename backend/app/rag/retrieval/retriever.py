@@ -1052,16 +1052,40 @@ def retrieve(
 
     from app.observability import chunks_retrieved_var
     chunks_retrieved_var.set(len(top_chunks))
+    method = "hybrid_rrf" if settings.USE_HYBRID_SEARCH else "vector"
+    if rerank_enabled:
+        method = f"{method}+rerank"
     try:
         from app.rag.retrieval.rag_debug import record_retrieval
 
-        method = "hybrid_rrf" if settings.USE_HYBRID_SEARCH else "vector"
-        if rerank_enabled:
-            method = f"{method}+rerank"
         record_retrieval(
             method=method,
             chunks=top_chunks,
             rerank_enabled=rerank_enabled,
+        )
+    except Exception:
+        pass
+    try:
+        from app.services import ai_tracing
+
+        ai_tracing.record_retrieval(
+            search_query=query,
+            search_method=method,
+            chunks=top_chunks,
+            filters={
+                "document_id": document_id,
+                "document_ids": document_ids,
+                "top_k": final_k,
+                "query_modality": query_modality,
+                "rewrite_triggered": rewrite_triggered,
+                "top1_rrf_score": top1,
+            },
+            selected_chunk_ids=[str(c.get("id")) for c in top_chunks if c.get("id")],
+            metadata={
+                "search_queries": search_queries,
+                "rerank_enabled": rerank_enabled,
+                "candidate_count": len(candidates),
+            },
         )
     except Exception:
         pass

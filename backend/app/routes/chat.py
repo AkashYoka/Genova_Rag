@@ -246,6 +246,7 @@ def _enriched_sources_payload(
     llm_provider: Optional[str] = None,
     response_time_ms: Optional[int] = None,
     attachments: Optional[list] = None,
+    trace_id: Optional[str] = None,
 ):
     """Build sources_json value: plain list when no metadata, else enriched dict."""
     if (
@@ -254,6 +255,7 @@ def _enriched_sources_payload(
         and not llm_provider
         and response_time_ms is None
         and not attachments
+        and not trace_id
     ):
         return sources
     enriched_usage = usage
@@ -286,6 +288,8 @@ def _enriched_sources_payload(
         payload["quiz"] = quiz
     if attachments:
         payload["attachments"] = attachments
+    if trace_id:
+        payload["trace_id"] = trace_id
     return payload
 
 
@@ -481,6 +485,27 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             return
 
         # Stream answer using existing generator and forward structured events
+        trace_ctx = None
+        trace_id = None
+        try:
+            from app.services.ai_tracing import begin_ai_trace, bind_ai_trace
+
+            trace_ctx = begin_ai_trace(
+                question=question or "",
+                user_id=str(user.id),
+                session_id=str(session_id),
+                document_id=str(document_id) if document_id else None,
+                request_type="rag",
+            )
+            trace_id = trace_ctx.trace_id if trace_ctx else None
+            if trace_id:
+                await websocket.send_json({"type": "meta", "trace_id": trace_id})
+            # Re-bind after await — ASGI can drop ContextVar across yields.
+            bind_ai_trace(trace_ctx)
+        except Exception:
+            logger.debug("AI trace begin (ws) skipped", exc_info=True)
+
+        assistant_message_id = None
         try:
             last_usage = None
             full_answer = ""
@@ -488,6 +513,12 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             quiz_payload = None
             stream_completed = False
             stream_failed = False
+            try:
+                from app.services.ai_tracing import bind_ai_trace as _bind_ws_trace
+
+                _bind_ws_trace(trace_ctx)
+            except Exception:
+                pass
             for chunk in generate_answer_stream(
                 question=question,
                 user_id=user.id,
@@ -495,6 +526,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 document_ids=document_ids,
                 chat_history=chat_history,
                 llm_provider=llm_provider,
+                session_id=str(session_id),
             ):
                 # chunk is SSE-style string like 'data: {json}\n\n' or similar
                 try:
@@ -517,24 +549,47 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                                 stream_completed = True
                             continue
                         await websocket.send_json(event_payload)
+                        try:
+                            from app.services.ai_tracing import bind_ai_trace as _rebind
+
+                            _rebind(trace_ctx)
+                        except Exception:
+                            pass
                     else:
                         # Fallback: send raw token
                         await websocket.send_json({"type": "token", "data": chunk})
+                        try:
+                            from app.services.ai_tracing import bind_ai_trace as _rebind
+
+                            _rebind(trace_ctx)
+                        except Exception:
+                            pass
                 except Exception:
                     await websocket.send_json({"type": "token", "data": chunk})
 
-            assistant_message_id = None
             # Persist only completed non-empty assistant turns (or quiz payloads)
             if (
                 stream_completed
                 and not stream_failed
                 and (full_answer.strip() or quiz_payload)
             ):
+                try:
+                    from app.services.ai_tracing import set_final_answer
+
+                    set_final_answer(
+                        full_answer,
+                        status="success",
+                        sources=sources or [],
+                        ctx=trace_ctx,
+                    )
+                except Exception:
+                    pass
                 save_sources = _enriched_sources_payload(
                     sources,
                     quiz=quiz_payload,
                     usage=last_usage,
                     llm_provider=llm_provider,
+                    trace_id=trace_id,
                 )
                 assistant_message_id = _save_message(
                     db,
@@ -564,15 +619,50 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 done_event["usage"] = last_usage
             if assistant_message_id:
                 done_event["message_id"] = str(assistant_message_id)
+            if trace_id:
+                done_event["trace_id"] = trace_id
             if not stream_completed:
                 done_event["incomplete"] = True
             await websocket.send_json(done_event)
 
         except WebSocketDisconnect:
             # Client gone — user message already persisted; do not invent assistant text
+            try:
+                from app.services.ai_tracing import finish_ai_trace
+
+                finish_ai_trace(
+                    status="partial",
+                    error="websocket_disconnect",
+                    message_id=assistant_message_id,
+                    ctx=trace_ctx,
+                )
+            except Exception:
+                pass
             return
         except Exception as e:
+            try:
+                from app.services.ai_tracing import finish_ai_trace
+
+                finish_ai_trace(
+                    status="failed",
+                    error=str(e)[:2000],
+                    message_id=assistant_message_id,
+                    ctx=trace_ctx,
+                )
+            except Exception:
+                pass
             await websocket.send_json({"type": "error", "data": str(e)})
+        else:
+            try:
+                from app.services.ai_tracing import finish_ai_trace
+
+                finish_ai_trace(
+                    status="failed" if stream_failed else "success",
+                    message_id=assistant_message_id,
+                    ctx=trace_ctx,
+                )
+            except Exception:
+                logger.debug("AI trace finish (ws) skipped", exc_info=True)
 
     except WebSocketDisconnect:
         return
@@ -875,6 +965,10 @@ def ask_question(
     # Capture early — nested SessionLocal commits (e.g. prompt resolution) can
     # expire/detach the request-scoped User on shared SQLite test connections.
     user_id = str(user.id)
+    assistant_message_id = None
+    trace_id = None
+    trace_status = "success"
+    trace_error = None
 
     # Bind query parameters to request context variables and state
     if request is not None:
@@ -884,6 +978,27 @@ def ask_question(
     logger.info(f"Processing RAG chat query: '{payload.question}'")
 
     try:
+        try:
+            from app.services.ai_tracing import begin_ai_trace, current_trace_id
+
+            incoming = None
+            if request is not None:
+                incoming = getattr(request.state, "request_id", None) or request.headers.get(
+                    "X-Request-ID"
+                )
+            begin_ai_trace(
+                question=payload.question,
+                user_id=user_id,
+                document_id=str(payload.document_id) if payload.document_id else None,
+                request_type="rag",
+                trace_id=incoming,
+            )
+            trace_id = current_trace_id()
+            if request is not None and trace_id:
+                request.state.request_id = trace_id
+        except Exception:
+            logger.debug("AI trace begin skipped", exc_info=True)
+
         try:
             validate_user_input(payload.question)
         except UnsafePromptError as exc:
@@ -928,6 +1043,14 @@ def ask_question(
         # Resolve owned session (never accept foreign session IDs)
         session = _resolve_owned_session(db, user_id, payload.session_id)
         session_id = session.id
+        try:
+            from app.services.ai_tracing import current_ai_trace
+
+            ctx = current_ai_trace()
+            if ctx is not None:
+                ctx.session_id = str(session_id)
+        except Exception:
+            pass
 
         # DB-backed history for this session only (before current turn)
         chat_history = _load_prompt_chat_history(db, user_id, session_id)
@@ -998,9 +1121,9 @@ def ask_question(
             logger.debug("Returning cached response for question: %s", payload.question[:40])
             answer = cached_payload.get("answer") or ""
             raw_sources = cached_payload.get("sources") or []
-            save_sources = _enriched_sources_payload(raw_sources)
+            save_sources = _enriched_sources_payload(raw_sources, trace_id=trace_id)
             if answer.strip():
-                _save_message(
+                assistant_message_id = _save_message(
                     db,
                     user_id,
                     msg_doc_id,
@@ -1016,10 +1139,18 @@ def ask_question(
                         cached_sources.append(SourceChunk(**item))
                     except Exception:
                         continue
+            try:
+                from app.services.ai_tracing import mark_early_exit, set_final_answer
+
+                mark_early_exit("cache_hit")
+                set_final_answer(answer, status="success", sources=raw_sources)
+            except Exception:
+                pass
             return ChatResponse(
                 answer=answer,
                 sources=cached_sources,
                 document_id=payload.document_id,
+                trace_id=trace_id,
             )
 
         result = generate_answer(
@@ -1058,6 +1189,7 @@ def ask_question(
             quiz=quiz_data,
             usage=result.get("usage"),
             llm_provider=payload.llm_provider,
+            trace_id=trace_id,
         )
         assistant_message_id = _save_message(
             db,
@@ -1088,13 +1220,39 @@ def ask_question(
             except Exception:
                 continue
 
+        try:
+            from app.services.ai_tracing import set_final_answer
+
+            set_final_answer(
+                result.get("answer") or "",
+                status="success",
+                sources=result.get("sources") or [],
+            )
+        except Exception:
+            pass
+
         return ChatResponse(
             answer=result["answer"],
             sources=safe_sources,
             document_id=payload.document_id,
             quiz=_coerce_quiz_payload(quiz_data),
+            trace_id=trace_id,
         )
+    except Exception as exc:
+        trace_status = "failed"
+        trace_error = str(exc)[:2000]
+        raise
     finally:
+        try:
+            from app.services.ai_tracing import finish_ai_trace
+
+            finish_ai_trace(
+                status=trace_status,
+                error=trace_error,
+                message_id=assistant_message_id,
+            )
+        except Exception:
+            logger.debug("AI trace finish skipped", exc_info=True)
         record_query_response_time(time.perf_counter() - started_at)
 
 
@@ -1115,6 +1273,10 @@ def ask_question_stream(
 ):
     """Ask a question and stream the answer using Server-Sent Events."""
     user_id = str(user.id)
+    trace_id = None
+    # Hold the context object across SSE: middleware can clear ContextVars
+    # before the generator body runs.
+    trace_ctx = None
 
     # Bind query parameters to request context variables and state
     if request is not None:
@@ -1122,6 +1284,27 @@ def ask_question_stream(
     from app.observability import query_text_var
     query_text_var.set(payload.question)
     logger.info(f"Processing streaming RAG chat query: '{payload.question}'")
+
+    try:
+        from app.services.ai_tracing import begin_ai_trace, current_trace_id
+
+        incoming = None
+        if request is not None:
+            incoming = getattr(request.state, "request_id", None) or request.headers.get(
+                "X-Request-ID"
+            )
+        trace_ctx = begin_ai_trace(
+            question=payload.question,
+            user_id=user_id,
+            document_id=str(payload.document_id) if payload.document_id else None,
+            request_type="rag",
+            trace_id=incoming,
+        )
+        trace_id = current_trace_id() or (trace_ctx.trace_id if trace_ctx else None)
+        if request is not None and trace_id:
+            request.state.request_id = trace_id
+    except Exception:
+        logger.debug("AI trace begin (stream) skipped", exc_info=True)
 
     try:
         validate_user_input(payload.question)
@@ -1168,6 +1351,8 @@ def ask_question_stream(
 
     session = _resolve_owned_session(db, user_id, payload.session_id)
     session_id = session.id
+    if trace_ctx is not None:
+        trace_ctx.session_id = str(session_id)
 
     # History before current user turn
     chat_history = _load_prompt_chat_history(db, user_id, session_id)
@@ -1238,11 +1423,32 @@ def ask_question_stream(
                     msg_doc_id,
                     "assistant",
                     cached_answer,
-                    _enriched_sources_payload(cached_sources),
+                    _enriched_sources_payload(cached_sources, trace_id=trace_id),
                     session_id=session_id,
                 )
+            try:
+                from app.services.ai_tracing import (
+                    finish_ai_trace,
+                    mark_early_exit,
+                    set_final_answer,
+                    ai_trace_var,
+                )
+
+                if trace_ctx is not None:
+                    ai_trace_var.set(trace_ctx)
+                mark_early_exit("cache_hit")
+                set_final_answer(cached_answer, status="success", sources=cached_sources)
+                finish_ai_trace(
+                    status="success",
+                    message_id=cached_message_id,
+                    ctx=trace_ctx,
+                )
+            except Exception:
+                pass
 
             async def cached_event_stream():
+                if trace_id:
+                    yield f"data: {json.dumps({'type': 'meta', 'trace_id': trace_id})}\n\n"
                 # Emit sources first so citation chips work on cache hits.
                 if cached_sources:
                     yield f"data: {json.dumps({'type': 'sources', 'data': cached_sources})}\n\n"
@@ -1257,6 +1463,8 @@ def ask_question_stream(
                 done_payload = {"type": "done"}
                 if cached_message_id:
                     done_payload["message_id"] = str(cached_message_id)
+                if trace_id:
+                    done_payload["trace_id"] = trace_id
                 yield f"data: {json.dumps(done_payload)}\n\n"
 
             return StreamingResponse(
@@ -1266,6 +1474,7 @@ def ask_question_stream(
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
                     "X-Accel-Buffering": "no",
+                    **({"X-Request-ID": trace_id} if trace_id else {}),
                 },
             )
 
@@ -1278,8 +1487,19 @@ def ask_question_stream(
         stream_completed = False
         stream_failed = False
         assistant_persisted = False
+        assistant_message_id = None
 
         try:
+            # Re-bind after middleware may have cleared ContextVars on response start.
+            try:
+                from app.services.ai_tracing import ai_trace_var
+
+                if trace_ctx is not None:
+                    ai_trace_var.set(trace_ctx)
+            except Exception:
+                pass
+            if trace_id:
+                yield f"data: {json.dumps({'type': 'meta', 'trace_id': trace_id})}\n\n"
             for chunk in generate_answer_stream(
                 question=payload.question,
                 user_id=user_id,
@@ -1350,9 +1570,9 @@ def ask_question_stream(
                 usage=last_usage,
                 llm_provider=payload.llm_provider,
                 response_time_ms=elapsed_ms,
+                trace_id=trace_id,
             )
 
-            assistant_message_id = None
             if (full_answer.strip() or quiz_payload) and not assistant_persisted:
                 try:
                     with get_db_session() as save_db:
@@ -1394,17 +1614,52 @@ def ask_question_stream(
             chunks_retrieved_var.set(chunks_count)
             logger.info(f"Streaming RAG chat query completed, retrieved {chunks_count} chunks")
 
+            try:
+                from app.services.ai_tracing import set_final_answer
+
+                set_final_answer(
+                    full_answer,
+                    status="success" if stream_completed and not stream_failed else "partial",
+                    sources=sources or [],
+                    ctx=trace_ctx,
+                )
+            except Exception:
+                pass
+
             done_payload = {"type": "done", "response_time_ms": elapsed_ms}
             if last_usage:
                 done_payload["usage"] = last_usage
             if assistant_message_id:
                 done_payload["message_id"] = str(assistant_message_id)
+            if trace_id:
+                done_payload["trace_id"] = trace_id
             yield f"data: {json.dumps(done_payload)}\n\n"
         except Exception as exc:
             logger.exception("Streaming RAG failed for session %s: %s", session_id, exc)
             # Do not persist a misleading completed assistant message on failure
             yield f"data: {json.dumps({'type': 'error', 'data': str(exc)})}\n\n"
+            try:
+                from app.services.ai_tracing import finish_ai_trace
+
+                finish_ai_trace(
+                    status="failed",
+                    error=str(exc)[:2000],
+                    ctx=trace_ctx,
+                )
+            except Exception:
+                pass
+            return
         finally:
+            try:
+                from app.services.ai_tracing import finish_ai_trace
+
+                finish_ai_trace(
+                    status="failed" if stream_failed else "success",
+                    message_id=assistant_message_id,
+                    ctx=trace_ctx,
+                )
+            except Exception:
+                logger.debug("AI trace finish (stream) skipped", exc_info=True)
             record_query_response_time(time.perf_counter() - started_at)
 
     return StreamingResponse(
@@ -1414,6 +1669,7 @@ def ask_question_stream(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            **({"X-Request-ID": trace_id} if trace_id else {}),
         },
     )
 
@@ -1675,6 +1931,7 @@ def submit_feedback(
     db.add(feedback)
     try:
         db.commit()
+        db.refresh(feedback)
     except IntegrityError as exc:
         db.rollback()
         raise AppException(
@@ -1683,6 +1940,19 @@ def submit_feedback(
             409,
         ) from exc
     db.refresh(msg)
+
+    try:
+        from app.services.ai_tracing import link_feedback_to_trace
+
+        link_feedback_to_trace(
+            message_id=str(msg.id),
+            feedback_id=str(feedback.id),
+            feedback=payload.feedback,
+            reason=payload.reason,
+            comment=payload.comment,
+        )
+    except Exception:
+        logger.debug("AI trace feedback link skipped", exc_info=True)
 
     return _message_response_from_row(msg)
 

@@ -18,7 +18,9 @@ Common example question (all six files):
 import logging
 import json
 import re
-from typing import List, Dict, Any, Optional, Generator, Tuple
+import time
+from contextlib import contextmanager
+from typing import List, Dict, Any, Optional, Generator, Tuple, Iterator
 
 from langchain_classic.agents import create_react_agent, AgentExecutor
 from langchain_core.prompts import PromptTemplate
@@ -32,6 +34,18 @@ from app.rag.prompts.prompts import (
     RAG_PROMPT_TEMPLATE,
     SYSTEM_PROMPT,
 )
+
+
+@contextmanager
+def _ai_trace_step(name: str, *, input_summary: Any = None) -> Iterator[Any]:
+    """Best-effort stage recorder; never raises into the RAG path."""
+    try:
+        from app.services.ai_tracing import trace_step
+
+        with trace_step(name, input_summary=input_summary) as step:
+            yield step
+    except Exception:
+        yield None
 
 
 def _resolve_runtime_prompts(
@@ -1832,23 +1846,38 @@ def _generate_answer_direct(
     if summarize_pack:
         context, sources = summarize_pack
     else:
-        chunks = retrieve(
-            query=question,
-            user_id=user_id,
-            document_id=document_id,
-            document_ids=document_ids,
-            top_k=top_k or settings.TOP_K_RERANK,
-        )
+        with _ai_trace_step("vector_search_hybrid_retrieval", input_summary=question[:200]):
+            chunks = retrieve(
+                query=question,
+                user_id=user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+                top_k=top_k or settings.TOP_K_RERANK,
+            )
         sources = _sources_from_chunks(chunks)
         if not chunks:
             # Fall back to session memory when corpus has nothing but history does.
             if chat_history:
+                try:
+                    from app.services.ai_tracing import mark_early_exit, add_warning
+
+                    mark_early_exit("empty_retrieval_chat_memory")
+                    add_warning("Empty retrieval; fell back to chat memory")
+                except Exception:
+                    pass
                 return _chat_memory_answer(
                     question,
                     chat_history,
                     llm_provider=llm_provider,
                     prior_sources=_prior_sources_from_history(chat_history),
                 )
+            try:
+                from app.services.ai_tracing import mark_early_exit, add_warning
+
+                mark_early_exit("empty_retrieval")
+                add_warning("Empty retrieval results")
+            except Exception:
+                pass
             return {
                 "answer": (
                     "I couldn't find sufficient information in the uploaded documents "
@@ -1856,41 +1885,62 @@ def _generate_answer_direct(
                 ),
                 "sources": [],
             }
-        context = (
-            _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
-        )
-        context, sources, chunks = _apply_table_interpretation(
-            question,
-            chunks,
-            context,
-            sources,
+        with _ai_trace_step("context_construction"):
+            context = (
+                _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
+            )
+            context, sources, chunks = _apply_table_interpretation(
+                question,
+                chunks,
+                context,
+                sources,
+                user_id=user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+            )
+
+    prompt_chunks: List[Dict[str, Any]] = []
+    try:
+        if "chunks" in locals() and isinstance(chunks, list):
+            prompt_chunks = [c for c in chunks if isinstance(c, dict)]
+    except Exception:
+        prompt_chunks = []
+
+    with _ai_trace_step("prompt_assembly"):
+        resolved = _resolve_runtime_prompts(
+            question=question,
             user_id=user_id,
             document_id=document_id,
             document_ids=document_ids,
+            chat_history=chat_history,
+            retrieved_context=context[:2000] if context else None,
+            llm_provider=llm_provider,
+            prompt_type="rag",
+            session_id=session_id,
         )
+        user_prompt = resolved.format_task(context=context, question=question)
+        history = _history_for_rag_prompt(
+            question, chat_history, has_attach=has_attach
+        )
+        if history:
+            user_prompt = f"{history}\n\n{user_prompt}"
+        try:
+            from app.services.ai_tracing import record_prompt_assembly
 
-    resolved = _resolve_runtime_prompts(
-        question=question,
-        user_id=user_id,
-        document_id=document_id,
-        document_ids=document_ids,
-        chat_history=chat_history,
-        retrieved_context=context[:2000] if context else None,
-        llm_provider=llm_provider,
-        prompt_type="rag",
-        session_id=session_id,
-    )
-    user_prompt = resolved.format_task(context=context, question=question)
-    history = _history_for_rag_prompt(
-        question, chat_history, has_attach=has_attach
-    )
-    if history:
-        user_prompt = f"{history}\n\n{user_prompt}"
+            record_prompt_assembly(
+                question=question,
+                system_prompt=resolved.system_prompt,
+                user_prompt=user_prompt,
+                context_text=context,
+                chunks=prompt_chunks,
+            )
+        except Exception:
+            pass
 
     try:
-        from app.rag.retrieval.rag_debug import record_prompt_assembly
+        from app.rag.retrieval.rag_debug import record_prompt_assembly as _dbg_prompt
 
-        record_prompt_assembly(
+        _dbg_prompt(
             domain=getattr(resolved, "domain", "") or "",
             prompt_type=getattr(resolved, "prompt_type", "") or "rag",
             system_prompt=resolved.system_prompt,
@@ -1902,21 +1952,73 @@ def _generate_answer_direct(
 
     provider = normalize_llm_provider(llm_provider)
     client = get_llm_client(llm_provider=provider)
-    response = client.chat_completion(
-        messages=[
-            {"role": "system", "content": resolved.system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        model=llm_model_for_provider(provider),
-        max_tokens=settings.LLM_MAX_NEW_TOKENS,
-        temperature=settings.LLM_TEMPERATURE,
-    )
+    model_id = llm_model_for_provider(provider)
+    llm_t0 = time.perf_counter()
+    try:
+        with _ai_trace_step("llm_request", input_summary=f"{provider}:{model_id}"):
+            response = client.chat_completion(
+                messages=[
+                    {"role": "system", "content": resolved.system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=model_id,
+                max_tokens=settings.LLM_MAX_NEW_TOKENS,
+                temperature=settings.LLM_TEMPERATURE,
+            )
+    except Exception as exc:
+        try:
+            from app.services.ai_tracing import record_llm_call
+
+            record_llm_call(
+                model_name=model_id,
+                provider=provider,
+                temperature=settings.LLM_TEMPERATURE,
+                latency_ms=round((time.perf_counter() - llm_t0) * 1000, 3),
+                status="failed",
+                error_message=str(exc),
+                system_prompt=resolved.system_prompt,
+                user_prompt=user_prompt,
+                context_text=context,
+                chunks=prompt_chunks,
+            )
+        except Exception:
+            pass
+        raise
     answer = ""
     if response and getattr(response, "choices", None):
         answer = (response.choices[0].message.content or "").strip()
     if not answer:
         answer = MALFORMED_OUTPUT_MESSAGE
     answer = _reconcile_answer_with_verified_cell(answer, sources)
+    usage = getattr(client, "last_usage", None)
+    try:
+        from app.services.ai_tracing import record_llm_call
+
+        prompt_ver = None
+        try:
+            prompt_ver = (
+                f"{getattr(resolved, 'domain', '')}:"
+                f"{getattr(resolved, 'prompt_type', 'rag')}"
+            )
+        except Exception:
+            prompt_ver = None
+        record_llm_call(
+            model_name=model_id,
+            provider=provider,
+            system_prompt_version=prompt_ver,
+            temperature=settings.LLM_TEMPERATURE,
+            usage=usage if isinstance(usage, dict) else None,
+            latency_ms=round((time.perf_counter() - llm_t0) * 1000, 3),
+            validation_result="empty" if answer == MALFORMED_OUTPUT_MESSAGE else "ok",
+            status="success",
+            system_prompt=resolved.system_prompt,
+            user_prompt=user_prompt,
+            context_text=context,
+            raw_response=answer,
+            chunks=prompt_chunks,
+        )
+    except Exception:
+        pass
     try:
         from app.rag.retrieval.rag_debug import record_answer
 
@@ -1930,7 +2032,6 @@ def _generate_answer_direct(
     except Exception:
         pass
     result: Dict[str, Any] = {"answer": answer, "sources": sources}
-    usage = getattr(client, "last_usage", None)
     if isinstance(usage, dict) and usage:
         result["usage"] = usage
     if getattr(settings, "RAG_DEBUG_ENABLED", False):
@@ -2038,17 +2139,33 @@ def _generate_answer_stream_direct(
         else None
     )
     if summarize_pack:
-        context, sources = summarize_pack
+        with _ai_trace_step("attached_document_summarize"):
+            context, sources = summarize_pack
     else:
-        chunks = retrieve(
-            query=question,
-            user_id=user_id,
-            document_id=document_id,
-            document_ids=document_ids,
-            top_k=top_k or settings.TOP_K_RERANK,
-        )
+        with _ai_trace_step(
+            "vector_search_hybrid_retrieval",
+            input_summary=question[:200],
+        ):
+            chunks = retrieve(
+                query=question,
+                user_id=user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+                top_k=top_k or settings.TOP_K_RERANK,
+            )
         sources = _sources_from_chunks(chunks)
         if not chunks:
+            try:
+                from app.services.ai_tracing import mark_early_exit, add_warning
+
+                if chat_history:
+                    mark_early_exit("empty_retrieval_chat_memory")
+                    add_warning("Empty retrieval; fell back to chat memory")
+                else:
+                    mark_early_exit("empty_retrieval")
+                    add_warning("Empty retrieval results")
+            except Exception:
+                pass
             if chat_history:
                 result = _chat_memory_answer(
                     question,
@@ -2071,18 +2188,19 @@ def _generate_answer_stream_direct(
             yield f"data: {json.dumps({'type': 'token', 'data': msg})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
-        context = (
-            _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
-        )
-        context, sources, chunks = _apply_table_interpretation(
-            question,
-            chunks,
-            context,
-            sources,
-            user_id=user_id,
-            document_id=document_id,
-            document_ids=document_ids,
-        )
+        with _ai_trace_step("context_construction"):
+            context = (
+                _multi_doc_prompt_prefix(document_ids, chunks) + _format_context(chunks)
+            )
+            context, sources, chunks = _apply_table_interpretation(
+                question,
+                chunks,
+                context,
+                sources,
+                user_id=user_id,
+                document_id=document_id,
+                document_ids=document_ids,
+            )
         try:
             from app.rag.table_rag.telemetry import emit_table_rag_trace
 
@@ -2093,30 +2211,58 @@ def _generate_answer_stream_direct(
             pass
 
     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
-    resolved = _resolve_runtime_prompts(
-        question=question,
-        user_id=user_id,
-        document_id=document_id,
-        document_ids=document_ids,
-        chat_history=chat_history,
-        retrieved_context=context[:2000] if context else None,
-        llm_provider=llm_provider,
-        prompt_type="rag",
-        session_id=session_id,
-    )
-    user_prompt = resolved.format_task(context=context, question=question)
-    history = _history_for_rag_prompt(
-        question, chat_history, has_attach=has_attach
-    )
-    if history:
-        user_prompt = f"{history}\n\n{user_prompt}"
+    # Keep the chunk list used for the prompt (summarize path may not set it).
+    prompt_chunks: List[Dict[str, Any]] = []
+    try:
+        if "chunks" in locals() and isinstance(chunks, list):
+            prompt_chunks = [c for c in chunks if isinstance(c, dict)]
+    except Exception:
+        prompt_chunks = []
+
+    with _ai_trace_step("prompt_assembly"):
+        resolved = _resolve_runtime_prompts(
+            question=question,
+            user_id=user_id,
+            document_id=document_id,
+            document_ids=document_ids,
+            chat_history=chat_history,
+            retrieved_context=context[:2000] if context else None,
+            llm_provider=llm_provider,
+            prompt_type="rag",
+            session_id=session_id,
+        )
+        user_prompt = resolved.format_task(context=context, question=question)
+        history = _history_for_rag_prompt(
+            question, chat_history, has_attach=has_attach
+        )
+        if history:
+            user_prompt = f"{history}\n\n{user_prompt}"
+        try:
+            from app.services.ai_tracing import record_prompt_assembly
+
+            record_prompt_assembly(
+                question=question,
+                system_prompt=resolved.system_prompt,
+                user_prompt=user_prompt,
+                context_text=context,
+                chunks=prompt_chunks,
+            )
+        except Exception:
+            pass
 
     provider = normalize_llm_provider(llm_provider)
+    model_id = llm_model_for_provider(provider)
     # Hard table-evidence failures must not stream a definitive answer then
     # append an ambiguity warning — replace up front when already known.
     gate_msg = _streaming_gate_message(sources)
     if gate_msg:
         msg = gate_msg
+        try:
+            from app.services.ai_tracing import mark_early_exit
+
+            mark_early_exit("table_evidence_gate")
+        except Exception:
+            pass
         try:
             from app.rag.table_rag.telemetry import record_reconcile_action
 
@@ -2136,6 +2282,15 @@ def _generate_answer_stream_direct(
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
+    llm_t0 = time.perf_counter()
+    answer_parts: List[str] = []
+    llm_step = None
+    try:
+        from app.services.ai_tracing import begin_step
+
+        llm_step = begin_step("llm_stream", input_summary=f"{provider}:{model_id}")
+    except Exception:
+        llm_step = None
     try:
         yield f"data: {json.dumps({'type': 'status', 'data': 'generating'})}\n\n"
         client = get_llm_client(llm_provider=provider)
@@ -2144,21 +2299,73 @@ def _generate_answer_stream_direct(
                 {"role": "system", "content": resolved.system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            model=llm_model_for_provider(provider),
+            model=model_id,
             max_tokens=settings.LLM_MAX_NEW_TOKENS,
             temperature=settings.LLM_TEMPERATURE,
             stream=True,
         )
-        for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield f"data: {json.dumps({'type': 'token', 'data': chunk.choices[0].delta.content})}\n\n"
+        for stream_chunk in stream:
+            if stream_chunk.choices and stream_chunk.choices[0].delta.content:
+                piece = stream_chunk.choices[0].delta.content
+                answer_parts.append(piece)
+                yield f"data: {json.dumps({'type': 'token', 'data': piece})}\n\n"
         usage = getattr(client, "last_usage", None)
+        try:
+            from app.services.ai_tracing import end_step, record_llm_call
+
+            end_step(llm_step, status="success")
+            prompt_ver = None
+            try:
+                prompt_ver = (
+                    f"{getattr(resolved, 'domain', '')}:"
+                    f"{getattr(resolved, 'prompt_type', 'rag')}"
+                )
+            except Exception:
+                prompt_ver = None
+            record_llm_call(
+                model_name=model_id,
+                provider=provider,
+                system_prompt_version=prompt_ver,
+                temperature=settings.LLM_TEMPERATURE,
+                usage=usage if isinstance(usage, dict) else None,
+                latency_ms=round((time.perf_counter() - llm_t0) * 1000, 3),
+                validation_result="ok",
+                status="success",
+                system_prompt=resolved.system_prompt,
+                user_prompt=user_prompt,
+                context_text=context,
+                raw_response="".join(answer_parts),
+                chunks=prompt_chunks,
+                metadata={"stream": True},
+            )
+        except Exception:
+            logger.debug("AI trace llm_stream success record skipped", exc_info=True)
         if isinstance(usage, dict) and usage:
             yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'usage': usage})}\n\n"
             return
     except Exception as e:
         logger.error("Direct stream error (%s): %s", provider, e)
+        try:
+            from app.services.ai_tracing import end_step, record_llm_call
+
+            end_step(llm_step, error=e)
+            record_llm_call(
+                model_name=model_id,
+                provider=provider,
+                temperature=settings.LLM_TEMPERATURE,
+                latency_ms=round((time.perf_counter() - llm_t0) * 1000, 3),
+                status="failed",
+                error_message=str(e),
+                system_prompt=resolved.system_prompt,
+                user_prompt=user_prompt,
+                context_text=context,
+                raw_response="".join(answer_parts) or None,
+                chunks=prompt_chunks,
+                metadata={"stream": True},
+            )
+        except Exception:
+            logger.debug("AI trace llm_stream failure record skipped", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
         return
 
@@ -2227,6 +2434,13 @@ def generate_answer(
         from app.rag.utils.quiz import generate_quiz_response
 
         try:
+            from app.services.ai_tracing import mark_early_exit, set_request_type
+
+            set_request_type("quiz")
+            mark_early_exit("quiz")
+        except Exception:
+            pass
+        try:
             # Still resolve/log domain + prompt selection for observability.
             _resolve_runtime_prompts(
                 question=question,
@@ -2262,6 +2476,13 @@ def generate_answer(
         llm_provider=provider,
     )
     if special is not None:
+        try:
+            from app.services.ai_tracing import mark_early_exit, set_request_type
+
+            set_request_type("special_turn")
+            mark_early_exit("special_turn")
+        except Exception:
+            pass
         return special
 
     # Local Ollama / Bedrock: direct retrieve-then-generate

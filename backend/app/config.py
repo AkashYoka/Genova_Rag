@@ -296,6 +296,19 @@ class Settings(BaseSettings):
     RAG_DEBUG_ENABLED: bool = False
     RAG_DEBUG_REDACT: bool = True
 
+    # ── AI Processing Traces (admin observability) ────────
+    # Durable per-question traces for the admin Trace Dashboard.
+    # Persistence failures never break chat responses.
+    AI_TRACE_ENABLED: bool = True
+    # When False, store metadata/scores/durations only (no full prompts/context).
+    AI_TRACE_CAPTURE_PAYLOADS: bool = False
+    # Optional emails/phones/SSN mask in stored traces. Off so admins can read
+    # real RAG chunks (dosing tables). Never strips clinical mg/kg/IgE text.
+    AI_TRACE_REDACT_PII: bool = False
+    AI_TRACE_CHUNK_PREVIEW_CHARS: int = 500
+    AI_TRACE_RETENTION_DAYS: int = 30
+    AI_TRACE_AUDIT_ACCESS: bool = True
+
     # ── Embeddings ───────────────────────────────────────
     # Localhost default: Ollama nomic-embed-text (768-d).
     # Production (ENVIRONMENT=production): forced to Bedrock Titan V2 (1024-d).

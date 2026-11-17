@@ -1,8 +1,10 @@
 """Per-query RAG debug traces for retrieval / prompt investigations.
 
-Sensitive numeric / identity-adjacent spans are redacted when
-``RAG_DEBUG_REDACT=True`` (default). Enable full prompt assembly via
-``RAG_DEBUG_ENABLED=True``.
+True PII spans (emails, phones, SSN-like) are redacted when
+``RAG_DEBUG_REDACT=True`` (default). Clinical dosing vocabulary
+(``dose``, ``weight``, ``mg``, IgE bands, etc.) is intentionally NOT
+redacted — that is the document content admins need to inspect.
+Enable full prompt assembly via ``RAG_DEBUG_ENABLED=True``.
 """
 from __future__ import annotations
 
@@ -12,12 +14,17 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
-_SENSITIVE_FIELD_RE = re.compile(
-    r"(?i)\b("
-    r"age|years?\s*old|body\s*weight|weight|dose|amount|total|"
-    r"every\s+\d+\s+(?:weeks?|days?|hours?)|prescribed|patient|"
-    r"invoice\s*(?:id|number)|account\s*(?:no|number)"
-    r")\b[^.\n]{0,40}"
+# Only identity / credential-like spans — never clinical label vocabulary.
+_PII_EMAIL_RE = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+)
+_PII_PHONE_RE = re.compile(
+    r"(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}(?!\d)"
+)
+_PII_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_PII_ACCOUNT_RE = re.compile(
+    r"(?i)\b(?:ssn|social\s*security|account\s*(?:no|number|#)|invoice\s*(?:id|number)|"
+    r"password|api[_-]?key|secret[_-]?key)\b\s*[:=]?\s*\S{3,}"
 )
 
 rag_debug_var: ContextVar[Optional["RagDebugTrace"]] = ContextVar(
@@ -65,16 +72,17 @@ class RagDebugTrace:
 
 
 def redact_sensitive_spans(text: str) -> str:
-    """Best-effort redaction of common sensitive narrative spans for logs."""
+    """Redact identity/credential PII only — keep clinical document text intact.
+
+    Older builds wiped ``dose``/``weight``/``mg``/IgE bands which destroyed
+    Xolair dosing tables in admin traces. That behavior is intentionally gone.
+    """
     if not text:
         return text
-    redacted = _SENSITIVE_FIELD_RE.sub("[REDACTED]", text)
-    # Mask standalone numbers with common units in prose.
-    redacted = re.sub(
-        r"\b\d{2,4}(?:\.\d+)?\s*(?:kg|mg|g|ml|%|\$|IU(?:/mL)?|years?)\b",
-        "[REDACTED]",
-        redacted,
-    )
+    redacted = _PII_EMAIL_RE.sub("[REDACTED_EMAIL]", text)
+    redacted = _PII_PHONE_RE.sub("[REDACTED_PHONE]", redacted)
+    redacted = _PII_SSN_RE.sub("[REDACTED_SSN]", redacted)
+    redacted = _PII_ACCOUNT_RE.sub("[REDACTED]", redacted)
     return redacted
 
 

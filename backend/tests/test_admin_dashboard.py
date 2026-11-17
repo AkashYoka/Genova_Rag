@@ -59,6 +59,7 @@ def test_admin_endpoints_forbid_regular_user(client, auth_headers):
         "/api/v1/admin/workspaces",
         "/api/v1/admin/api-keys/summary",
         "/api/v1/admin/export-db?format=json",
+        "/api/v1/admin/ai-traces",
     ]
     for path in paths:
         response = client.get(path, headers=auth_headers)

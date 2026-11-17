@@ -24,6 +24,7 @@ import { formatBytes, formatTime, formatUsd, isAdminUser } from "@/lib/admin";
 import { useAuth } from "@/lib/auth";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { FeedbackManagementPanel } from "@/components/admin/FeedbackManagementPanel";
+import { AiTracesPanel } from "@/components/admin/AiTracesPanel";
 import { PromptManagementPanel } from "@/components/admin/PromptManagementPanel";
 import {
   LedgerBarChart,
@@ -52,6 +53,7 @@ type Section =
   | "usage"
   | "rag"
   | "feedback"
+  | "ai-traces"
   | "prompts"
   | "integrations"
   | "database"
@@ -186,6 +188,7 @@ const NAV: LedgerNavItem[] = [
   { id: "usage", label: "AI Usage", icon: <Sparkles /> },
   { id: "rag", label: "RAG", icon: <FileText /> },
   { id: "feedback", label: "User Feedback", icon: <ThumbsUp /> },
+  { id: "ai-traces", label: "AI Traces", icon: <Activity /> },
   { id: "prompts", label: "Prompt Management", icon: <MessageSquareText /> },
   { id: "integrations", label: "Integrations", icon: <Network /> },
   { id: "database", label: "Database", icon: <Database /> },
@@ -304,6 +307,9 @@ function AdminPageContent() {
       else if (section === "feedback") {
         /* FeedbackManagementPanel loads its own data */
       }
+      else if (section === "ai-traces") {
+        /* AiTracesPanel loads its own data */
+      }
       else if (section === "prompts") {
         /* PromptManagementPanel loads its own data */
       }
@@ -380,6 +386,9 @@ function AdminPageContent() {
     }
     if (section === "feedback") {
       return "Likes, dislikes, and the reasoning behind every rated response";
+    }
+    if (section === "ai-traces") {
+      return "Trace ID lifecycle · retrieval · LLM · failure analysis";
     }
     if (section === "prompts") {
       return "Automatic domain detection · layered Global + Domain + Task prompts";
@@ -474,13 +483,15 @@ function AdminPageContent() {
                         ? "RAG indexing"
                         : section === "feedback"
                           ? "User feedback"
-                          : section === "prompts"
-                            ? "Prompt Management"
-                            : section === "integrations"
-                            ? "Integrations"
-                            : section === "database"
-                              ? "Database"
-                              : "System health"
+                          : section === "ai-traces"
+                            ? "AI processing traces"
+                            : section === "prompts"
+                              ? "Prompt Management"
+                              : section === "integrations"
+                                ? "Integrations"
+                                : section === "database"
+                                  ? "Database"
+                                  : "System health"
               }
               finding={finding}
               actions={
@@ -1135,6 +1146,8 @@ function AdminPageContent() {
             ) : null}
 
             {section === "feedback" ? <FeedbackManagementPanel /> : null}
+
+            {section === "ai-traces" ? <AiTracesPanel /> : null}
 
             {section === "prompts" ? <PromptManagementPanel /> : null}
 

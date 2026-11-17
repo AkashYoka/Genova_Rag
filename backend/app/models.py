@@ -989,3 +989,244 @@ class PromptExecutionLog(Base):
     domain_template_id = Column(GUID, nullable=True)
     domain_version = Column(Integer, nullable=True)
     created_at = Column(Timestamp, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+# ── AI Processing Traces (admin observability) ───────────────────────────────
+
+
+class AITrace(Base):
+    """One durable processing trace per user question."""
+
+    __tablename__ = "ai_traces"
+    __table_args__ = (
+        Index("ix_ai_traces_user_created", "user_id", "created_at"),
+        Index("ix_ai_traces_status_created", "status", "created_at"),
+        Index("ix_ai_traces_request_type_created", "request_type", "created_at"),
+    )
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    trace_id = Column(String(64), nullable=False, unique=True, index=True)
+    user_id = Column(
+        GUID,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    session_id = Column(
+        GUID,
+        ForeignKey("chat_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    message_id = Column(
+        GUID,
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    document_id = Column(
+        GUID,
+        ForeignKey("documents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    question = Column(LongText, nullable=False)
+    request_type = Column(String(64), nullable=False, default="rag", index=True)
+    status = Column(String(32), nullable=False, default="success", index=True)
+    early_exit = Column(Boolean, default=False, nullable=False)
+    early_exit_reason = Column(String(128), nullable=True)
+    started_at = Column(Timestamp, nullable=True)
+    finished_at = Column(Timestamp, nullable=True)
+    duration_ms = Column(Float, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    cached_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    model_name = Column(String(128), nullable=True)
+    provider = Column(String(64), nullable=True)
+    retrieved_chunk_count = Column(Integer, nullable=True)
+    final_answer = Column(LongText, nullable=True)
+    final_answer_status = Column(String(32), nullable=True)
+    error_summary = Column(LongText, nullable=True)
+    warnings_json = Column(LongText, nullable=True)
+    metadata_json = Column(LongText, nullable=True)
+    created_at = Column(
+        Timestamp,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+    steps = relationship(
+        "AITraceStep",
+        back_populates="trace",
+        cascade="all, delete-orphan",
+        order_by="AITraceStep.sequence",
+    )
+    retrievals = relationship(
+        "AITraceRetrieval",
+        back_populates="trace",
+        cascade="all, delete-orphan",
+        order_by="AITraceRetrieval.sequence",
+    )
+    llm_calls = relationship(
+        "AITraceLLMCall",
+        back_populates="trace",
+        cascade="all, delete-orphan",
+        order_by="AITraceLLMCall.sequence",
+    )
+    feedback_links = relationship(
+        "AITraceFeedback",
+        back_populates="trace",
+        cascade="all, delete-orphan",
+    )
+
+
+class AITraceStep(Base):
+    """One processing stage within an AI trace."""
+
+    __tablename__ = "ai_trace_steps"
+    __table_args__ = (
+        Index("ix_ai_trace_steps_trace_seq", "trace_pk", "sequence"),
+    )
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    trace_pk = Column(
+        GUID,
+        ForeignKey("ai_traces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sequence = Column(Integer, nullable=False, default=0)
+    name = Column(String(128), nullable=False)
+    status = Column(String(32), nullable=False, default="success")
+    started_at = Column(Timestamp, nullable=True)
+    finished_at = Column(Timestamp, nullable=True)
+    duration_ms = Column(Float, nullable=True)
+    input_summary = Column(LongText, nullable=True)
+    output_summary = Column(LongText, nullable=True)
+    error_message = Column(LongText, nullable=True)
+    metadata_json = Column(LongText, nullable=True)
+
+    trace = relationship("AITrace", back_populates="steps")
+
+
+class AITraceRetrieval(Base):
+    """One retrieval operation (vector / BM25 / hybrid) within a trace."""
+
+    __tablename__ = "ai_trace_retrievals"
+    __table_args__ = (
+        Index("ix_ai_trace_retrievals_trace_seq", "trace_pk", "sequence"),
+    )
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    trace_pk = Column(
+        GUID,
+        ForeignKey("ai_traces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_id = Column(
+        GUID,
+        ForeignKey("ai_trace_steps.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    sequence = Column(Integer, nullable=False, default=0)
+    search_query = Column(LongText, nullable=True)
+    search_method = Column(String(64), nullable=True)
+    document_ids_json = Column(LongText, nullable=True)
+    document_names_json = Column(LongText, nullable=True)
+    chunk_ids_json = Column(LongText, nullable=True)
+    chunks_json = Column(LongText, nullable=True)
+    filters_json = Column(LongText, nullable=True)
+    rejected_json = Column(LongText, nullable=True)
+    selected_chunk_ids_json = Column(LongText, nullable=True)
+    metadata_json = Column(LongText, nullable=True)
+    result_count = Column(Integer, nullable=True)
+    duration_ms = Column(Float, nullable=True)
+
+    trace = relationship("AITrace", back_populates="retrievals")
+
+
+class AITraceLLMCall(Base):
+    """One LLM invocation within a trace."""
+
+    __tablename__ = "ai_trace_llm_calls"
+    __table_args__ = (
+        Index("ix_ai_trace_llm_calls_trace_seq", "trace_pk", "sequence"),
+    )
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    trace_pk = Column(
+        GUID,
+        ForeignKey("ai_traces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_id = Column(
+        GUID,
+        ForeignKey("ai_trace_steps.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    sequence = Column(Integer, nullable=False, default=0)
+    model_name = Column(String(128), nullable=True)
+    provider = Column(String(64), nullable=True)
+    system_prompt_version = Column(String(64), nullable=True)
+    temperature = Column(Float, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    cached_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    latency_ms = Column(Float, nullable=True)
+    retry_count = Column(Integer, nullable=True, default=0)
+    validation_result = Column(String(64), nullable=True)
+    status = Column(String(32), nullable=False, default="success")
+    error_message = Column(LongText, nullable=True)
+    system_prompt = Column(LongText, nullable=True)
+    user_prompt = Column(LongText, nullable=True)
+    context_text = Column(LongText, nullable=True)
+    raw_response = Column(LongText, nullable=True)
+    metadata_json = Column(LongText, nullable=True)
+
+    trace = relationship("AITrace", back_populates="llm_calls")
+
+
+class AITraceFeedback(Base):
+    """Link user feedback to an AI processing trace."""
+
+    __tablename__ = "ai_trace_feedback"
+    __table_args__ = (
+        UniqueConstraint("feedback_id", name="uq_ai_trace_feedback_feedback"),
+    )
+
+    id = Column(GUID, primary_key=True, default=generate_uuid)
+    trace_pk = Column(
+        GUID,
+        ForeignKey("ai_traces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    feedback_id = Column(
+        GUID,
+        ForeignKey("response_feedback.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    message_id = Column(
+        GUID,
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    feedback = Column(String(10), nullable=True)
+    reason = Column(String(64), nullable=True)
+    comment = Column(LongText, nullable=True)
+    created_at = Column(
+        Timestamp,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    trace = relationship("AITrace", back_populates="feedback_links")
