@@ -79,12 +79,15 @@ interface MarkdownContentProps {
   /** When true, incomplete math delimiters are held back to avoid flicker. */
   isStreaming?: boolean;
   className?: string;
+  /** Optional override for element renderers (e.g. Document Explore tables). */
+  components?: Components;
 }
 
 export default function MarkdownContent({
   content,
   isStreaming = false,
   className,
+  components,
 }: MarkdownContentProps) {
   const prepared = useMemo(
     () => prepareMarkdownForMath(content, { isStreaming }),
@@ -96,7 +99,7 @@ export default function MarkdownContent({
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
-        components={markdownComponents}
+        components={components ?? markdownComponents}
       >
         {prepared}
       </ReactMarkdown>

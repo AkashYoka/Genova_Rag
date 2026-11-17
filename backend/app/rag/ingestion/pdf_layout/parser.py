@@ -58,25 +58,27 @@ def _textract_fallback_allowed(settings: Any = None) -> bool:
     ``PDF_TEXTRACT_FALLBACK_ENABLED=false`` blocks every DetectDocumentText
     call (including the active Textract-primary path).
     """
+    from app.rag.ingestion.pdf_layout.table_extraction import _textract_allowed
+
     if settings is None:
         settings = get_settings()
-    return bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)) and bool(
-        getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)
-    )
+    return _textract_allowed(settings)
+
+
+def _ste_tables_enabled(settings: Any = None) -> bool:
+    """True when STE Textract AnalyzeDocument+Bedrock table extraction is enabled."""
+    from app.rag.ingestion.pdf_layout.table_extraction import _ste_enabled
+
+    if settings is None:
+        settings = get_settings()
+    return _ste_enabled(settings)
 
 
 def _table_engine() -> str:
     """Active table engine label for diagnostics."""
-    settings = get_settings()
-    docling_on = bool(getattr(settings, "PDF_DOCLING_TABLES_ENABLED", False))
-    textract_on = _textract_fallback_allowed(settings)
-    if textract_on and not docling_on:
-        return "textract_detect"
-    if textract_on and docling_on:
-        return "docling+textract_fallback"
-    if docling_on:
-        return "docling_only"
-    return "none"
+    from app.rag.ingestion.pdf_layout.table_extraction import resolve_table_engine
+
+    return resolve_table_engine(get_settings())
 
 
 def _page_area(page: fitz.Page) -> float:
@@ -467,11 +469,14 @@ def _table_extraction_report(
             "error": str(
                 page.metrics.get("textract_error")
                 or page.metrics.get("docling_error")
+                or page.metrics.get("ste_error")
                 or ""
             ),
         }
         for page in pages
-        if page.metrics.get("textract_error") or page.metrics.get("docling_error")
+        if page.metrics.get("textract_error")
+        or page.metrics.get("docling_error")
+        or page.metrics.get("ste_error")
     ]
 
     table_entries: List[Dict[str, Any]] = []
@@ -501,14 +506,19 @@ def _table_extraction_report(
                 }
             )
 
-    elapsed = sum(
+    page_elapsed = sum(
         float(page.metrics.get("textract_elapsed_s") or 0)
         + float(page.metrics.get("docling_elapsed_s") or 0)
         for page in pages
     )
+    info = dict(engine_info or {})
+    plan_report = dict(info.get("table_plan") or {})
+    # Prefer document-plan wall time (includes STE + Detect) over page sums.
+    plan_elapsed = plan_report.get("elapsed_s")
+    ste_info = dict(info.get("ste") or {})
     return {
         "engine": engine,
-        "engine_info": dict(engine_info or {}),
+        "engine_info": info,
         "pages_processed": len(processed),
         "pages_with_tables": len(with_tables),
         "pages_without_tables": without_tables,
@@ -521,7 +531,18 @@ def _table_extraction_report(
         ),
         "failure_count": len(failures),
         "failures": failures,
-        "elapsed_s": round(elapsed, 3),
+        "elapsed_s": round(
+            float(plan_elapsed if plan_elapsed is not None else page_elapsed), 3
+        ),
+        "timings": {
+            "plan_elapsed_s": plan_report.get("elapsed_s"),
+            "ste_elapsed_s": plan_report.get("ste_elapsed_s")
+            or ste_info.get("elapsed_s"),
+            "detect_elapsed_s": plan_report.get("detect_elapsed_s"),
+            "detect_skipped": plan_report.get("detect_skipped"),
+            "ste_detail": ste_info.get("timings"),
+            "page_metric_sum_s": round(page_elapsed, 3),
+        },
         "tables": table_entries,
     }
 
@@ -587,128 +608,59 @@ def parse_pdf(
     document_name: Optional[str] = None,
     chunk_size: Optional[int] = None,
     chunk_overlap: Optional[int] = None,
+    progress: Optional[Any] = None,
 ) -> ParsedDocument:
-    """Parse a PDF into structured elements and retrieval-ready chunks."""
+    """Parse a PDF into structured elements and retrieval-ready chunks.
+
+    ``progress`` is an optional ``(stage: str, pct: int) -> None`` callback used
+    for long STE Textract+Bedrock runs.
+    """
     settings = get_settings()
     started = time.perf_counter()
     path = Path(filepath)
     if not path.exists():
         raise FileNotFoundError(f"PDF file not found: {filepath}")
 
-    engine = _table_engine()
-    fallback_on = _textract_fallback_allowed(settings)
-    engine_info: Dict[str, Any] = {
-        "engine": engine,
-        "docling_enabled": bool(getattr(settings, "PDF_DOCLING_TABLES_ENABLED", False)),
-        "docling_tableformer_mode": (
-            getattr(settings, "PDF_DOCLING_TABLEFORMER_MODE", "accurate") or "accurate"
-        ),
-        "textract_fallback_enabled": fallback_on,
-        "textract_primary": bool(
-            fallback_on
-            and not bool(getattr(settings, "PDF_DOCLING_TABLES_ENABLED", False))
-        ),
-        "pdf_textract_fallback_enabled": bool(
-            getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)
-        ),
-        "pdf_textract_tables_enabled": bool(
-            getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)
-        ),
-        "textract_async_multipage": bool(
-            getattr(settings, "PDF_TEXTRACT_ASYNC_MULTIPAGE", True)
-        ),
-        "tabular_only": bool(getattr(settings, "PDF_TEXTRACT_TABULAR_ONLY", True)),
-        "analyze_document_tables": False,
-        "region": (
-            (getattr(settings, "PDF_TEXTRACT_REGION", "") or "").strip()
-            or (getattr(settings, "BEDROCK_REGION", "") or "").strip()
-            or "us-east-1"
-        ),
-    }
-    logger.info(
-        "PDF table engine: %s "
-        "(docling=%s, textract_fallback=%s, tabular_only=%s, region=%s)",
-        engine,
-        engine_info["docling_enabled"],
-        engine_info["textract_fallback_enabled"],
-        engine_info["tabular_only"],
-        engine_info["region"],
+    from app.rag.ingestion.pdf_layout.table_extraction import (
+        run_document_table_extraction,
+        resolve_page_tables,
     )
 
     doc = fitz.open(str(path))
     page_sizes: Dict[int, Tuple[float, float]] = {
         i + 1: (float(p.rect.width), float(p.rect.height)) for i, p in enumerate(doc)
     }
-    docling_enabled = bool(getattr(settings, "PDF_DOCLING_TABLES_ENABLED", False))
-    textract_enabled = _textract_fallback_allowed(settings)
-    docling_tables_all: List[TableData] = []
+
+    # Unified table stage: STE AnalyzeDocument + DetectDocumentText → one plan.
+    table_plan = run_document_table_extraction(
+        str(path),
+        page_sizes=page_sizes,
+        doc=doc,
+        document_id=document_id or "",
+        document_name=document_name or path.name,
+        settings=settings,
+        progress=progress,
+    )
+    engine = table_plan.engine
+    engine_info = dict(table_plan.engine_info or {})
+    engine_info["table_plan"] = table_plan.to_report()
+    ste_on = table_plan.ste_enabled
+    textract_enabled = table_plan.textract_enabled
+    textract_primary = bool(textract_enabled)
+    textract_words_by_page = table_plan.textract_words_by_page
+    textract_doc_meta = dict(table_plan.textract_meta or {})
+    textract_doc_error = table_plan.textract_error
     docling_error = ""
-    # Docling code stays intact; only runs when explicitly re-enabled.
-    if docling_enabled:
-        try:
-            from app.rag.ingestion.pdf_layout.docling_tables import (
-                extract_tables_from_pdf,
-            )
 
-            docling_tables_all = extract_tables_from_pdf(
-                str(path), page_sizes=page_sizes
-            )
-        except Exception as exc:
-            docling_error = f"{type(exc).__name__}: {exc}"
-            logger.warning(
-                "Docling table extraction failed for %s: %s — "
-                "%s",
-                path.name,
-                exc,
-                (
-                    "Textract DetectDocumentText available"
-                    if textract_enabled
-                    else "Docling-only mode (no Textract)"
-                ),
-            )
-
-    # Textract-primary path: one DetectDocumentText job for the whole PDF
-    # (async multipage via S3 when enabled). Docling stays unused.
-    textract_tables_by_page: Dict[int, List[TableData]] = {}
-    textract_doc_meta: Dict[str, Any] = {}
-    textract_doc_error = ""
-    textract_primary = bool(textract_enabled and not docling_enabled)
-    if textract_primary:
-        try:
-            from app.rag.ingestion.pdf_layout.textract_tables import (
-                extract_tables_from_pdf_detect,
-            )
-
-            all_textract, textract_doc_meta = extract_tables_from_pdf_detect(
-                str(path), page_sizes=page_sizes, doc=doc
-            )
-            for table in all_textract:
-                textract_tables_by_page.setdefault(int(table.page), []).append(table)
-            logger.info(
-                "Textract DetectDocumentText primary for %s: pages=%s tables=%s api=%s",
-                path.name,
-                textract_doc_meta.get("pages_processed"),
-                len(all_textract),
-                textract_doc_meta.get("api"),
-            )
-        except Exception as exc:
-            textract_doc_error = f"{type(exc).__name__}: {exc}"
-            logger.error(
-                "Textract DetectDocumentText primary failed for %s: %s",
-                path.name,
-                exc,
-            )
-        try:
-            from app.rag.ingestion.pdf_layout.textract_tables import (
-                get_textract_api_usage,
-            )
-
-            engine_info["textract_doc"] = dict(textract_doc_meta or {})
-            if textract_doc_error:
-                engine_info["textract_doc_error"] = textract_doc_error
-            engine_info["textract_api_usage"] = get_textract_api_usage()
-        except Exception:
-            pass
+    logger.info(
+        "PDF table engine: %s "
+        "(ste=%s, textract=%s, tabular_only=%s, region=%s)",
+        engine,
+        ste_on,
+        textract_enabled,
+        engine_info.get("tabular_only"),
+        engine_info.get("region"),
+    )
 
     pages: List[PageExtraction] = []
     figures_by_page: Dict[int, List[DocumentElement]] = {}
@@ -751,31 +703,72 @@ def parse_pdf(
                     page_ext.status = "empty"
                     page_ext.metrics["note"] = "blank page with no text or image"
                 else:
-                    # Body text only — never use OCR/native grids as stored tables.
-                    if strategy == "ocr":
-                        (
-                            lines,
-                            _ocr_tables,
-                            confidence,
-                            backend,
-                            details,
-                        ) = _ocr_page_content(page, detect_tables=False)
-                        _apply_ocr_result(
-                            page_ext,
-                            page,
-                            lines=lines,
-                            confidence=confidence,
-                            backend=backend,
-                            details=details,
-                            image_coverage=coverage,
+                    # Body text: prefer DetectDocumentText WORDs when Textract
+                    # primary is on. Do not silently swap table extractors.
+                    hint_tables = _native_tables(page)
+                    textract_words = list(
+                        textract_words_by_page.get(page_number) or []
+                    )
+                    if textract_primary and textract_words:
+                        from app.rag.ingestion.pdf_layout.analyzer import (
+                            words_to_lines,
                         )
+
+                        table_boxes = [t.bbox for t in hint_tables]
+                        # Exclude words that sit inside provisional table regions;
+                        # final Textract tables replace these later.
+                        kept = []
+                        for word in textract_words:
+                            if any(
+                                box.intersection_area(word.bbox) > 0.5 * word.bbox.area
+                                for box in table_boxes
+                            ):
+                                continue
+                            kept.append(word)
+                        lines = words_to_lines(kept, float(page.rect.width))
+                        for line in lines:
+                            line.source = "textract_detect"
+                        page_ext.lines = lines
+                        page_ext.strategy = "textract_detect"
+                        page_ext.metrics["text_engine"] = "textract_detect"
+                        page_ext.metrics["textract_word_count"] = len(textract_words)
+                    elif strategy == "ocr":
+                        if textract_primary:
+                            # Textract-only mode: do not fall back to local OCR.
+                            page_ext.lines = []
+                            page_ext.warnings.append(
+                                "textract_text_missing: OCR fallback disabled"
+                            )
+                            page_ext.metrics["text_engine"] = "none"
+                        else:
+                            (
+                                lines,
+                                _ocr_tables,
+                                confidence,
+                                backend,
+                                details,
+                            ) = _ocr_page_content(page, detect_tables=False)
+                            _apply_ocr_result(
+                                page_ext,
+                                page,
+                                lines=lines,
+                                confidence=confidence,
+                                backend=backend,
+                                details=details,
+                                image_coverage=coverage,
+                            )
                     else:
-                        hint_tables = _native_tables(page)
                         lines = _native_lines(
                             page, [table.bbox for table in hint_tables]
                         )
                         page_ext.lines = lines
-                        if not lines and not hint_tables and coverage >= 0.15:
+                        page_ext.metrics["text_engine"] = "native"
+                        if (
+                            not textract_primary
+                            and not lines
+                            and not hint_tables
+                            and coverage >= 0.15
+                        ):
                             logger.warning(
                                 "Page %s has no native lines despite a text layer; "
                                 "retrying with OCR",
@@ -800,252 +793,52 @@ def parse_pdf(
                                 image_coverage=coverage,
                             )
 
-                    # Tables: Textract DetectDocumentText primary (default) or
-                    # Docling primary with Textract fallback when Docling is on.
-                    from app.rag.ingestion.pdf_layout.extraction_quality import (
-                        filter_quality_tables,
-                    )
-                    from app.rag.ingestion.pdf_layout.textract_tables import (
-                        extract_tables_from_page,
-                        usable_textract_tables,
-                    )
-
-                    tabular_only = bool(
-                        getattr(settings, "PDF_TEXTRACT_TABULAR_ONLY", True)
-                    )
-                    looks_tabular, tabular_reason = _page_looks_tabular(
-                        page,
-                        fallback_tables=hint_tables,
-                        page_text=native_text,
-                    )
-                    page_ext.metrics["tabular_candidate"] = looks_tabular
-                    page_ext.metrics["tabular_reason"] = tabular_reason
-                    if textract_doc_meta:
-                        page_ext.metrics["textract_doc_api"] = textract_doc_meta.get(
-                            "api"
+                    # Unified per-page table resolve from the document plan.
+                    final_tables, table_source, table_metrics, table_warnings = (
+                        resolve_page_tables(
+                            page_number,
+                            table_plan,
+                            page=page,
+                            hint_tables=hint_tables,
+                            native_text=native_text,
+                            settings=settings,
+                            page_looks_tabular_fn=_page_looks_tabular,
                         )
-                    if textract_doc_error:
-                        page_ext.metrics["textract_doc_error"] = textract_doc_error
-
-                    page_docling = [
-                        t for t in docling_tables_all if int(t.page) == int(page_number)
-                    ]
-                    accepted, rejected, quality_reports = filter_quality_tables(
-                        page_docling
                     )
-                    page_ext.metrics["docling_tables_raw"] = len(page_docling)
-                    page_ext.metrics["docling_tables"] = len(accepted)
-                    page_ext.metrics["docling_rejected"] = len(rejected)
-                    page_ext.metrics["table_quality"] = quality_reports
-                    page_ext.metrics["docling_enabled"] = bool(docling_enabled)
-
-                    final_tables: List[TableData] = list(accepted)
-                    table_source = "docling" if accepted else "none"
-
-                    def _apply_textract_page_tables(
-                        raw_tables: List[TableData],
-                        *,
-                        source_label: str,
-                    ) -> None:
-                        nonlocal final_tables, table_source
-                        usable = usable_textract_tables(raw_tables)
-                        fb_accepted, _fb_rej, fb_reports = filter_quality_tables(usable)
-                        page_ext.metrics["textract_quality"] = fb_reports
-                        page_ext.metrics["textract_tables"] = len(usable)
-                        if fb_accepted:
-                            final_tables = list(fb_accepted)
-                            table_source = source_label
-                            return
-                        if usable:
-                            usable_uncertain = []
-                            for t in usable:
-                                reasons = list(
-                                    ((t.provenance or {}).get("quality") or {}).get(
-                                        "reasons"
-                                    )
-                                    or []
-                                )
-                                if any(
-                                    r in reasons
-                                    for r in ("too_few_rows", "too_few_columns")
-                                ):
-                                    continue
-                                usable_uncertain.append(t)
-                            if usable_uncertain:
-                                final_tables = list(usable_uncertain)
-                                table_source = source_label
-                            else:
-                                page_ext.metrics["textract_rejected_empty"] = True
-
-                    textract_tables: List[TableData] = []
-                    textract_error = ""
-                    textract_started = time.perf_counter()
-                    run_textract = False
-                    need_fallback = False
-
-                    if textract_primary:
-                        # Active path: Docling disabled; DetectDocumentText is primary.
-                        page_ext.metrics["textract_primary"] = True
-                        skip_non_tabular = bool(
-                            tabular_only and not looks_tabular
-                        )
-                        if skip_non_tabular:
-                            page_ext.metrics["textract_skipped"] = "non_tabular_page"
-                            run_textract = False
-                        else:
-                            run_textract = True
-                            try:
-                                precomputed = list(
-                                    textract_tables_by_page.get(page_number) or []
-                                )
-                                if precomputed or not textract_doc_error:
-                                    textract_tables = precomputed
-                                    _apply_textract_page_tables(
-                                        textract_tables,
-                                        source_label="textract_detect",
-                                    )
-                                else:
-                                    # Document-level async failed — sync page retry.
-                                    textract_tables = extract_tables_from_page(
-                                        page, page_number
-                                    )
-                                    _apply_textract_page_tables(
-                                        textract_tables,
-                                        source_label="textract_detect",
-                                    )
-                            except Exception as exc:
-                                textract_error = f"{type(exc).__name__}: {exc}"
-                                logger.error(
-                                    "Textract DetectDocumentText failed on page %s of %s: %s",
-                                    page_number,
-                                    path.name,
-                                    exc,
-                                )
-                                page_ext.warnings.append(f"textract: {textract_error}")
-                        need_fallback = bool(run_textract and not final_tables)
-                    else:
-                        # Legacy hybrid: Docling primary → DetectDocumentText fallback.
-                        need_fallback = (not accepted) and (
-                            looks_tabular
-                            or not tabular_only
-                            or bool(rejected)
-                            or bool(docling_error)
-                        )
-                        if (
-                            tabular_only
-                            and not looks_tabular
-                            and not rejected
-                            and not docling_error
-                        ):
-                            need_fallback = False
-                            page_ext.metrics["textract_skipped"] = "non_tabular_page"
-                        if need_fallback:
-                            page_ext.metrics["textract_fallback_reason"] = (
-                                "docling_error"
-                                if docling_error
-                                else "rejected"
-                                if rejected
-                                else "empty"
-                                if not page_docling
-                                else "quality_gate"
-                            )
-
-                        run_textract = bool(need_fallback and textract_enabled)
-                        if need_fallback and not textract_enabled:
-                            page_ext.metrics["textract_skipped"] = "disabled"
-                            page_ext.metrics["docling_only_mode"] = True
-                            fail_reason = page_ext.metrics.get(
-                                "textract_fallback_reason"
-                            ) or (
-                                "docling_error"
-                                if docling_error
-                                else "rejected"
-                                if rejected
-                                else "empty"
-                            )
-                            page_ext.metrics[
-                                "docling_extraction_failed_reason"
-                            ] = fail_reason
-                            if rejected:
-                                page_ext.metrics["docling_reject_reasons"] = [
-                                    list(
-                                        ((t.provenance or {}).get("quality") or {}).get(
-                                            "reasons"
-                                        )
-                                        or []
-                                    )
-                                    for t in rejected
-                                ]
-                            page_ext.warnings.append(
-                                f"docling_only: extraction failed ({fail_reason}); "
-                                "Textract fallback disabled"
-                            )
-                        if run_textract:
-                            try:
-                                textract_tables = extract_tables_from_page(
-                                    page, page_number
-                                )
-                                _apply_textract_page_tables(
-                                    textract_tables,
-                                    source_label="textract_fallback",
-                                )
-                            except Exception as exc:
-                                textract_error = f"{type(exc).__name__}: {exc}"
-                                logger.error(
-                                    "Textract DetectDocumentText fallback failed on page %s of %s: %s",
-                                    page_number,
-                                    path.name,
-                                    exc,
-                                )
-                                page_ext.warnings.append(f"textract: {textract_error}")
-
-                    page_ext.metrics["textract_elapsed_s"] = round(
-                        time.perf_counter() - textract_started, 3
-                    )
-                    page_ext.metrics["textract_invoked"] = bool(run_textract)
-                    page_ext.metrics.setdefault(
-                        "textract_tables", len(textract_tables)
-                    )
-                    if textract_error:
-                        page_ext.metrics["textract_error"] = textract_error
-                    if run_textract and not textract_tables and not textract_error:
-                        page_ext.metrics["textract_empty"] = True
-
-                    # Explicit failure (never silently invent a grid).
-                    if need_fallback and not final_tables:
-                        page_ext.metrics["table_extraction_failed"] = True
-                        if textract_primary:
-                            page_ext.warnings.append(
-                                "table_extraction_failed: DetectDocumentText "
-                                "produced no usable text-derived table"
-                            )
-                        elif not textract_enabled:
-                            page_ext.metrics.setdefault(
-                                "docling_only_mode", True
-                            )
-                        else:
-                            page_ext.warnings.append(
-                                "table_extraction_failed: Docling quality gate and "
-                                "DetectDocumentText fallback produced no usable table"
-                            )
-                    elif (
-                        table_source in {"textract_fallback", "textract_detect"}
-                        and final_tables
-                        and any(
-                            (t.provenance or {}).get("quality", {}).get("ok") is False
-                            for t in final_tables
-                        )
-                    ):
-                        page_ext.metrics["table_extraction_uncertain"] = True
-                        for t in final_tables:
-                            prov = dict(t.provenance or {})
-                            prov["extraction_uncertain"] = True
-                            t.provenance = prov
-
+                    page_ext.metrics.update(table_metrics)
+                    page_ext.warnings.extend(table_warnings)
                     page_ext.tables = list(final_tables)
 
-                    # Exclude table regions from body lines when present.
-                    if page_ext.tables and page_ext.lines:
+                    # Rebuild body lines from DetectDocumentText words once final
+                    # table boxes are known (preferred Textract-only text path).
+                    textract_words = list(
+                        textract_words_by_page.get(page_number) or []
+                    )
+                    if textract_primary and textract_words:
+                        from app.rag.ingestion.pdf_layout.analyzer import (
+                            words_to_lines,
+                        )
+
+                        table_boxes = [
+                            table.bbox
+                            for table in page_ext.tables
+                            if table.bbox and table.bbox.area > 0
+                        ]
+                        kept = []
+                        for word in textract_words:
+                            if any(
+                                box.intersection_area(word.bbox) > 0.5 * word.bbox.area
+                                for box in table_boxes
+                            ):
+                                continue
+                            kept.append(word)
+                        lines = words_to_lines(kept, float(page.rect.width))
+                        for line in lines:
+                            line.source = "textract_detect"
+                        page_ext.lines = lines
+                        page_ext.strategy = "textract_detect"
+                        page_ext.metrics["text_engine"] = "textract_detect"
+                    elif page_ext.tables and page_ext.lines:
                         table_boxes = [
                             table.bbox
                             for table in page_ext.tables
@@ -1066,9 +859,36 @@ def parse_pdf(
                 page_ext.metrics["table_source"] = table_source
 
                 if page_ext.tables:
-                    page_ext.tables = _repair_page_tables(
-                        page_ext.tables, filepath=str(path)
+                    # Do not rewrite STE Bedrock-reconstructed cell values.
+                    ste_kept = [
+                        t
+                        for t in page_ext.tables
+                        if (t.extraction_engine or "").startswith("ste_")
+                    ]
+                    other_tables = [
+                        t
+                        for t in page_ext.tables
+                        if not (t.extraction_engine or "").startswith("ste_")
+                    ]
+                    repaired_others = _repair_page_tables(
+                        other_tables, filepath=str(path)
                     )
+                    if ste_kept:
+                        try:
+                            from app.rag.ingestion.pdf_layout.table_normalize import (
+                                linearize_table_facts,
+                            )
+
+                            for t in ste_kept:
+                                if not t.linearized_facts:
+                                    t.linearized_facts = linearize_table_facts(
+                                        t.headers,
+                                        t.rows,
+                                        caption=t.caption or "",
+                                    )
+                        except Exception:
+                            pass
+                    page_ext.tables = list(ste_kept) + list(repaired_others)
 
                 page_ext.metrics["gutter"] = detect_column_gutter(
                     page_ext.lines, float(page.rect.width), float(page.rect.height)

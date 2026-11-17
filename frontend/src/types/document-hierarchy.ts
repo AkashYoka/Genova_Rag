@@ -75,6 +75,14 @@ export interface DocumentIndexStatusResponse {
   report?: ChunkingReport | null;
 }
 
+export interface ReindexResponse {
+  document_id: string;
+  status: string;
+  task_id?: string | null;
+  chunk_strategy: string;
+  message: string;
+}
+
 export interface HierarchyChunk {
   chunk_id: string;
   document_id: string;

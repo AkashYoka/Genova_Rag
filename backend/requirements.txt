@@ -32,15 +32,14 @@ httpx
 boto3>=1.39.0
 
 # Document Processing
-# PDF tables (layout-aware): Docling TableFormer Accurate primary;
-# AWS Textract DetectDocumentText geometry fallback. No Camelot.
+# PDF tables (layout-aware): AWS Textract DetectDocumentText + geometry.
+# Optional STE AnalyzeDocument+Bedrock tables (PDF_STE_TABLES_ENABLED):
+#   pip install -r ste/requirements.txt
+# Engine package lives at backend/ste/ (import ste).
 PyMuPDF
 pymupdf4llm
 google-genai
 pdfplumber
-# Pin: docling 2.150+ currently ImportError (Orientation) vs docling-core 2.107.
-docling>=2.91.0,<2.100.0
-docling-core>=2.73.0,<3.0.0
 opencv-python-headless
 python-docx
 pypdf

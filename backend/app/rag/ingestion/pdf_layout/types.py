@@ -100,10 +100,55 @@ class TextWord:
     bbox: BBox
     page: int = 1
     confidence: float = 100.0
+    # Optional raster polygon [x0,y0,x1,y1,x2,y2,x3,y3] in page-image pixels
+    # (v6-compatible packing from Textract Geometry.Polygon).
+    polygon_px: List[int] = field(default_factory=list)
 
     @property
     def height(self) -> float:
         return self.bbox.height
+
+
+@dataclass
+class PageOcrWord:
+    """Per-page DetectDocumentText WORD packed like pdf_text_v6_stable."""
+
+    text: str
+    polygon_px: List[int]
+    confidence: float = 95.0
+    bbox_pdf: Optional[BBox] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            "text": self.text,
+            "polygon_px": list(self.polygon_px or []),
+            "confidence": float(self.confidence),
+        }
+        if self.bbox_pdf is not None:
+            data["bbox_pdf"] = list(self.bbox_pdf.as_tuple())
+        return data
+
+
+@dataclass
+class PageOcrLayout:
+    """Page-level OCR pack: image size + WORD geometry (v6 layout_entry shape)."""
+
+    page_index: int
+    image_width: int
+    image_height: int
+    words: List[PageOcrWord] = field(default_factory=list)
+    image_format: str = "png"
+    dpi: int = 300
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "page_index": int(self.page_index),
+            "image_width": int(self.image_width),
+            "image_height": int(self.image_height),
+            "image_format": self.image_format,
+            "dpi": int(self.dpi),
+            "words": [w.to_dict() for w in self.words],
+        }
 
 
 @dataclass
@@ -204,11 +249,14 @@ class TableData:
     textract_confidence: float = 0.0  # legacy; prefer ocr_confidence
     # Canonical provenance (domain-agnostic). Prefer extraction_engine over
     # free-form extraction_method when both are set.
-    # Values: docling | textract_detect | native | ocr_ruled | ocr_alignment
+    # Values: ste_textract_analyze_bedrock | textract_detect | native |
+    # ocr_ruled | ocr_alignment
     extraction_engine: str = ""
     ocr_confidence: float = 0.0
     structure_confidence: float = 0.0
     provenance: Dict[str, Any] = field(default_factory=dict)
+    # STE universal schema independent_rows (optional; also in provenance).
+    independent_rows: List[Dict[str, Any]] = field(default_factory=list)
     # Geometry-aware header reconstruction (paths, hierarchy, confidence).
     header_reconstruction: Dict[str, Any] = field(default_factory=dict)
     normalized_header_paths: List[List[str]] = field(default_factory=list)
@@ -258,6 +306,15 @@ class TableData:
             lines.extend(f"- {fact}" for fact in facts)
         return "\n".join(lines)
 
+    @property
+    def html(self) -> str:
+        """Fully cellular HTML table (no rowspan/colspan)."""
+        from app.rag.ingestion.pdf_layout.table_cellular import table_data_to_html
+
+        return table_data_to_html(
+            self.headers, self.rows, caption=self.caption or ""
+        )
+
     def to_json(self, include_markdown: bool = True) -> Dict[str, Any]:
         pages = list(self.pages or [])
         if not pages and self.page:
@@ -282,7 +339,8 @@ class TableData:
             "linearized_facts": list(self.linearized_facts or []),
             "cells": list(self.cells or []),
             "header_rows": [list(r) for r in (self.header_rows or [])],
-            "merged_cells": list(self.merged_cells or []),
+            # Fully cellular contract: never serialize merge spans.
+            "merged_cells": [],
             "textract_confidence": float(self.textract_confidence or 0.0),
             "ocr_confidence": float(
                 self.ocr_confidence or self.textract_confidence or 0.0
@@ -295,6 +353,11 @@ class TableData:
             ],
             "continuation_of": self.continuation_of or "",
             "stitch_confidence": float(self.stitch_confidence or 0.0),
+            "independent_rows": list(
+                self.independent_rows
+                or (self.provenance or {}).get("independent_rows")
+                or []
+            ),
         }
         try:
             from app.rag.ingestion.pdf_layout.table_structure import (
@@ -318,6 +381,10 @@ class TableData:
             )
         if include_markdown:
             data["markdown"] = self.markdown
+            try:
+                data["html"] = self.html
+            except Exception:
+                data["html"] = ""
         return data
 
 

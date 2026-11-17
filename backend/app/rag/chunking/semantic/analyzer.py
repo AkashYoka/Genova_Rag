@@ -24,42 +24,63 @@ logger = logging.getLogger(__name__)
 
 MAX_ERRORS = 20
 
-SYSTEM_PROMPT = """You are a document structure analyst for a retrieval-augmented generation system.
+TABLE_FORMAT_REQUIREMENTS = """Required table format (fully cellular, machine-readable):
+1. Zero merged cells — no rowspan, colspan, or spanned banners.
+2. Every row is independently readable without referring to another row.
+3. Repeat frequency and other shared attributes in every applicable row.
+4. Every unavailable cell explicitly says "Insufficient Data".
+5. Every cell has its own machine-readable value or status.
+6. No invented or inferred values — use only text present in the source table.
+7. Preserve original headers, units, and row–column relationships."""
 
-Your job is to group the supplied source blocks into a faithful section hierarchy.
-Rules:
-- You MUST NOT rewrite, summarize, translate, or invent document content.
-- You only return section titles, hierarchy levels, and source block ids.
-- Every source block id must appear in exactly one section, in reading order.
-- A section's block ids must be contiguous and must not overlap another section.
-- The heading block that introduces a section must be the first block of that section.
-- A table belongs to the section whose text it supports; keep the table block with that section.
-- Prefer FEWER, larger sections over many tiny heading-only sections.
-- Never promote Table of Contents / CONTENTS listing entries into separate top-level sections.
-  Keep the entire CONTENTS listing under one section titled "Table of Contents".
-- Ignore dotted leaders and trailing page numbers from TOC lines when choosing titles.
-- Real body sections begin after CONTENTS (e.g. "FULL PRESCRIBING INFORMATION", "WARNING:",
-  or numbered headings like "1 INDICATIONS AND USAGE" that introduce body text).
-- Keep dosing / schedule tables with their Dosage and Administration parent section; do not
-  orphan a table under an unrelated later section title.
-- Use level 1 for top-level chapters/major parts, level 2 for subsections, level 3+ for deeper nesting.
-- Parent sections must list only their own introductory blocks, never blocks that belong to a child section.
-- If the document has no clear headings, infer a small number of topic sections from the content flow.
+
+SYSTEM_PROMPT = f"""You are a document structure analyst for a retrieval-augmented generation system.
+
+Group the supplied source blocks into a faithful section hierarchy for any document
+type (technical, financial, scientific, legal, medical, business, or other).
+
+Output contract:
 - Return JSON only. No markdown fences, no commentary.
+- You only return section titles, hierarchy levels, parent links, block ids, and an optional short summary.
+- You MUST NOT rewrite, translate, or invent document body text. Titles may be taken from headings; summaries must not invent facts.
+
+Coverage and order:
+- Every source block id appears in exactly one section, in reading order.
+- A section's block ids are contiguous and do not overlap another section.
+- The heading that introduces a section is the first block of that section.
+- Parent sections list only their own introductory blocks, never blocks that belong to a child.
+
+Hierarchy:
+- Prefer fewer, larger sections over many tiny heading-only sections.
+- Level 1 = major parts; level 2 = subsections; level 3+ = deeper nesting.
+- If headings are unclear, infer a small number of topic sections from content flow.
+
+Table of Contents:
+- Do not promote TOC / CONTENTS listing entries into separate top-level sections.
+- Keep the entire contents listing under one section titled "Table of Contents".
+- Ignore dotted leaders and trailing page numbers when choosing titles.
+- Real body sections begin after the contents listing.
+
+Tables:
+- Keep each table block with the section whose prose it supports; never orphan a table under an unrelated later title.
+- Treat tables as already following (or normalized to) the required fully cellular format below.
+- If an optional summary mentions a table, describe it only as a cellular grid (headers, per-row shared attributes, per-cell values or "Insufficient Data") — never as merged regions.
+
+{TABLE_FORMAT_REQUIREMENTS}
 
 JSON schema:
-{
+{{
   "sections": [
-    {
+    {{
       "id": "s1",
       "title": "Section title",
       "level": 1,
       "parent_id": null,
       "block_ids": ["b00001", "b00002"],
       "summary": "One short sentence about this section (optional)."
-    }
+    }}
   ]
-}"""
+}}"""
 
 
 class _LLMSection(BaseModel):
@@ -785,6 +806,9 @@ class SemanticAnalyzer:
                     meta += " | " + "; ".join(extra)
             lines.append(f"{meta} | p{block.page_start}-{block.page_end} | {preview}")
         lines.append("")
+        if any(block.is_table for block in blocks):
+            lines.append(TABLE_FORMAT_REQUIREMENTS)
+            lines.append("")
         lines.append(
             "Assign EVERY block id above to exactly one section, in reading order. "
             "Return JSON only."

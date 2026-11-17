@@ -25,6 +25,11 @@ export function isProductionDeploymentHost(hostname?: string): boolean {
   return PRODUCTION_HOSTS.has(host);
 }
 
+/** Dev/local UI only — never show on the production deployment host. */
+export function canShowDevReindex(hostname?: string): boolean {
+  return !isProductionDeploymentHost(hostname);
+}
+
 export function fallbackAvailableLlmProviders(
   hostname?: string,
 ): LlmProviderId[] {

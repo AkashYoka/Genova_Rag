@@ -452,14 +452,38 @@ def compact_table_prompt_block(
     if caption:
         lines.append(f"caption: {caption}")
     if headers:
-        lines.append("headers: " + " | ".join(headers))
+        # Explicit col indices prevent adjacent-band confusion
+        # (e.g. body-weight >60-70 vs >70-90).
+        col_bits = [f"[col{i}] {h}" for i, h in enumerate(headers)]
+        lines.append("headers: " + " | ".join(col_bits))
+        lines.append(
+            "column_index_map: "
+            + "; ".join(f"col{i}={h!r}" for i, h in enumerate(headers))
+        )
+        lines.append(
+            "LOOKUP RULE: match the question numeric axes to the exact header "
+            "band (honor exclusive/inclusive bounds). Read only the intersecting "
+            "cell — never an adjacent weight or IgE column. State matched row "
+            "label, column header, and [row_idx,col_idx] before quoting the value."
+        )
+
+    def _format_row(idx: int, row: list) -> str:
+        cells = [str(c or "") for c in row]
+        width = max(len(headers), len(cells))
+        while len(cells) < width:
+            cells.append("")
+        cells = cells[:width]
+        labeled = []
+        for ci, val in enumerate(cells):
+            header = headers[ci] if ci < len(headers) else f"col{ci}"
+            labeled.append(f"[r{idx},c{ci}|{header}]={val}")
+        return f"row[{idx}]: " + " | ".join(labeled)
 
     if relevant_row_indices:
         keep = sorted({int(i) for i in relevant_row_indices if 0 <= int(i) < len(rows)})
         if keep and len(keep) < len(rows):
             for idx in keep:
-                cells = [str(c or "") for c in rows[idx]]
-                lines.append(f"row[{idx}]: " + " | ".join(cells))
+                lines.append(_format_row(idx, list(rows[idx])))
             lines.append(f"(showing {len(keep)} relevant of {len(rows)} rows)")
         else:
             relevant_row_indices = None
@@ -467,8 +491,7 @@ def compact_table_prompt_block(
     if not relevant_row_indices:
         shown = rows[:max_rows]
         for idx, row in enumerate(shown):
-            cells = [str(c or "") for c in row]
-            lines.append(f"row[{idx}]: " + " | ".join(cells))
+            lines.append(_format_row(idx, list(row)))
         if len(rows) > max_rows:
             lines.append(f"... ({len(rows) - max_rows} more rows)")
 

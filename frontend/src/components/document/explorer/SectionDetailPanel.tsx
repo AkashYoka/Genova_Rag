@@ -2,6 +2,9 @@
 
 import { ArrowLeft, ArrowUpLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import MarkdownContent, {
+  markdownComponents,
+} from "@/components/chat/MarkdownContent";
 import { formatPageRange } from "@/lib/document-hierarchy";
 import type {
   HierarchyChunk,
@@ -10,6 +13,34 @@ import type {
   SectionTreeNode,
 } from "@/types/document-hierarchy";
 import { RelatedLists } from "./RelatedLists";
+import type { Components } from "react-markdown";
+
+/** Explore-specific table chrome: visible borders + horizontal scroll. */
+const exploreMarkdownComponents: Components = {
+  ...markdownComponents,
+  table: ({ children }) => (
+    <div className="explore-table-wrap my-3 w-full max-w-full overflow-x-auto rounded-lg border border-[var(--gd-border)]">
+      <table className="genova-data-table w-max min-w-full border-collapse text-left text-sm">
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead className="bg-[var(--gd-muted)]/15 text-[var(--gd-text)]">
+      {children}
+    </thead>
+  ),
+  th: ({ children }) => (
+    <th className="border border-[var(--gd-border)] px-2.5 py-2 text-left align-top text-xs font-semibold whitespace-nowrap">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="border border-[var(--gd-border)] px-2.5 py-2 align-top text-xs whitespace-nowrap">
+      {children}
+    </td>
+  ),
+};
 
 interface SectionDetailPanelProps {
   section: SectionTreeNode;
@@ -30,6 +61,14 @@ interface SectionDetailPanelProps {
   onBackToParent?: () => void;
 }
 
+function looksLikeMarkdownTable(content: string): boolean {
+  const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 2) return false;
+  const pipes = lines.filter((l) => l.includes("|"));
+  if (pipes.length < 2) return false;
+  return pipes.some((l) => /^\|?\s*:?-{3,}/.test(l) || l.split("|").length >= 3);
+}
+
 function ChunkReader({
   chunk,
   onBack,
@@ -38,6 +77,12 @@ function ChunkReader({
   onBack: () => void;
 }) {
   const page = formatPageRange(chunk.page_start, chunk.page_end);
+  const isTable = String(chunk.chunk_type || "")
+    .toLowerCase()
+    .includes("table");
+  const content = chunk.content || "";
+  const renderAsMarkdown = isTable || looksLikeMarkdownTable(content);
+
   return (
     <div className="space-y-4">
       <Button
@@ -50,14 +95,22 @@ function ChunkReader({
         Back to part
       </Button>
       <div className="text-xs text-[var(--gd-muted)]">
-        {String(chunk.chunk_type || "").toLowerCase().includes("table")
-          ? "Table"
-          : "Paragraph"}
+        {isTable ? "Table" : "Paragraph"}
         {page ? ` · ${page}` : ""}
       </div>
-      <pre className="max-h-[min(64vh,640px)] overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] p-5 font-[family-name:var(--font-geist-mono),ui-monospace,monospace] text-[13px] leading-relaxed text-[var(--gd-text)]">
-        {chunk.content || "(empty)"}
-      </pre>
+      {renderAsMarkdown ? (
+        <div className="max-h-[min(64vh,640px)] overflow-auto rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] p-4 text-[var(--gd-text)]">
+          <MarkdownContent
+            content={content || "(empty)"}
+            className="explore-chunk-prose text-sm leading-relaxed"
+            components={exploreMarkdownComponents}
+          />
+        </div>
+      ) : (
+        <pre className="max-h-[min(64vh,640px)] overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] p-5 font-[family-name:var(--font-geist-mono),ui-monospace,monospace] text-[13px] leading-relaxed text-[var(--gd-text)]">
+          {content || "(empty)"}
+        </pre>
+      )}
     </div>
   );
 }

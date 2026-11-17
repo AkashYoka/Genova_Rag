@@ -1,0 +1,29 @@
+    cleaned_body: List[List[str]] = []
+    for row in body:
+        if _is_label_banner_row(row) or _is_unit_dose_row(row):
+            # Fold Dose/(mg) banners into header_rows instead of body.
+            header_rows.append(_pad_row(row, width))
+            for ci, cell in enumerate(row):
+                token = normalize_ws(cell)
+                if not token or _WEIGHT_RANGE_RE.search(token):
+                    # Don't overwrite leaf weight bands with a stray number.
+                    if token and ci < len(headers) and not normalize_ws(headers[ci]):
+                        if not _PURE_NUM_RE.match(token):
+                            headers[ci] = token
+                    continue
+                if ci < len(headers) and not normalize_ws(headers[ci]):
+                    headers[ci] = token
+                elif ci < len(headers) and token.lower() not in headers[ci].lower():
+                    if (
+                        _BANNER_TOKEN_RE.match(token) or _DOSE_UNIT_RE.match(token)
+                    ) and not re.search(r"\d", headers[ci]):
+                        headers[ci] = f"{headers[ci]} {token}".strip()
+            continue
+        cleaned_body.append(row)
+    body = cleaned_body
+    headers, header_rows, body = _expand_jammed_header_columns(
+        headers, header_rows, body
+    )
+    headers, header_rows, body = _drop_empty_body_columns(
+        headers, header_rows, body
+    )

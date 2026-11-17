@@ -1,22 +1,20 @@
 """AWS Textract DetectDocumentText → geometry tables → TableData.
 
-Active production table extractor (Docling remains in-tree but disabled by
-default). Reconstructs row/column structure from WORD/LINE geometry because
-DetectDocumentText does **not** return native TABLE/CELL blocks.
+Mandatory flow
+--------------
+PDF pages are rendered to images first. **Never** send the original PDF file,
+PDF bytes, or an S3 PDF document reference to Textract.
 
-Modes
------
-* Multipage PDFs (preferred): ``StartDocumentTextDetection`` /
-  ``GetDocumentTextDetection`` with S3 + NextToken pagination.
-* Single-page / per-page fallback: sync ``DetectDocumentText`` on a PNG.
+PDF → render each page (PNG) → ``DetectDocumentText(Document={{Bytes: png}})``
+    → WORD/LINE geometry → domain-agnostic table reconstruction → TableData.
 
-Never calls ``AnalyzeDocument`` (TABLES). Cost ~$1.50 / 1,000 pages.
-IAM: ``textract:DetectDocumentText``, ``textract:StartDocumentTextDetection``,
-``textract:GetDocumentTextDetection``.
+Never calls ``AnalyzeDocument`` / ``TABLES`` / ``StartDocumentTextDetection``.
+Cost ~$1.50 / 1,000 DetectDocumentText pages. IAM: ``textract:DetectDocumentText``.
 
-On client/API errors the parser records ``textract_error`` and leaves tables
-empty — there is no img2table or Tesseract table fallback. Body text is never
-taken from Textract.
+On client/API errors the parser records ``textract_error`` / per-page errors and
+leaves that page's tables empty — there is no img2table, Tesseract, Camelot,
+Tabula, or whole-PDF Textract fallback. When Textract is enabled, body text
+lines are also built from DetectDocumentText WORD blocks.
 """
 from __future__ import annotations
 
@@ -24,8 +22,7 @@ import logging
 import random
 import re
 import time
-import uuid
-from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -42,21 +39,33 @@ from app.rag.ingestion.pdf_layout.analyzer import (
 from app.rag.ingestion.pdf_layout.header_reconstruction import (
     reconstruct_table_headers_cached,
 )
-from app.rag.ingestion.pdf_layout.types import BBox, TableData, TextWord, normalize_ws
+from app.rag.ingestion.pdf_layout.types import (
+    BBox,
+    PageOcrLayout,
+    PageOcrWord,
+    TableData,
+    TextWord,
+    normalize_ws,
+)
 
 logger = logging.getLogger(__name__)
 
 _textract_client = None
 _EXTRACTION_METHOD = "textract_detect"
+# Sync DetectDocumentText Bytes payload limit is 5 MB; stay under with margin.
+_MAX_DETECT_BYTES = 4_500_000
+# Match pdf_text_v6_stable parallel Textract cap.
+_MAX_TEXTRACT_WORKERS = 10
+_DEFAULT_RENDER_DPI = 300
 
 # Process-local API usage counters for cost / audit reporting.
 _API_USAGE: Dict[str, int] = {
     "detect_document_text_pages": 0,
-    "start_document_text_detection_jobs": 0,
-    "get_document_text_detection_calls": 0,
+    "start_document_text_detection_jobs": 0,  # must remain 0 (PDF upload disabled)
+    "get_document_text_detection_calls": 0,  # must remain 0
     "analyze_document_tables_pages": 0,  # must remain 0
-    "pages_via_async": 0,
-    "pages_via_sync": 0,
+    "pages_via_async": 0,  # must remain 0
+    "pages_via_image": 0,
 }
 
 
@@ -88,8 +97,14 @@ def _textract_dpi() -> int:
     settings = get_settings()
     dpi = int(settings.PDF_TEXTRACT_DPI or 0)
     if dpi > 0:
-        return dpi
-    return max(72, int(settings.PDF_OCR_DPI or 300))
+        return max(72, dpi)
+    return max(72, int(settings.PDF_OCR_DPI or _DEFAULT_RENDER_DPI))
+
+
+def _textract_max_workers() -> int:
+    settings = get_settings()
+    requested = int(getattr(settings, "PDF_TEXTRACT_MAX_WORKERS", 10) or 10)
+    return max(1, min(requested, _MAX_TEXTRACT_WORKERS))
 
 
 def get_textract_client():
@@ -141,6 +156,30 @@ def _geometry_to_pdf_bbox(
     )
 
 
+def _polygon_px_from_geometry(
+    geometry: Dict[str, Any],
+    *,
+    image_width: int,
+    image_height: int,
+) -> List[int]:
+    """Pack Textract Polygon into v6-style ``[x0,y0,...,x3,y3]`` pixel coords."""
+    polygon = (geometry or {}).get("Polygon") or []
+    points: List[int] = []
+    for point in polygon[:4]:
+        try:
+            points.extend(
+                [
+                    int(float(point.get("X") or 0.0) * image_width),
+                    int(float(point.get("Y") or 0.0) * image_height),
+                ]
+            )
+        except Exception:
+            continue
+    while len(points) < 8 and points:
+        points.extend(points[-2:])
+    return points[:8]
+
+
 def words_from_detect_blocks(
     blocks: Sequence[Dict[str, Any]],
     *,
@@ -148,6 +187,8 @@ def words_from_detect_blocks(
     page_width: float,
     page_height: float,
     min_confidence: float = 0.0,
+    image_width: int = 0,
+    image_height: int = 0,
 ) -> List[TextWord]:
     """Convert DetectDocumentText WORD blocks into positioned TextWord objects."""
     words: List[TextWord] = []
@@ -160,22 +201,77 @@ def words_from_detect_blocks(
         conf = float(block.get("Confidence") or 0.0)
         if conf < min_confidence:
             continue
+        geometry = block.get("Geometry") or {}
         bbox = _geometry_to_pdf_bbox(
-            block.get("Geometry") or {},
+            geometry,
             page_width=page_width,
             page_height=page_height,
         )
         if bbox.area <= 0:
             continue
+        polygon_px: List[int] = []
+        if image_width > 0 and image_height > 0:
+            polygon_px = _polygon_px_from_geometry(
+                geometry, image_width=image_width, image_height=image_height
+            )
         words.append(
             TextWord(
                 text=text,
                 bbox=bbox,
                 page=page_number,
                 confidence=conf,
+                polygon_px=polygon_px,
             )
         )
     return words
+
+
+def page_ocr_layout_from_blocks(
+    blocks: Sequence[Dict[str, Any]],
+    *,
+    page_number: int,
+    page_width: float,
+    page_height: float,
+    image_width: int,
+    image_height: int,
+    image_format: str = "png",
+    dpi: int = _DEFAULT_RENDER_DPI,
+    min_confidence: float = 0.0,
+) -> PageOcrLayout:
+    """Build a v6-compatible page layout pack from DetectDocumentText blocks."""
+    ocr_words: List[PageOcrWord] = []
+    for block in blocks:
+        if block.get("BlockType") != "WORD":
+            continue
+        text = normalize_ws(str(block.get("Text") or ""))
+        if not text:
+            continue
+        conf = float(block.get("Confidence") or 95.0)
+        if conf < min_confidence:
+            continue
+        geometry = block.get("Geometry") or {}
+        polygon_px = _polygon_px_from_geometry(
+            geometry, image_width=image_width, image_height=image_height
+        )
+        bbox = _geometry_to_pdf_bbox(
+            geometry, page_width=page_width, page_height=page_height
+        )
+        ocr_words.append(
+            PageOcrWord(
+                text=text,
+                polygon_px=polygon_px,
+                confidence=conf,
+                bbox_pdf=bbox if bbox.area > 0 else None,
+            )
+        )
+    return PageOcrLayout(
+        page_index=int(page_number),
+        image_width=int(image_width),
+        image_height=int(image_height),
+        words=ocr_words,
+        image_format=image_format,
+        dpi=int(dpi),
+    )
 
 
 def lines_from_detect_blocks(
@@ -226,6 +322,198 @@ def _is_label_banner_row(row: Sequence[str]) -> bool:
     return True
 
 
+_DOSE_UNIT_RE = re.compile(r"(?i)^(?:dose(?:\s*\(\s*mg\s*\))?|\(\s*mg\s*\))$")
+_WEIGHT_RANGE_RE = re.compile(
+    r"(?i)(?:≥|>=|>|≤|<=|<)?\s*\d+(?:\.\d+)?\s*(?:–|-|—|to)\s*\d+(?:\.\d+)?"
+)
+_MULTI_WEIGHT_SPLIT_RE = re.compile(
+    r"(?i)(?=(?:≥|>=|>|≤|<=|<)\s*\d)|(?<=\d)\s+(?=(?:≥|>=|>|≤|<=|<)?\s*\d)"
+)
+
+
+def _is_unit_dose_row(row: Sequence[str]) -> bool:
+    """True when value columns are mostly Dose/(mg) banners (even if keys filled)."""
+    cells = [normalize_ws(c) for c in row]
+    if len(cells) < 3:
+        return False
+    value_cells = cells[2:] if len(cells) > 2 else cells[1:]
+    nonempty = [c for c in value_cells if c]
+    if not nonempty:
+        return False
+    doseish = sum(1 for c in nonempty if _DOSE_UNIT_RE.match(c))
+    # Sparse geometry often parks a single Dose/(mg) under the matrix.
+    if doseish >= 1 and doseish == len(nonempty):
+        return True
+    if len(nonempty) < 2:
+        return False
+    return doseish >= max(2, (len(nonempty) + 1) // 2)
+
+
+def _split_jammed_weight_header(text: str) -> List[str]:
+    """Split ``≥10-12 >12-15 >15-20 …`` smashed into one header cell."""
+    token = normalize_ws(text)
+    if not token or not _WEIGHT_RANGE_RE.search(token):
+        return [token] if token else []
+    ranges = re.findall(
+        r"(?i)(?:≥|>=|>|≤|<=|<)?\s*\d+(?:\.\d+)?\s*(?:–|-|—|to)\s*\d+(?:\.\d+)?",
+        token,
+    )
+    if len(ranges) < 2:
+        return [token]
+    parts = [
+        normalize_ws(p) for p in _MULTI_WEIGHT_SPLIT_RE.split(token) if normalize_ws(p)
+    ]
+    cleaned: List[str] = []
+    for part in parts:
+        part = re.sub(r"(?i)\bbody\s*weight\b", "", part)
+        part = re.sub(r"(?i)\bdose\b|\(\s*mg\s*\)|\bkg\b", "", part)
+        part = normalize_ws(part)
+        if part and _WEIGHT_RANGE_RE.search(part):
+            cleaned.append(part)
+    return cleaned if len(cleaned) >= 2 else [token]
+
+
+def _expand_jammed_header_columns(
+    headers: List[str],
+    header_rows: List[List[str]],
+    body: List[List[str]],
+) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+    """Spread smashed multi-range headers into neighboring empty/Column-N leaves.
+
+    Geometry often keeps one body column per weight band but OCR packs several
+    band labels into a single header cell (leaving ``Column N`` placeholders).
+    Redistribute labels across those weak neighbors — do not insert columns.
+    """
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        1,
+    )
+    headers = _pad_row(headers, width)
+    header_rows = [_pad_row(r, width) for r in header_rows]
+    body = [_pad_row(r, width) for r in body]
+
+    jam_col = -1
+    jam_parts: List[str] = []
+    for ci, h in enumerate(headers):
+        parts = _split_jammed_weight_header(h)
+        if len(parts) >= 3:
+            jam_col = ci
+            jam_parts = parts
+            break
+    if jam_col < 0:
+        return headers, header_rows, body
+
+    def _weak(ci: int) -> bool:
+        h = normalize_ws(headers[ci])
+        return (
+            not h
+            or _is_weak_header_label(h)
+            or _DOSE_UNIT_RE.match(h) is not None
+            or h.lower() in {"kg", "body weight", "body weight (kg)"}
+            or ci == jam_col
+        )
+
+    left = jam_col
+    while left > 0 and _weak(left - 1):
+        left -= 1
+    right = jam_col
+    while right + 1 < width and _weak(right + 1):
+        right += 1
+    span = list(range(left, right + 1))
+    if len(span) < 2:
+        return headers, header_rows, body
+
+    assigned = list(jam_parts)
+    if len(assigned) > len(span):
+        assigned = assigned[: len(span)]
+    while len(assigned) < len(span):
+        assigned.append(assigned[-1] if assigned else "")
+
+    for slot, ci in enumerate(span):
+        band = assigned[slot]
+        if not band:
+            continue
+        headers[ci] = band
+        if header_rows:
+            header_rows[-1][ci] = band
+            for ri in range(len(header_rows) - 1):
+                cell = normalize_ws(header_rows[ri][ci])
+                if cell and len(_split_jammed_weight_header(cell)) >= 3:
+                    header_rows[ri][ci] = ""
+    return headers, header_rows, body
+
+
+def _compose_weight_dose_leaf(parts: Sequence[str]) -> str:
+    """Build ``Body Weight {band} kg Dose (mg)`` from stacked header path parts."""
+    cleaned = [normalize_ws(p) for p in parts if normalize_ws(p)]
+    if not cleaned:
+        return ""
+    band = ""
+    has_body_weight = False
+    has_dose = False
+    has_kg = False
+    other: List[str] = []
+    for part in cleaned:
+        low = part.lower()
+        if "body" in low and "weight" in low:
+            has_body_weight = True
+            m = _WEIGHT_RANGE_RE.search(part)
+            if m and not band:
+                band = normalize_ws(m.group(0))
+            continue
+        if low in {"weight", "body"}:
+            has_body_weight = True
+            continue
+        if _DOSE_UNIT_RE.match(part) or low in {"dose", "(mg)", "mg"}:
+            has_dose = True
+            continue
+        if low == "kg":
+            has_kg = True
+            continue
+        if _WEIGHT_RANGE_RE.search(part):
+            band = normalize_ws(part)
+            continue
+        other.append(part)
+    if band or has_body_weight or has_dose:
+        bits: List[str] = []
+        if has_body_weight or band:
+            bits.append("Body Weight")
+        if band:
+            bits.append(band)
+        if has_kg or band:
+            bits.append("kg")
+        if has_dose:
+            bits.append("Dose (mg)")
+        if other and not band:
+            bits.extend(other)
+        return normalize_ws(" ".join(bits))
+    return normalize_ws(" ".join(cleaned))
+
+
+def _is_weight_label_row(row: Sequence[str]) -> bool:
+    """True for jammed/sparse weight-band label rows still sitting in body."""
+    cells = [normalize_ws(c) for c in row]
+    if not cells or cells[0]:
+        return False
+    nonempty = [c for c in cells if c]
+    if not nonempty:
+        return False
+    for cell in nonempty:
+        if len(_split_jammed_weight_header(cell)) >= 2:
+            return True
+    rangeish = sum(1 for c in nonempty if _WEIGHT_RANGE_RE.search(c))
+    pure_nums = sum(1 for c in nonempty if _PURE_NUM_RE.match(c))
+    if rangeish and pure_nums == 0:
+        return True
+    if pure_nums == len(nonempty) and pure_nums <= 3:
+        return True
+    if rangeish == len(nonempty):
+        return True
+    return False
+
+
 def _leaf_headers(header_rows: Sequence[Sequence[str]]) -> List[str]:
     if not header_rows:
         return []
@@ -240,16 +528,32 @@ def _leaf_headers(header_rows: Sequence[Sequence[str]]) -> List[str]:
         parts: List[str] = []
         for r in padded:
             val = normalize_ws(r[c])
-            if val and (not parts or parts[-1] != val):
+            if val and (not parts or parts[-1].lower() != val.lower()):
                 parts.append(val)
         if not parts:
             leaves.append(f"Column {c + 1}")
             continue
+        composed = _compose_weight_dose_leaf(parts)
+        if composed and (
+            _WEIGHT_RANGE_RE.search(composed)
+            or "dose" in composed.lower()
+            or "weight" in composed.lower()
+        ):
+            leaves.append(composed)
+            continue
         child = parts[-1]
         if len(parts) >= 2 and re.search(r"\d", child) and not re.search(r"\d", parts[0]):
-            leaves.append(child)
+            dose_bits = [
+                p for p in parts[:-1] if _DOSE_UNIT_RE.match(p) or p.lower() == "kg"
+            ]
+            if dose_bits:
+                leaves.append(_compose_weight_dose_leaf(parts))
+            else:
+                leaves.append(child)
+        elif len(parts) > 1:
+            leaves.append(normalize_ws(" ".join(parts)))
         else:
-            leaves.append(" > ".join(parts))
+            leaves.append(child)
     return leaves
 
 
@@ -319,7 +623,15 @@ def _is_data_row(row: Sequence[str]) -> bool:
     nonempty = [c for c in cells if c]
     if not nonempty:
         return False
+    # Dose/(mg) / weight-label banner rows are header bands, not body.
+    if _is_unit_dose_row(cells) or _is_weight_label_row(cells):
+        return False
     pure_nums = sum(1 for c in nonempty if _PURE_NUM_RE.match(c))
+    doseish = sum(1 for c in nonempty if _DOSE_UNIT_RE.match(c))
+    if doseish and doseish >= pure_nums:
+        return False
+    if (not cells[0]) and pure_nums == len(nonempty) and pure_nums <= 3:
+        return False
     if pure_nums >= 2:
         return True
     # IgE/range key + at least one numeric dose.
@@ -516,19 +828,42 @@ def _finalize_geometry_table(
 
     cleaned_body: List[List[str]] = []
     for row in body:
-        if _is_label_banner_row(row):
+        if (
+            _is_label_banner_row(row)
+            or _is_unit_dose_row(row)
+            or _is_weight_label_row(row)
+        ):
+            header_rows.append(_pad_row(row, width))
             for ci, cell in enumerate(row):
                 token = normalize_ws(cell)
                 if not token:
                     continue
+                if _WEIGHT_RANGE_RE.search(token):
+                    if ci < len(headers) and not normalize_ws(headers[ci]):
+                        if not _PURE_NUM_RE.match(token):
+                            headers[ci] = token
+                    continue
                 if ci < len(headers) and not normalize_ws(headers[ci]):
                     headers[ci] = token
                 elif ci < len(headers) and token.lower() not in headers[ci].lower():
-                    if _BANNER_TOKEN_RE.match(token) and not re.search(r"\d", headers[ci]):
+                    if (
+                        _BANNER_TOKEN_RE.match(token) or _DOSE_UNIT_RE.match(token)
+                    ) and not re.search(r"\d", headers[ci]):
                         headers[ci] = f"{headers[ci]} {token}".strip()
             continue
         cleaned_body.append(row)
     body = cleaned_body
+    headers, header_rows, body = _expand_jammed_header_columns(
+        headers, header_rows, body
+    )
+    # Second pass: Dose/(mg) banners can sit after the first real key row.
+    kept_body: List[List[str]] = []
+    for row in body:
+        if _is_unit_dose_row(row) or _is_weight_label_row(row):
+            header_rows.append(_pad_row(row, max(len(row), len(headers), 1)))
+            continue
+        kept_body.append(row)
+    body = kept_body
     headers, header_rows, body = _drop_empty_body_columns(
         headers, header_rows, body
     )
@@ -540,6 +875,18 @@ def _finalize_geometry_table(
     )
     if header_rows:
         headers = _leaf_headers(header_rows)
+    # Ensure pure weight-band leaves get Body Weight / kg / Dose composition.
+    composed_leaves: List[str] = []
+    for h in _pad_row(headers, width):
+        if _WEIGHT_RANGE_RE.search(h) and "body weight" not in h.lower():
+            composed_leaves.append(
+                _compose_weight_dose_leaf([h, "Dose (mg)"])
+                if not _DOSE_UNIT_RE.search(h)
+                else _compose_weight_dose_leaf([h])
+            )
+        else:
+            composed_leaves.append(h)
+    headers = composed_leaves
 
     if not body and not headers:
         return None
@@ -563,6 +910,28 @@ def _finalize_geometry_table(
         header_rows = [list(r) for r in recon.reconstructed_header_rows]
     if recon.reconstructed_rows:
         body = [list(r) for r in recon.reconstructed_rows]
+
+    # Fully cellular expansion: repeat shared attrs, fill unavailable cells,
+    # and guarantee no merged-cell metadata survives DetectDocumentText grids.
+    from app.rag.ingestion.pdf_layout.table_cellular import expand_to_fully_cellular
+
+    cellular = expand_to_fully_cellular(
+        headers,
+        body,
+        header_rows=header_rows,
+        cells=[],
+    )
+    headers = list(cellular["headers"])
+    body = [list(r) for r in cellular["rows"]]
+    header_rows = [list(r) for r in cellular["header_rows"]]
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        1,
+    )
+    quality_notes = list((recon.warnings if recon else []) or [])
+    quality_notes.extend(list(cellular.get("warnings") or []))
 
     low_confidence_cells = list(table.low_confidence_cells or [])
     for w in region_words:
@@ -632,7 +1001,8 @@ def _finalize_geometry_table(
             # DetectDocumentText has no native TABLE/CELL structure.
             "text_derived": True,
             "structurally_verified_table": False,
-            "quality_notes": list((recon.warnings if recon else []) or []),
+            "fully_cellular": True,
+            "quality_notes": quality_notes,
         },
         header_reconstruction=recon.to_dict(),
         normalized_header_paths=[list(p) for p in recon.normalized_header_paths],
@@ -768,14 +1138,15 @@ def table_data_from_textract_blocks(
     return tables
 
 
-def _detect_document_text_bytes(png_bytes: bytes) -> Dict[str, Any]:
+def _detect_document_text_bytes(image_bytes: bytes) -> Dict[str, Any]:
+    """Call DetectDocumentText on image bytes only (never a PDF)."""
     client = get_textract_client()
     last_err: Optional[Exception] = None
     for attempt in range(4):
         try:
-            resp = client.detect_document_text(Document={"Bytes": png_bytes})
+            resp = client.detect_document_text(Document={"Bytes": image_bytes})
             _API_USAGE["detect_document_text_pages"] += 1
-            _API_USAGE["pages_via_sync"] += 1
+            _API_USAGE["pages_via_image"] += 1
             return resp
         except Exception as exc:
             last_err = exc
@@ -803,157 +1174,162 @@ def _detect_document_text_bytes(png_bytes: bytes) -> Dict[str, Any]:
     return {"Blocks": []}
 
 
-def _await_document_text_detection(
-    client: Any,
-    job_id: str,
-    *,
-    timeout_s: float,
-    poll_s: float,
-) -> List[Dict[str, Any]]:
-    """Poll GetDocumentTextDetection until complete; collect all NextToken pages."""
-    deadline = time.time() + max(30.0, float(timeout_s))
-    poll = max(0.5, float(poll_s))
-    while time.time() < deadline:
-        _API_USAGE["get_document_text_detection_calls"] += 1
-        resp = client.get_document_text_detection(JobId=job_id, MaxResults=1000)
-        status = str(resp.get("JobStatus") or "")
-        if status == "IN_PROGRESS":
-            time.sleep(poll)
-            continue
-        if status == "FAILED":
-            raise RuntimeError(
-                resp.get("StatusMessage") or "StartDocumentTextDetection failed"
-            )
-        blocks = list(resp.get("Blocks") or [])
-        token = resp.get("NextToken")
-        while token:
-            _API_USAGE["get_document_text_detection_calls"] += 1
-            resp = client.get_document_text_detection(
-                JobId=job_id, NextToken=token, MaxResults=1000
-            )
-            blocks.extend(resp.get("Blocks") or [])
-            token = resp.get("NextToken")
-        return blocks
-    raise TimeoutError(
-        f"Textract StartDocumentTextDetection job {job_id} timed out after {timeout_s}s"
+def _render_page_image_bytes(
+    page: Any, *, dpi: int
+) -> Tuple[bytes, str, int, int, int]:
+    """Render one PDF page to an image suitable for DetectDocumentText.
+
+    Returns ``(bytes, format, image_width, image_height, used_dpi)``.
+    Downscales until the payload is under the sync Bytes limit. Never returns
+    PDF bytes. Raises if the page cannot be rendered under the limit.
+    """
+    import pymupdf as fitz
+
+    current_dpi = max(72, int(dpi))
+    last_size = 0
+    for _ in range(8):
+        scale = current_dpi / 72.0
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        img_w, img_h = int(pix.width), int(pix.height)
+        png_bytes = pix.tobytes("png")
+        last_size = len(png_bytes)
+        if last_size <= _MAX_DETECT_BYTES:
+            return png_bytes, "png", img_w, img_h, current_dpi
+        # Prefer JPEG when PNG is still too large at this DPI.
+        try:
+            jpg_bytes = pix.tobytes("jpeg", jpg_quality=85)
+            if len(jpg_bytes) <= _MAX_DETECT_BYTES:
+                return jpg_bytes, "jpeg", img_w, img_h, current_dpi
+            last_size = len(jpg_bytes)
+        except Exception:
+            pass
+        current_dpi = max(72, int(current_dpi * 0.75))
+    raise RuntimeError(
+        f"page image still too large after downscale ({last_size} bytes > "
+        f"{_MAX_DETECT_BYTES}); cannot call DetectDocumentText"
     )
 
 
-def _upload_pdf_for_async_textract(filepath: str) -> Tuple[str, str, str]:
-    """Upload PDF to S3 for StartDocumentTextDetection.
-
-    Returns ``(bucket, key, user_id_for_cleanup)``.
-    """
-    from app.services import s3_storage
-
-    if not s3_storage.is_configured():
-        raise RuntimeError(
-            "S3 is required for multipage StartDocumentTextDetection. "
-            "Set AWS_S3_BUCKET or disable PDF_TEXTRACT_ASYNC_MULTIPAGE."
-        )
-    path = Path(filepath)
-    user_id = "textract_jobs"
-    safe_name = f"{uuid.uuid4().hex}_{path.name}"
-    key = s3_storage.upload_pdf(user_id, safe_name, str(path))
-    bucket = (get_settings().S3_BUCKET or get_settings().AWS_S3_BUCKET or "").strip()
-    return bucket, key, user_id
-
-
-def extract_tables_from_pdf_async(
-    filepath: str,
+def _maybe_save_page_image(
     *,
-    page_sizes: Dict[int, Tuple[float, float]],
-    doc: Any = None,
-) -> Tuple[List[TableData], Dict[str, Any]]:
-    """Run Start/GetDocumentTextDetection on a multipage PDF and reconstruct tables.
+    filepath: str,
+    page_number: int,
+    image_bytes: bytes,
+    image_fmt: str,
+) -> str:
+    """Optionally dump page images for debug (v6 images/page-NNNN.png style)."""
+    settings = get_settings()
+    if not bool(getattr(settings, "PDF_TEXTRACT_SAVE_PAGE_IMAGES", False)):
+        return ""
+    report_dir = Path(
+        getattr(settings, "PDF_LAYOUT_REPORT_DIR", "./data/layout_reports")
+        or "./data/layout_reports"
+    )
+    stem = Path(filepath).stem or "document"
+    out_dir = report_dir / "textract_pages" / stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ext = "jpg" if image_fmt == "jpeg" else "png"
+    out_path = out_dir / f"page-{int(page_number):04d}.{ext}"
+    out_path.write_bytes(image_bytes)
+    return str(out_path)
 
-    Returns ``(tables, meta)``. Tables are text-derived (geometry), not native
-    Textract TABLE blocks. Never calls AnalyzeDocument.
+
+def _tables_and_words_from_blocks(
+    blocks: Sequence[Dict[str, Any]],
+    *,
+    page_number: int,
+    page_width: float,
+    page_height: float,
+    page: Any = None,
+    min_confidence: float,
+    image_width: int = 0,
+    image_height: int = 0,
+    image_format: str = "png",
+    dpi: int = _DEFAULT_RENDER_DPI,
+) -> Tuple[List[TableData], List[TextWord], PageOcrLayout]:
+    words = words_from_detect_blocks(
+        blocks,
+        page_number=page_number,
+        page_width=page_width,
+        page_height=page_height,
+        min_confidence=0.0,
+        image_width=image_width,
+        image_height=image_height,
+    )
+    layout = page_ocr_layout_from_blocks(
+        blocks,
+        page_number=page_number,
+        page_width=page_width,
+        page_height=page_height,
+        image_width=max(1, int(image_width)),
+        image_height=max(1, int(image_height)),
+        image_format=image_format,
+        dpi=dpi,
+        min_confidence=0.0,
+    )
+    tables = table_data_from_textract_blocks(
+        blocks,
+        page_number=page_number,
+        page_width=page_width,
+        page_height=page_height,
+        min_confidence=min_confidence,
+        page=page,
+    )
+    for table in tables:
+        prov = dict(table.provenance or {})
+        prov["textract_api"] = "DetectDocumentText"
+        prov["input"] = "page_image"
+        prov["text_derived"] = True
+        prov["structurally_verified_table"] = False
+        prov["page"] = int(page_number)
+        table.provenance = prov
+        if not table.pages:
+            table.pages = [int(page_number)]
+    return tables, words, layout
+
+
+def detect_page_tables_and_words(
+    page, page_number: int
+) -> Tuple[List[TableData], List[TextWord]]:
+    """Render page → DetectDocumentText on image bytes → (tables, words).
+
+    Raises on hard failures so callers can record per-page errors. Never falls
+    back to another OCR engine or whole-PDF Textract.
     """
     settings = get_settings()
-    meta: Dict[str, Any] = {
-        "api": "StartDocumentTextDetection",
-        "analyze_document_tables": False,
-        "pages_processed": 0,
-        "job_id": "",
-        "s3_key": "",
-    }
     if not bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)):
-        meta["skipped"] = "textract_disabled"
-        return [], meta
-    if not bool(getattr(settings, "PDF_TEXTRACT_TABLES_ENABLED", True)):
-        meta["skipped"] = "tables_disabled"
-        return [], meta
+        return [], []
+    if not settings.PDF_TEXTRACT_TABLES_ENABLED:
+        return [], []
 
-    bucket, key, cleanup_user = _upload_pdf_for_async_textract(filepath)
-    meta["s3_key"] = key
-    client = get_textract_client()
-    try:
-        start = client.start_document_text_detection(
-            DocumentLocation={"S3Object": {"Bucket": bucket, "Name": key}}
-        )
-        _API_USAGE["start_document_text_detection_jobs"] += 1
-        job_id = str(start.get("JobId") or "")
-        meta["job_id"] = job_id
-        if not job_id:
-            raise RuntimeError("StartDocumentTextDetection returned empty JobId")
-
-        blocks = _await_document_text_detection(
-            client,
-            job_id,
-            timeout_s=float(
-                getattr(settings, "PDF_TEXTRACT_ASYNC_TIMEOUT_SECONDS", 900) or 900
-            ),
-            poll_s=float(
-                getattr(settings, "PDF_TEXTRACT_ASYNC_POLL_SECONDS", 2.0) or 2.0
-            ),
-        )
-        by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
-        for block in blocks:
-            page_no = int(block.get("Page") or 1)
-            by_page[page_no].append(block)
-
-        min_conf = float(settings.PDF_TEXTRACT_MIN_CONFIDENCE or 50.0)
-        tables: List[TableData] = []
-        for page_no in sorted(by_page.keys()):
-            width, height = page_sizes.get(page_no, (0.0, 0.0))
-            if width <= 0 or height <= 0:
-                continue
-            page_obj = None
-            if doc is not None:
-                try:
-                    page_obj = doc[page_no - 1]
-                except Exception:
-                    page_obj = None
-            page_tables = table_data_from_textract_blocks(
-                by_page[page_no],
-                page_number=page_no,
-                page_width=float(width),
-                page_height=float(height),
-                min_confidence=min_conf,
-                page=page_obj,
-            )
-            for table in page_tables:
-                prov = dict(table.provenance or {})
-                prov["textract_api"] = "StartDocumentTextDetection"
-                prov["text_derived"] = True
-                prov["structurally_verified_table"] = False
-                table.provenance = prov
-            tables.extend(page_tables)
-            _API_USAGE["detect_document_text_pages"] += 1
-            _API_USAGE["pages_via_async"] += 1
-
-        meta["pages_processed"] = len(by_page)
-        meta["table_count"] = len(tables)
-        meta["block_count"] = len(blocks)
-        return tables, meta
-    finally:
-        try:
-            from app.services import s3_storage
-
-            s3_storage.delete_pdf(cleanup_user, Path(key).name, key=key)
-        except Exception as exc:
-            logger.warning("Could not delete temp Textract S3 object %s: %s", key, exc)
+    dpi = _textract_dpi()
+    image_bytes, image_fmt, img_w, img_h, used_dpi = _render_page_image_bytes(
+        page, dpi=dpi
+    )
+    resp = _detect_document_text_bytes(image_bytes)
+    blocks = list(resp.get("Blocks") or [])
+    page_width = float(page.rect.width)
+    page_height = float(page.rect.height)
+    tables, words, _layout = _tables_and_words_from_blocks(
+        blocks,
+        page_number=page_number,
+        page_width=page_width,
+        page_height=page_height,
+        page=page,
+        min_confidence=float(settings.PDF_TEXTRACT_MIN_CONFIDENCE or 50.0),
+        image_width=img_w,
+        image_height=img_h,
+        image_format=image_fmt,
+        dpi=used_dpi,
+    )
+    for table in tables:
+        prov = dict(table.provenance or {})
+        prov["image_format"] = image_fmt
+        prov["image_bytes"] = len(image_bytes)
+        prov["image_width"] = img_w
+        prov["image_height"] = img_h
+        table.provenance = prov
+    return tables, words
 
 
 def extract_tables_from_pdf_detect(
@@ -962,33 +1338,24 @@ def extract_tables_from_pdf_detect(
     page_sizes: Dict[int, Tuple[float, float]],
     doc: Any = None,
 ) -> Tuple[List[TableData], Dict[str, Any]]:
-    """Extract text-derived tables via DetectDocumentText for an entire PDF.
+    """Render every PDF page to an image and run DetectDocumentText per page.
 
-    Multipage + async enabled → Start/GetDocumentTextDetection.
-    Otherwise → sync per-page PNG DetectDocumentText.
+    Never uploads or sends the PDF to Textract. Page results are combined in
+    ascending page order. Controlled concurrency applies only to the Textract
+    API calls after images are rendered.
     """
     settings = get_settings()
-    page_count = len(page_sizes) or 0
-    async_on = bool(getattr(settings, "PDF_TEXTRACT_ASYNC_MULTIPAGE", True))
-    if page_count > 1 and async_on:
-        try:
-            return extract_tables_from_pdf_async(
-                filepath, page_sizes=page_sizes, doc=doc
-            )
-        except Exception as exc:
-            logger.warning(
-                "Async StartDocumentTextDetection failed for %s (%s); "
-                "falling back to sync per-page DetectDocumentText",
-                Path(filepath).name,
-                exc,
-            )
-            # Continue to sync path below.
-
     meta: Dict[str, Any] = {
         "api": "DetectDocumentText",
+        "mode": "page_images",
         "analyze_document_tables": False,
+        "pdf_uploaded_to_textract": False,
         "pages_processed": 0,
-        "mode": "sync_per_page",
+        "page_errors": {},
+        "workers": 1,
+        "dpi": _textract_dpi(),
+        "saved_page_images": [],
+        "page_layouts": {},
     }
     if not bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)):
         meta["skipped"] = "textract_disabled"
@@ -1000,69 +1367,186 @@ def extract_tables_from_pdf_detect(
         meta["skipped"] = "no_doc_handle"
         return [], meta
 
-    tables: List[TableData] = []
-    for page_no in sorted(page_sizes.keys()):
+    page_numbers = sorted(int(p) for p in page_sizes.keys())
+    dpi = _textract_dpi()
+    meta["dpi"] = dpi
+    # Render sequentially (PyMuPDF page objects are not safely shared across
+    # threads), then optionally fan out DetectDocumentText.
+    rendered: List[Dict[str, Any]] = []
+    for page_no in page_numbers:
         try:
             page = doc[page_no - 1]
-        except Exception:
+        except Exception as exc:
+            meta["page_errors"][str(page_no)] = f"open_page: {type(exc).__name__}: {exc}"
+            logger.error(
+                "Cannot open PDF page %s for Textract image render: %s",
+                page_no,
+                exc,
+            )
             continue
-        page_tables = extract_tables_from_page(page, page_no)
+        try:
+            image_bytes, image_fmt, img_w, img_h, used_dpi = _render_page_image_bytes(
+                page, dpi=dpi
+            )
+            saved = _maybe_save_page_image(
+                filepath=filepath,
+                page_number=page_no,
+                image_bytes=image_bytes,
+                image_fmt=image_fmt,
+            )
+            if saved:
+                meta["saved_page_images"].append(saved)
+            rendered.append(
+                {
+                    "page_no": page_no,
+                    "page": page,
+                    "image_bytes": image_bytes,
+                    "image_fmt": image_fmt,
+                    "image_width": img_w,
+                    "image_height": img_h,
+                    "used_dpi": used_dpi,
+                    "page_width": float(page.rect.width),
+                    "page_height": float(page.rect.height),
+                }
+            )
+        except Exception as exc:
+            meta["page_errors"][str(page_no)] = (
+                f"render: {type(exc).__name__}: {exc}"
+            )
+            logger.error(
+                "PDF page %s image render failed (no OCR substitute): %s",
+                page_no,
+                exc,
+            )
+
+    min_conf = float(settings.PDF_TEXTRACT_MIN_CONFIDENCE or 50.0)
+    workers = _textract_max_workers()
+    meta["workers"] = workers
+
+    def _ocr_one(item: Dict[str, Any]) -> Dict[str, Any]:
+        page_no = int(item["page_no"])
+        try:
+            resp = _detect_document_text_bytes(item["image_bytes"])
+            blocks = list(resp.get("Blocks") or [])
+            tables, words, layout = _tables_and_words_from_blocks(
+                blocks,
+                page_number=page_no,
+                page_width=float(item["page_width"]),
+                page_height=float(item["page_height"]),
+                page=item.get("page"),
+                min_confidence=min_conf,
+                image_width=int(item["image_width"]),
+                image_height=int(item["image_height"]),
+                image_format=str(item["image_fmt"]),
+                dpi=int(item["used_dpi"]),
+            )
+            for table in tables:
+                prov = dict(table.provenance or {})
+                prov["image_format"] = item["image_fmt"]
+                prov["image_bytes"] = len(item["image_bytes"])
+                prov["image_width"] = int(item["image_width"])
+                prov["image_height"] = int(item["image_height"])
+                table.provenance = prov
+            return {
+                "page_no": page_no,
+                "tables": tables,
+                "words": words,
+                "layout": layout,
+                "error": "",
+            }
+        except Exception as exc:
+            return {
+                "page_no": page_no,
+                "tables": [],
+                "words": [],
+                "layout": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    results_by_page: Dict[int, Dict[str, Any]] = {}
+    if workers <= 1 or len(rendered) <= 1:
+        for item in rendered:
+            results_by_page[int(item["page_no"])] = _ocr_one(item)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_ocr_one, item): int(item["page_no"]) for item in rendered}
+            for fut in as_completed(futures):
+                page_no = futures[fut]
+                try:
+                    results_by_page[page_no] = fut.result()
+                except Exception as exc:
+                    results_by_page[page_no] = {
+                        "page_no": page_no,
+                        "tables": [],
+                        "words": [],
+                        "layout": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+
+    tables: List[TableData] = []
+    words_by_page: Dict[int, List[TextWord]] = {}
+    page_layouts: Dict[int, Dict[str, Any]] = {}
+    for page_no in page_numbers:
+        result = results_by_page.get(page_no)
+        if not result:
+            continue
+        if result.get("error"):
+            meta["page_errors"][str(page_no)] = str(result["error"])
+            logger.error(
+                "Textract DetectDocumentText failed on page %s image: %s",
+                page_no,
+                result["error"],
+            )
+            meta["pages_processed"] = int(meta["pages_processed"]) + 1
+            continue
+        page_tables = list(result.get("tables") or [])
+        page_words = list(result.get("words") or [])
         tables.extend(page_tables)
+        if page_words:
+            words_by_page[page_no] = page_words
+        layout = result.get("layout")
+        if layout is not None:
+            page_layouts[page_no] = layout.to_dict()
         meta["pages_processed"] = int(meta["pages_processed"]) + 1
+
+    # Sequential LLM normalize after parallel OCR (avoid Bedrock from workers).
+    try:
+        from app.rag.ingestion.pdf_layout.table_llm_normalize import (
+            normalize_tables_with_llm,
+        )
+
+        tables, llm_meta = normalize_tables_with_llm(tables)
+        meta["llm_normalize"] = llm_meta
+    except Exception as exc:
+        meta["llm_normalize_error"] = f"{type(exc).__name__}: {exc}"
+        logger.debug("LLM table normalize batch skipped: %s", exc)
+
     meta["table_count"] = len(tables)
+    meta["words_by_page"] = words_by_page
+    meta["page_layouts"] = page_layouts
+    meta["failed_pages"] = sorted(int(p) for p in meta["page_errors"].keys())
+    if meta["page_errors"] and not tables and not words_by_page:
+        # Surface a hard failure when every page failed — no silent empty success.
+        first = next(iter(meta["page_errors"].values()))
+        raise RuntimeError(
+            f"DetectDocumentText failed for all rendered pages "
+            f"({len(meta['page_errors'])} errors); first: {first}"
+        )
     return tables, meta
 
 
 def extract_tables_from_page(page, page_number: int) -> List[TableData]:
-    """Render a PDF page and extract tables via DetectDocumentText + geometry.
+    """Render a PDF page image and extract tables via DetectDocumentText.
 
-    Returns [] on any failure so callers can surface textract_error without
-    falling back to native/OCR table extractors.
+    Returns [] on failure so callers can surface ``textract_error`` without
+    falling back to native/OCR table extractors or whole-PDF Textract.
     """
-    settings = get_settings()
-    # Both flags must be true before any AWS call.
-    if not bool(getattr(settings, "PDF_TEXTRACT_FALLBACK_ENABLED", False)):
-        return []
-    if not settings.PDF_TEXTRACT_TABLES_ENABLED:
-        return []
-
     try:
-        import pymupdf as fitz
-
-        dpi = _textract_dpi()
-        scale = dpi / 72.0
-        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-        png_bytes = pix.tobytes("png")
-        # Sync DetectDocumentText Bytes limit is 5 MB.
-        if len(png_bytes) > 4_500_000:
-            logger.warning(
-                "Textract page %s PNG too large (%s bytes); skipping",
-                page_number,
-                len(png_bytes),
-            )
-            return []
-        resp = _detect_document_text_bytes(png_bytes)
-        blocks = list(resp.get("Blocks") or [])
-        page_width = float(page.rect.width)
-        page_height = float(page.rect.height)
-        tables = table_data_from_textract_blocks(
-            blocks,
-            page_number=page_number,
-            page_width=page_width,
-            page_height=page_height,
-            min_confidence=float(settings.PDF_TEXTRACT_MIN_CONFIDENCE or 50.0),
-            page=page,
-        )
-        for table in tables:
-            prov = dict(table.provenance or {})
-            prov["textract_api"] = "DetectDocumentText"
-            prov["text_derived"] = True
-            prov["structurally_verified_table"] = False
-            table.provenance = prov
+        tables, _words = detect_page_tables_and_words(page, page_number)
         return tables
     except Exception as exc:
-        logger.warning(
-            "Textract DetectDocumentText failed on page %s: %s — no table fallback",
+        logger.error(
+            "Textract DetectDocumentText failed on page %s image: %s — no fallback",
             page_number,
             exc,
         )

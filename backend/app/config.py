@@ -184,41 +184,68 @@ class Settings(BaseSettings):
     PDF_OCR_TESSDATA_DIR: str = ""  # blank → TESSDATA_PREFIX / system tessdata
     PDF_TABLE_MAX_CHARS: int = 4000
     PDF_TABLE_SPLIT_ROWS: int = 40
-    # Active PDF table extractor: AWS Textract DetectDocumentText + geometry
-    # reconstruction (text-derived tables). Docling code remains intact but is
-    # disabled in the active path by default.
-    # Multipage PDFs use StartDocumentTextDetection / GetDocumentTextDetection
-    # (S3). Single-page / per-page fallback uses sync DetectDocumentText.
-    # IAM: textract:DetectDocumentText, textract:StartDocumentTextDetection,
-    # textract:GetDocumentTextDetection. Cost ~$1.50 / 1,000 pages.
-    # No Camelot / AnalyzeDocument TABLES / img2table table extractors.
-    PDF_DOCLING_TABLES_ENABLED: bool = False
-    PDF_DOCLING_TABLEFORMER_MODE: str = "accurate"  # accurate | fast
-    PDF_DOCLING_DO_OCR: bool = True
-    # Convert large PDFs in page batches to avoid Docling/torch std::bad_alloc.
-    # 0 = single full-document convert (legacy). Recommended: 4–8 on Windows CPU.
-    PDF_DOCLING_PAGE_BATCH_SIZE: int = 4
-    # Quality gate for structured extractors (Docling when re-enabled).
+    # Active PDF table extractor: render each PDF page to an image, then call
+    # AWS Textract DetectDocumentText on that image (never send the PDF itself).
+    # IAM: textract:DetectDocumentText only.
     PDF_TABLE_QUALITY_MIN_COLS: int = 2
     PDF_TABLE_QUALITY_MIN_ROWS: int = 1
     PDF_TABLE_QUALITY_MAX_EMPTY_CELL_RATIO: float = 0.65
     PDF_TABLE_QUALITY_MIN_STRUCTURE_CONFIDENCE: float = 0.35
-    # Master switch for DetectDocumentText. Required for the active Textract path.
-    # Name retained for env compatibility (historically a Docling fallback flag).
+    # Master switch for DetectDocumentText (name kept for env compatibility).
     PDF_TEXTRACT_FALLBACK_ENABLED: bool = True
     # Legacy alias; both FALLBACK_ENABLED and TABLES_ENABLED must be true to run.
     PDF_TEXTRACT_TABLES_ENABLED: bool = True
     PDF_TEXTRACT_TABULAR_ONLY: bool = True
-    # Multipage PDFs: async Start/GetDocumentTextDetection via S3 (preferred).
-    # False forces sync per-page PNG DetectDocumentText only.
-    PDF_TEXTRACT_ASYNC_MULTIPAGE: bool = True
+    # Deprecated: whole-PDF StartDocumentTextDetection is disabled. Kept for env
+    # compatibility; ignored by the image-only DetectDocumentText path.
+    PDF_TEXTRACT_ASYNC_MULTIPAGE: bool = False
     PDF_TEXTRACT_ASYNC_POLL_SECONDS: float = 2.0
     PDF_TEXTRACT_ASYNC_TIMEOUT_SECONDS: int = 900
     PDF_TEXTRACT_REGION: str = ""  # blank → BEDROCK_REGION / AWS_REGION
-    PDF_TEXTRACT_DPI: int = 0  # 0 → reuse PDF_OCR_DPI
+    # 0 → reuse PDF_OCR_DPI (default 300, matching pdf_text_v6_stable RENDER_DPI).
+    PDF_TEXTRACT_DPI: int = 0
     PDF_TEXTRACT_TIMEOUT_SECONDS: int = 60
-    PDF_TEXTRACT_MAX_WORKERS: int = 4
+    # Controlled concurrency for per-page DetectDocumentText (capped at 10 like v6).
+    PDF_TEXTRACT_MAX_WORKERS: int = 10
     PDF_TEXTRACT_MIN_CONFIDENCE: float = 50.0
+    # Optional debug dump of page images under PDF_LAYOUT_REPORT_DIR/textract_pages/.
+    PDF_TEXTRACT_SAVE_PAGE_IMAGES: bool = False
+    # After DetectDocumentText geometry, optionally ask Bedrock to rewrite weak
+    # grids into the required fully-cellular format (domain-agnostic prompt).
+    PDF_TABLE_LLM_NORMALIZE_ENABLED: bool = True
+    PDF_TABLE_LLM_NORMALIZE_MAX_TOKENS: int = 8192
+    # STE Textract AnalyzeDocument + Bedrock Nova 2 Lite (optional).
+    # When enabled, STE tables are primary; overlapping DetectDocumentText
+    # tables are deduped. Prose still uses the semantic chunker.
+    # Engine: backend/ste/ (AnalyzeDocument TABLES on page images).
+    PDF_STE_TABLES_ENABLED: bool = False
+    PDF_STE_BEDROCK_ENABLED: bool = True
+    # Blank → BEDROCK_MODEL_ID (us.amazon.nova-2-lite-v1:0).
+    PDF_STE_BEDROCK_MODEL_ID: str = ""
+    PDF_STE_BACKEND: str = "textract"  # textract | pymupdf | auto
+    # Deprecated (Docling removed); kept so old .env keys do not crash Settings.
+    PDF_STE_TABLEFORMER_MODE: str = "accurate"
+    PDF_STE_OUTPUT_DIR: str = "./data/ste_runs"
+    PDF_STE_USE_CACHE: bool = True
+    PDF_STE_AWS_REGION: str = ""  # blank → PDF_TEXTRACT_REGION / BEDROCK_REGION
+    # Page+bbox IoU threshold for preferring STE over DetectDocumentText duplicates.
+    PDF_STE_IOU_DEDUPE: float = 0.55
+    # Optional 1-based page subset for STE only (comma-separated), e.g. "5,6,19".
+    # Blank → all pages (tables_only gate still applies). Prose path unchanged.
+    PDF_STE_PAGES: str = ""
+    # Performance: when STE is primary, skip DetectDocumentText (largest win).
+    # Prose uses native/OCR text; STE owns tables. Set false to keep Detect merge.
+    PDF_STE_SKIP_DETECT_WHEN_STE: bool = True
+    # Parallel AnalyzeDocument page workers (I/O bound; capped).
+    PDF_STE_MAX_WORKERS: int = 4
+    # Parallel Bedrock reconstruction workers (I/O bound; capped).
+    PDF_STE_BEDROCK_MAX_WORKERS: int = 3
+    # STE page-render DPI (150 is usually enough for AnalyzeDocument TABLES).
+    PDF_STE_DPI: int = 150
+    # Skip Bedrock when Textract grid already looks simple/high-confidence.
+    PDF_STE_BEDROCK_SKIP_SIMPLE: bool = True
+    # Debounce Document.processing_progress DB writes (ms).
+    PDF_INGEST_PROGRESS_MIN_INTERVAL_MS: int = 750
     # RAGAS evaluation (scripts/evaluate_ragas.py)
     RAGAS_ENABLED: bool = True
     RAGAS_REPORT_DIR: str = "data/evals/ragas/reports"
@@ -260,11 +287,10 @@ class Settings(BaseSettings):
     # Pull other tables that share a section with a retrieved hit so sibling
     # matrices (same section, different applicability) are comparable.
     TABLE_RAG_SIBLING_EXPAND: bool = True
-    TABLE_RAG_SELECTOR_ENABLED: bool = True
-    # Iterative evidence retrieval: when the table analyst reports missing
-    # evidence, run targeted follow-up retrieve() rounds before answering.
-    TABLE_RAG_ITERATIVE_ENABLED: bool = True
-    TABLE_RAG_MAX_ITERATIONS: int = 2
+    # LLM table selector / iterative evidence removed — flags kept for env compat.
+    TABLE_RAG_SELECTOR_ENABLED: bool = False
+    TABLE_RAG_ITERATIVE_ENABLED: bool = False
+    TABLE_RAG_MAX_ITERATIONS: int = 0
     TABLE_RAG_ITERATIVE_TOP_K: int = 6
     # Per-query RAG debug payload (redacted by default).
     RAG_DEBUG_ENABLED: bool = False

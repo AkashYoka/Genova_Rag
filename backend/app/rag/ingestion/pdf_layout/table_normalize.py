@@ -307,6 +307,16 @@ def normalize_table_grid(
         notes.append("attempted_label_explosion")
         body = _explode_smashed_label_row(body)
 
+    try:
+        from app.rag.ingestion.pdf_layout.table_cellular import expand_to_fully_cellular
+
+        cellular = expand_to_fully_cellular(hdrs, body)
+        hdrs = list(cellular["headers"])
+        body = [list(r) for r in cellular["rows"]]
+        notes.extend(list(cellular.get("warnings") or []))
+    except Exception as exc:
+        logger.debug("fully-cellular expand skipped: %s", exc)
+
     facts = linearize_table_facts(hdrs, body, caption=caption)
     if not facts and caption:
         notes.append("no_facts")
@@ -653,4 +663,6 @@ def repair_table_data(
         table.headers = normalized.headers
         table.rows = normalized.rows
     setattr(table, "linearized_facts", normalized.facts)
+    # Fully cellular contract: never retain merge spans after normalize.
+    setattr(table, "merged_cells", [])
     return table

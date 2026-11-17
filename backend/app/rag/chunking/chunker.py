@@ -461,32 +461,9 @@ def _pdf_page_sizes(filepath: str) -> Dict[int, tuple[float, float]]:
 
 
 def _extract_tables_with_docling(filepath: str) -> List[Dict[str, Any]]:
-    """Legacy-chunker Docling path — TableFormer Accurate via docling_tables."""
-    from app.rag.ingestion.pdf_layout.docling_tables import extract_tables_from_pdf
-
-    page_sizes = _pdf_page_sizes(filepath)
-    records: List[Dict[str, Any]] = []
-    for table in extract_tables_from_pdf(filepath, page_sizes=page_sizes):
-        rows = (
-            [list(table.headers)] + [list(r) for r in table.rows]
-            if table.headers
-            else [list(r) for r in table.rows]
-        )
-        width_height = page_sizes.get(int(table.page))
-        record = _make_table_record(
-            rows=rows,
-            page=int(table.page),
-            extractor="docling",
-            flavor="tableformer_accurate",
-            bbox=list(table.bbox.as_tuple()) if table.bbox else None,
-            page_width=width_height[0] if width_height else None,
-            page_height=width_height[1] if width_height else None,
-            accuracy=(float(table.structure_confidence or 0) * 100.0) or None,
-            pdf_origin=True,
-        )
-        if record:
-            records.append(record)
-    return records
+    """Docling removed — legacy chunker no longer extracts tables here."""
+    _ = filepath
+    return []
 
 
 def _extract_tables_with_pdfplumber(filepath: str) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -669,19 +646,6 @@ def extract_pdf_with_tables(filepath: str) -> List[Dict[str, Any]]:
         logger.warning("pdfplumber extraction failed for '%s': %s", filepath, exc)
 
     all_tables: List[Dict[str, Any]] = []
-
-    try:
-        docling_tables = _extract_tables_with_docling(filepath)
-        all_tables.extend(docling_tables)
-        logger.info(
-            "Docling extracted %d table candidate(s) from '%s'",
-            len(docling_tables),
-            filepath,
-        )
-    except ImportError as exc:
-        logger.info("Docling unavailable (%s); continuing without it", exc)
-    except Exception as exc:
-        logger.warning("Docling table extraction failed: %s", exc)
 
     validated: List[Dict[str, Any]] = list(all_tables)
     validated.extend(plumber_tables)

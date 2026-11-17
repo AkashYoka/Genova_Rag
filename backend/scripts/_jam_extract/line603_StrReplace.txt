@@ -1,0 +1,75 @@
+def _expand_jammed_header_columns(
+    headers: List[str],
+    header_rows: List[List[str]],
+    body: List[List[str]],
+) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+    """Spread smashed multi-range headers into neighboring empty/Column-N leaves.
+
+    Geometry often keeps one body column per weight band but OCR packs several
+    band labels into a single header cell (leaving ``Column N`` placeholders).
+    Redistribute labels across those weak neighbors — do not insert columns.
+    """
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        1,
+    )
+    headers = _pad_row(headers, width)
+    header_rows = [_pad_row(r, width) for r in header_rows]
+    body = [_pad_row(r, width) for r in body]
+
+    jam_col = -1
+    jam_parts: List[str] = []
+    for ci, h in enumerate(headers):
+        parts = _split_jammed_weight_header(h)
+        if len(parts) >= 3:
+            jam_col = ci
+            jam_parts = parts
+            break
+    if jam_col < 0:
+        return headers, header_rows, body
+
+    # Collect a contiguous span of weak headers around the jam that can absorb
+    # the split bands (empty / Column N / identical banner tokens).
+    def _weak(ci: int) -> bool:
+        h = normalize_ws(headers[ci])
+        return (
+            not h
+            or _is_weak_header_label(h)
+            or _DOSE_UNIT_RE.match(h) is not None
+            or h.lower() in {"kg", "body weight", "body weight (kg)"}
+            or ci == jam_col
+        )
+
+    left = jam_col
+    while left > 0 and _weak(left - 1):
+        left -= 1
+    right = jam_col
+    while right + 1 < width and _weak(right + 1):
+        right += 1
+    span = list(range(left, right + 1))
+    if len(span) < 2:
+        return headers, header_rows, body
+
+    # Prefer assigning one band per span column (truncate/pad jam_parts).
+    assigned = list(jam_parts)
+    if len(assigned) > len(span):
+        assigned = assigned[: len(span)]
+    while len(assigned) < len(span):
+        assigned.append(assigned[-1] if assigned else "")
+
+    for slot, ci in enumerate(span):
+        band = assigned[slot]
+        if not band:
+            continue
+        headers[ci] = band
+        # Mirror into the bottom header row when present.
+        if header_rows:
+            header_rows[-1][ci] = band
+            # Clear jammed copies from upper rows in this column.
+            for ri in range(len(header_rows) - 1):
+                cell = normalize_ws(header_rows[ri][ci])
+                if cell and len(_split_jammed_weight_header(cell)) >= 3:
+                    header_rows[ri][ci] = ""
+    return headers, header_rows, body

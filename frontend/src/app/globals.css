@@ -529,6 +529,29 @@
   max-width: 100%;
 }
 .prose-chat tbody tr:last-child td { border-bottom: 0; }
+
+/* Document Explore — reconstructed data tables (fully cellular, scrollable). */
+.explore-chunk-prose .explore-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.explore-chunk-prose .genova-data-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.explore-chunk-prose .genova-data-table th,
+.explore-chunk-prose .genova-data-table td {
+  border: 1px solid var(--gd-border);
+}
+.explore-chunk-prose p {
+  margin: 0.4em 0;
+}
+.explore-chunk-prose ul {
+  margin: 0.5em 0;
+  padding-left: 1.25rem;
+}
 .prose-chat code {
   background: oklch(1 0 0 / 8%);
   padding: 0.15em 0.4em;

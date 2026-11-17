@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import type {
   DocumentHierarchyResponse,
   DocumentIndexStatusResponse,
+  ReindexResponse,
   RelatedSectionsResponse,
   SectionChunksResponse,
   SectionTableMeta,
@@ -79,6 +80,21 @@ export function fetchDocumentIndexStatus(
   return cachedGet(
     `doc:${documentId}:index-status`,
     `/api/v1/documents/${encodeURIComponent(documentId)}/index-status`,
+  );
+}
+
+export function reindexDocument(
+  documentId: string,
+  opts?: { strategy?: string },
+): Promise<ReindexResponse> {
+  const body =
+    opts?.strategy && opts.strategy.trim()
+      ? { strategy: opts.strategy.trim() }
+      : {};
+  clearHierarchyCache(documentId);
+  return api.post<ReindexResponse>(
+    `/api/v1/documents/${encodeURIComponent(documentId)}/reindex`,
+    body,
   );
 }
 

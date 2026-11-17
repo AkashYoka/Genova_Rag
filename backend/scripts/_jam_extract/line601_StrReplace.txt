@@ -1,0 +1,163 @@
+def _is_label_banner_row(row: Sequence[str]) -> bool:
+    """Detect non-data banner rows like blank|blank|Dose|(mg)|blank."""
+    cells = [normalize_ws(c) for c in row]
+    nonempty = [c for c in cells if c]
+    if len(nonempty) < 2 or len(nonempty) > max(3, len(cells) // 3):
+        return False
+    if cells and cells[0]:
+        return False
+    for cell in nonempty:
+        if re.search(r"\d", cell) and not cell.startswith("("):
+            return False
+        if not _BANNER_TOKEN_RE.match(cell):
+            return False
+    return True
+
+
+_DOSE_UNIT_RE = re.compile(r"(?i)^(?:dose(?:\s*\(\s*mg\s*\))?|\(\s*mg\s*\))$")
+_WEIGHT_RANGE_RE = re.compile(
+    r"(?i)(?:≥|>=|>|≤|<=|<)?\s*\d+(?:\.\d+)?\s*(?:–|-|—|to)\s*\d+(?:\.\d+)?"
+)
+_MULTI_WEIGHT_SPLIT_RE = re.compile(
+    r"(?i)(?=(?:≥|>=|>|≤|<=|<)\s*\d)|(?<=\d)\s+(?=(?:≥|>=|>|≤|<=|<)?\s*\d)"
+)
+
+
+def _is_unit_dose_row(row: Sequence[str]) -> bool:
+    """True when value columns are mostly Dose/(mg) banners (even if keys filled)."""
+    cells = [normalize_ws(c) for c in row]
+    if len(cells) < 3:
+        return False
+    value_cells = cells[2:] if len(cells) > 2 else cells[1:]
+    nonempty = [c for c in value_cells if c]
+    if len(nonempty) < 2:
+        return False
+    doseish = sum(1 for c in nonempty if _DOSE_UNIT_RE.match(c))
+    # Majority Dose/(mg) → header band, not a data matrix row.
+    return doseish >= max(2, (len(nonempty) + 1) // 2)
+
+
+def _split_jammed_weight_header(text: str) -> List[str]:
+    """Split ``≥10-12 >12-15 >15-20 …`` smashed into one header cell."""
+    token = normalize_ws(text)
+    if not token or not _WEIGHT_RANGE_RE.search(token):
+        return [token] if token else []
+    # Count distinct weight-range hits; single range stays intact.
+    ranges = re.findall(
+        r"(?i)(?:≥|>=|>|≤|<=|<)?\s*\d+(?:\.\d+)?\s*(?:–|-|—|to)\s*\d+(?:\.\d+)?",
+        token,
+    )
+    if len(ranges) < 2:
+        return [token]
+    parts = [normalize_ws(p) for p in _MULTI_WEIGHT_SPLIT_RE.split(token) if normalize_ws(p)]
+    cleaned: List[str] = []
+    for part in parts:
+        part = re.sub(r"(?i)\bbody\s*weight\b", "", part)
+        part = re.sub(r"(?i)\bdose\b|\(\s*mg\s*\)|\bkg\b", "", part)
+        part = normalize_ws(part)
+        if part and _WEIGHT_RANGE_RE.search(part):
+            cleaned.append(part)
+    return cleaned if len(cleaned) >= 2 else [token]
+
+
+def _expand_jammed_header_columns(
+    headers: List[str],
+    header_rows: List[List[str]],
+    body: List[List[str]],
+) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+    """Explode a single header cell that contains many weight bands."""
+    width = max(
+        len(headers),
+        max((len(r) for r in header_rows), default=0),
+        max((len(r) for r in body), default=0),
+        1,
+    )
+    headers = _pad_row(headers, width)
+    header_rows = [_pad_row(r, width) for r in header_rows]
+    body = [_pad_row(r, width) for r in body]
+
+    jam_col = -1
+    jam_parts: List[str] = []
+    for ci, h in enumerate(headers):
+        parts = _split_jammed_weight_header(h)
+        if len(parts) >= 3:
+            jam_col = ci
+            jam_parts = parts
+            break
+    if jam_col < 0:
+        return headers, header_rows, body
+
+    # Insert extra columns after jam_col for the extra weight bands.
+    extra = len(jam_parts) - 1
+
+    def _expand_row(row: List[str], *, fill_from_jam: bool) -> List[str]:
+        out = list(row)
+        cell = normalize_ws(out[jam_col]) if jam_col < len(out) else ""
+        if fill_from_jam:
+            out[jam_col] = jam_parts[0]
+            for offset, part in enumerate(jam_parts[1:], start=1):
+                out.insert(jam_col + offset, part)
+        else:
+            # Body: keep value in first slot; leave new columns empty for now
+            # (marker fill / geometry usually already has values elsewhere).
+            for _ in range(extra):
+                out.insert(jam_col + 1, "")
+            if cell and len(_split_jammed_weight_header(cell)) >= 3:
+                out[jam_col] = ""
+        return out
+
+    headers = _expand_row(headers, fill_from_jam=True)
+    header_rows = [_expand_row(r, fill_from_jam=True) for r in header_rows]
+    # Prefer splitting jam only in headers; body columns stay positional.
+    new_body: List[List[str]] = []
+    for row in body:
+        new_body.append(_expand_row(row, fill_from_jam=False))
+    return headers, header_rows, new_body
+
+
+def _compose_weight_dose_leaf(parts: Sequence[str]) -> str:
+    """Build ``Body Weight {band} kg Dose (mg)`` from stacked header path parts."""
+    cleaned = [normalize_ws(p) for p in parts if normalize_ws(p)]
+    if not cleaned:
+        return ""
+    band = ""
+    has_body_weight = False
+    has_dose = False
+    has_kg = False
+    other: List[str] = []
+    for part in cleaned:
+        low = part.lower()
+        if "body" in low and "weight" in low:
+            has_body_weight = True
+            # Keep any range still glued onto the banner.
+            m = _WEIGHT_RANGE_RE.search(part)
+            if m and not band:
+                band = normalize_ws(m.group(0))
+            continue
+        if low in {"weight", "body"}:
+            has_body_weight = True
+            continue
+        if _DOSE_UNIT_RE.match(part) or low in {"dose", "(mg)", "mg"}:
+            has_dose = True
+            continue
+        if low == "kg":
+            has_kg = True
+            continue
+        if _WEIGHT_RANGE_RE.search(part):
+            band = normalize_ws(part)
+            continue
+        other.append(part)
+    if band or has_body_weight or has_dose:
+        bits: List[str] = []
+        if has_body_weight or band:
+            bits.append("Body Weight")
+        if band:
+            bits.append(band)
+        if has_kg or band:
+            bits.append("kg")
+        if has_dose:
+            bits.append("Dose (mg)")
+        if other and not band:
+            bits.extend(other)
+        return normalize_ws(" ".join(bits))
+    return normalize_ws(" ".join(cleaned))

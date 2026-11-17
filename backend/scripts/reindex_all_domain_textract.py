@@ -1,7 +1,7 @@
 """Re-index data/all_Domain PDFs + Xolair via Textract DetectDocumentText.
 
-Uses the live ingestion pipeline (semantic chunker + Bedrock Titan embeddings).
-Docling remains disabled in the active path. Writes a report under
+Uses the live ingestion pipeline (Textract DetectDocumentText + semantic
+chunker + Bedrock Titan embeddings). Writes a report under
 ``data/layout_reports/``.
 
 Usage
@@ -28,10 +28,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-os.environ.setdefault("PDF_DOCLING_TABLES_ENABLED", "false")
 os.environ.setdefault("PDF_TEXTRACT_FALLBACK_ENABLED", "true")
 os.environ.setdefault("PDF_TEXTRACT_TABLES_ENABLED", "true")
-os.environ.setdefault("PDF_TEXTRACT_ASYNC_MULTIPAGE", "true")
+os.environ.setdefault("PDF_TEXTRACT_ASYNC_MULTIPAGE", "false")
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("reindex_all_domain")
@@ -49,10 +48,9 @@ def _clear_settings() -> Any:
     get_settings.cache_clear()
     settings = get_settings()
     # Belt-and-suspenders for process-local overrides.
-    settings.PDF_DOCLING_TABLES_ENABLED = False
     settings.PDF_TEXTRACT_FALLBACK_ENABLED = True
     settings.PDF_TEXTRACT_TABLES_ENABLED = True
-    settings.PDF_TEXTRACT_ASYNC_MULTIPAGE = True
+    settings.PDF_TEXTRACT_ASYNC_MULTIPAGE = False
     settings.SEMANTIC_CHUNKING_ENABLED = True
     settings.CHUNK_STRATEGY = "semantic_llm"
     settings.EMBEDDING_PROVIDER = "bedrock"
@@ -223,8 +221,8 @@ def main() -> int:
         "pdfs_discovered": [p.name for p in pdfs],
         "pdf_count": len(pdfs),
         "settings": {
-            "PDF_DOCLING_TABLES_ENABLED": settings.PDF_DOCLING_TABLES_ENABLED,
             "PDF_TEXTRACT_FALLBACK_ENABLED": settings.PDF_TEXTRACT_FALLBACK_ENABLED,
+            "PDF_TEXTRACT_TABLES_ENABLED": settings.PDF_TEXTRACT_TABLES_ENABLED,
             "PDF_TEXTRACT_ASYNC_MULTIPAGE": settings.PDF_TEXTRACT_ASYNC_MULTIPAGE,
             "EMBEDDING_PROVIDER": settings.EMBEDDING_PROVIDER,
             "EMBEDDING_MODEL": settings.EMBEDDING_MODEL,
@@ -256,9 +254,8 @@ def main() -> int:
             )
 
     logger.info(
-        "Reindex jobs=%s docling=%s textract=%s async=%s embed=%s chunk=%s",
+        "Reindex jobs=%s textract=%s async=%s embed=%s chunk=%s",
         len(jobs),
-        settings.PDF_DOCLING_TABLES_ENABLED,
         settings.PDF_TEXTRACT_FALLBACK_ENABLED,
         settings.PDF_TEXTRACT_ASYNC_MULTIPAGE,
         settings.EMBEDDING_MODEL,

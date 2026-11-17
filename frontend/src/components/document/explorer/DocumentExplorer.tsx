@@ -114,7 +114,7 @@ export function DocumentExplorer({
         setIndexStatus(status);
         if ((hier.section_count ?? 0) === 0) {
           setError(
-            "This document has no hierarchical index yet. Reindex with semantic chunking to generate sections.",
+            "This document has no hierarchical index yet.",
           );
         }
       } catch (err) {

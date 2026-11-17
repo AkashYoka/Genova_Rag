@@ -108,10 +108,13 @@ def semantic_chunk_document(
     chunk_overlap: Optional[int] = None,
     progress: Optional[ProgressCallback] = None,
     strategy: Optional[str] = None,
+    parsed: Any = None,
 ) -> SemanticChunkList:
     """Run hierarchical semantic chunking for a PDF on disk.
 
     ``strategy`` overrides the global setting for per-document reindexing.
+    Pass ``parsed`` (from the ingest ``layout_extract`` stage) to avoid a
+    second ``parse_pdf`` call in the unified pipeline.
     """
     settings = get_settings()
     strategy = (strategy or strategy_label()).lower()
@@ -119,16 +122,20 @@ def semantic_chunk_document(
     document_id = str(document_id or "")
     document_name = document_name or os.path.basename(filepath)
 
-    _report_progress(progress, "extracting", 25)
-    from app.rag.ingestion.pdf_layout.parser import parse_pdf
+    if parsed is None:
+        _report_progress(progress, "extracting", 25)
+        from app.rag.ingestion.pdf_layout.parser import parse_pdf
 
-    parsed = parse_pdf(
-        filepath,
-        document_id=document_id or None,
-        document_name=document_name,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
+        parsed = parse_pdf(
+            filepath,
+            document_id=document_id or None,
+            document_name=document_name,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            progress=progress,
+        )
+    else:
+        _report_progress(progress, "analyzing", 30)
     page_count = int(getattr(parsed, "page_count", 0) or 0)
 
     blocks = extract_source_blocks(getattr(parsed, "elements", None) or [])
@@ -276,6 +283,24 @@ def semantic_chunk_document(
         report_dict["llm_calls"] = int(report_dict.get("llm_calls") or 0) + int(
             table_understanding_report.get("llm_calls") or 0
         )
+    # Surface STE Bedrock token/cost telemetry for ingestion usage tracking.
+    try:
+        layout_report = getattr(parsed, "report", None) or {}
+        ste_info = ((layout_report.get("table_extraction") or {}).get("engine_info") or {}).get(
+            "ste"
+        ) or (layout_report.get("engine_info") or {}).get("ste")
+        if not ste_info:
+            ste_info = (layout_report.get("table_extraction") or {}).get("ste")
+        if ste_info:
+            report_dict["ste_tables"] = {
+                "table_count": ste_info.get("table_count"),
+                "bedrock_usage": ste_info.get("bedrock_usage"),
+                "elapsed_s": ste_info.get("elapsed_s"),
+                "extraction_engine": ste_info.get("extraction_engine"),
+                "output_dir": ste_info.get("output_dir"),
+            }
+    except Exception:
+        pass
 
     _report_progress(progress, "chunked", 60)
     logger.info(

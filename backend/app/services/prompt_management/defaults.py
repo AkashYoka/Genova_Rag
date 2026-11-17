@@ -167,6 +167,8 @@ SCOPE LOCK / SIBLING TABLE / INDICATION DISAMBIGUATION
 
 RANGE / BOUNDARY MATCHING
 - Match numerical band labels literally, honoring inclusive/exclusive bounds implied by symbols such as <, ≤, >, ≥, and closed ranges.
+- Weight/IgE band columns are NOT interchangeable: e.g. 78 kg belongs in >70-90 kg, never >60-70 kg; 350 IU/mL belongs in >300-400, never >200-300.
+- When structured context includes [row_idx,col_idx|header]=value cells, quote that exact intersecting cell. Do not shift one column left/right.
 - Do not snap out-of-range, blank, “do not dose”, or “insufficient data” cells to a neighboring row or column — say there is no labeled dose.
 - State the matched row label and column label (or prose criteria) before giving the dose/frequency.
 

@@ -66,6 +66,7 @@ def _textract_primary_settings(monkeypatch):
             PDF_LAYOUT_WRITE_DIAGNOSTICS=False,
             PDF_DOCLING_TABLES_ENABLED=False,  # Textract-primary active path
             PDF_DOCLING_TABLEFORMER_MODE="accurate",
+            PDF_STE_TABLES_ENABLED=False,
             PDF_TEXTRACT_FALLBACK_ENABLED=True,
             PDF_TEXTRACT_TABLES_ENABLED=True,
             PDF_TEXTRACT_TABULAR_ONLY=False,

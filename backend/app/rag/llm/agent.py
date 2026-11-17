@@ -720,59 +720,12 @@ def _apply_table_interpretation(
     document_id: Optional[str] = None,
     document_ids: Optional[List[str]] = None,
 ) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Prepend verified / insufficient table evidence; annotate sources.
+    """Passthrough — LLM table reasoning / VerifiedCell path removed.
 
-    When iterative evidence retrieval is enabled, may fetch additional chunks
-    and rebuild context so the answer LLM sees the expanded evidence set.
-    Returns ``(context, sources, chunks)``.
+    Retrieved table chunks already sit in ``context`` as normal RAG evidence.
     """
-    working_chunks: List[Dict[str, Any]] = list(chunks or [])
-    try:
-        settings = get_settings()
-        if bool(getattr(settings, "TABLE_RAG_ITERATIVE_ENABLED", True)) and user_id:
-            from app.rag.generation.iterative_evidence import run_iterative_evidence_loop
-
-            interpretation, working_chunks, _stats = run_iterative_evidence_loop(
-                question,
-                working_chunks,
-                user_id=user_id,
-                document_id=document_id,
-                document_ids=document_ids,
-            )
-            # Rebuild context/sources so follow-up evidence reaches the answer LLM.
-            sources = _sources_from_chunks(working_chunks)
-            context = (
-                _multi_doc_prompt_prefix(document_ids, working_chunks)
-                + _format_context(working_chunks)
-            )
-        else:
-            from app.rag.generation.llm_table_reasoning import interpret_table_question
-
-            interpretation = interpret_table_question(question, working_chunks)
-    except Exception as exc:
-        logger.warning("Table interpretation failed: %s", exc)
-        return context, sources, working_chunks
-
-    if not interpretation.is_structured_lookup:
-        return context, sources, working_chunks
-
-    prefix = interpretation.prompt_prefix or ""
-    if prefix:
-        # Single injection: double-prefix wasted context and amplified abstain
-        # instructions for small models without improving pin fidelity.
-        context = prefix + context
-
-    update = interpretation.sources_update or {}
-    if update and sources:
-        enriched = []
-        for src in sources:
-            item = dict(src)
-            item.update(update)
-            enriched.append(item)
-        sources = enriched
-    elif update:
-        sources = [{**update, "text": "", "filename": "", "page": 0}]
-    return context, sources, working_chunks
+    _ = (question, user_id, document_id, document_ids)
+    return context, sources, list(chunks or [])
 
 
 _LEADING_DOSE_RE = re.compile(
@@ -802,50 +755,27 @@ def _is_table_gate_message(text: str) -> bool:
 
 
 def _streaming_gate_message(sources: List[Dict[str, Any]]) -> Optional[str]:
-    """Pre-token gate: whole-stream replacement when evidence cannot verify.
-
-    Streaming cannot retract emitted tokens, so AMBIGUOUS / INVALID evidence is
-    resolved before the first token. Soft or merely-missing evidence still
-    streams normal prose (over-abstention avoidance).
-    """
-    from app.rag.generation.table_evidence import (
-        ANSWER_STATE_AMBIGUOUS,
-        ANSWER_STATE_INVALID,
-        answer_state_from_sources,
-    )
-
-    decision = answer_state_from_sources(sources)
-    if decision.state not in {ANSWER_STATE_AMBIGUOUS, ANSWER_STATE_INVALID}:
-        return None
-    hard = decision.source or {}
-    candidates = hard.get("candidate_values") or []
-    # Unique candidate value with no multi-table conflict — not worth abstaining.
-    if (
-        decision.state == ANSWER_STATE_AMBIGUOUS
-        and isinstance(candidates, list)
-        and len(candidates) == 1
-        and len(hard.get("candidate_table_ids") or []) <= 1
-    ):
-        return None
-    return _format_table_evidence_failure(hard)
+    """Table evidence gate removed — always stream the normal answer."""
+    _ = sources
+    return None
 
 
 def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
-    """Build a clarification-only response; never retain definitive conclusions."""
+    """Legacy table-evidence abstain formatter (path removed; kept for safety)."""
     status = str(hard.get("status") or "not_found")
     dims = [str(d) for d in (hard.get("missing_dimensions") or []) if d]
     candidates = hard.get("candidate_values") or []
     table_ids = hard.get("candidate_table_ids") or []
     reason = str(hard.get("reason") or "").strip()
     verification = str(hard.get("verification_status") or status)
-    from app.rag.generation.table_evidence import (
-        ANSWER_STATE_INVALID,
-        ANSWER_STATE_INSUFFICIENT,
-        answer_state_for_status,
-    )
-
-    state = answer_state_for_status(status)
-    if state == ANSWER_STATE_INVALID:
+    state = "invalid" if status in {
+        "invalid_table_structure",
+        "verification_failed",
+        "empty_cell",
+        "selector_failed",
+        "out_of_range",
+    } else "insufficient"
+    if state == "invalid":
         lines = [
             "Inconclusive — the retrieved table structure cannot support "
             "reliable verification.",
@@ -1195,15 +1125,14 @@ def _reconcile_answer_inner(
     Hard ambiguous / failed verification: replace any definitive conclusion with
     a clarification-only response (never append a warning under a confident answer).
     """
-    from app.rag.generation.table_evidence import answer_state_from_sources
     from app.rag.table_rag.telemetry import record_answer_state, record_reconcile_action
 
-    decision = answer_state_from_sources(sources)
-    record_answer_state(decision.state)
+    # Table-evidence answer-state machine removed — no verified-cell pin.
+    record_answer_state("not_applicable")
     if _is_table_gate_message(answer):
         record_reconcile_action("none")
         return answer
-    meta = decision.verified
+    meta = _verified_meta_from_sources(sources)
     if not meta:
         # Hard insufficient / ambiguous: force abstain framing.
         # Soft insufficient: allow prose RAG without boilerplate.
@@ -1523,10 +1452,12 @@ def _reconcile_answer_with_verified_cell(
     answer: str,
     sources: List[Dict[str, Any]],
 ) -> str:
-    """Reconcile a generated answer with verified evidence, then clean it."""
-    reconciled = _reconcile_answer_inner(answer, sources)
-    reconciled = _sanitize_dose_mg_from_source_context(reconciled, sources)
-    return _strip_prompt_leaks(reconciled)
+    """Verified-cell reconcile removed — return the generated answer cleaned."""
+    _ = sources
+    try:
+        return _strip_prompt_leaks(answer or "")
+    except Exception:
+        return answer or ""
 
 
 def _coerce_source_page(page: Any) -> int:

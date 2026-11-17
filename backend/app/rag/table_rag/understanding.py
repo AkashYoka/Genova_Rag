@@ -379,7 +379,7 @@ def deterministic_understanding(
     # Include reconstructed header paths in search phrases when present.
     paths = table.get("normalized_header_paths") or []
     path_phrases = [
-        " > ".join(str(p) for p in path if p)
+        " ".join(str(p) for p in path if p)
         for path in paths[:8]
         if isinstance(path, (list, tuple))
     ]
@@ -408,7 +408,7 @@ def deterministic_understanding(
         hierarchical_headers=[
             HierarchicalHeaderNote(
                 level=1,
-                text=" > ".join(str(p) for p in path),
+                text=" ".join(str(p) for p in path),
                 spans_columns=[str(path[-1]) if path else ""],
                 interpretation="reconstructed_header_path",
             )
@@ -540,7 +540,8 @@ def _section_path_for_block(nodes: Sequence[Any], block_id: str) -> str:
     for node in nodes or []:
         if block_id in (getattr(node, "block_ids", None) or []):
             path = getattr(node, "path", None) or []
-            return " > ".join(str(p) for p in path if p)
+            # Prefer space-joined readable leaves (Explore HTML headers).
+            return " ".join(str(p) for p in path if p)
         children = getattr(node, "children", None) or []
         found = _section_path_for_block(children, block_id)
         if found:

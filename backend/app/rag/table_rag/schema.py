@@ -260,7 +260,7 @@ class TablePayload(BaseModel):
     n_cols: Optional[int] = None
     caption: str = ""
     extraction_method: str = ""
-    extraction_engine: str = ""  # docling | textract_detect | native | …
+    extraction_engine: str = ""  # ste_textract_analyze_bedrock | textract_detect | …
     bbox: Optional[Any] = None
     merged_cells: List[Any] = Field(default_factory=list)
     cells: List[Any] = Field(default_factory=list)
@@ -285,6 +285,8 @@ class TablePayload(BaseModel):
     part_row_count: Optional[int] = None
     row_index: Optional[int] = None  # present on row-window index payloads
     row_indices: List[int] = Field(default_factory=list)
+    # STE universal schema rows (optional; used for one-row retrieval units).
+    independent_rows: List[Any] = Field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(mode="python")

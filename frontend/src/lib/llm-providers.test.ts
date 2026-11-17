@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canShowDevReindex,
   fallbackAvailableLlmProviders,
   fallbackDefaultLlmProvider,
   isProductionDeploymentHost,
@@ -11,6 +12,12 @@ describe("llm-providers", () => {
   it("treats rag.genova-ai.yokaiq.in as production", () => {
     expect(isProductionDeploymentHost("rag.genova-ai.yokaiq.in")).toBe(true);
     expect(isProductionDeploymentHost("localhost")).toBe(false);
+  });
+
+  it("shows reindex only off the production host", () => {
+    expect(canShowDevReindex("localhost")).toBe(true);
+    expect(canShowDevReindex("127.0.0.1")).toBe(true);
+    expect(canShowDevReindex("rag.genova-ai.yokaiq.in")).toBe(false);
   });
 
   it("hides Ollama on the production host fallback", () => {

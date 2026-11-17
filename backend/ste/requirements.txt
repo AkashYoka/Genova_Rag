@@ -1,0 +1,9 @@
+# STE — Textract AnalyzeDocument TABLES + optional Bedrock reconstruction.
+PyMuPDF>=1.24.0
+Pillow>=10.0.0
+pytesseract>=0.3.10
+psutil>=5.9.0
+boto3>=1.34.0
+
+# Development
+pytest>=7.0
