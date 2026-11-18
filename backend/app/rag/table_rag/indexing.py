@@ -134,6 +134,25 @@ def extract_tables_from_chunks(
         if chunk_type not in ("table", "") and not chunk.get("table_json"):
             continue
 
+        # Never index chart/figure false positives into document_tables.
+        try:
+            from app.rag.ingestion.pdf_layout.extraction_quality import (
+                is_figure_like_table,
+            )
+            from app.rag.ingestion.pdf_layout.types import BBox, TableData
+
+            probe = TableData(
+                page=int(table.get("page") or chunk.get("page") or 1),
+                bbox=BBox(0, 0, 1, 1),
+                headers=[str(h or "") for h in (table.get("headers") or [])],
+                rows=[list(r) for r in (table.get("rows") or [])],
+                caption=str(table.get("caption") or ""),
+            )
+            if is_figure_like_table(probe):
+                continue
+        except Exception:
+            pass
+
         table_id = str(chunk.get("table_id") or table.get("table_id") or "").strip()
         if not table_id:
             table_id = ensure_table_id(
@@ -398,91 +417,10 @@ def _build_index_chunks(
             card_chunk["table_needs_verification"] = True
         index_chunks.append(card_chunk)
 
-        # Prefer STE independent_rows as one-row retrieval units when present
-        # (compatible with table_row_window metadata / hydrate path).
-        independent_rows = list(
-            table.get("independent_rows")
-            or (table.get("provenance") or {}).get("independent_rows")
-            or []
-        )
-        use_independent = bool(independent_rows) and (
-            str(extraction_method).startswith("ste_")
-            or str(table.get("extraction_engine") or "").startswith("ste_")
-        )
-
-        if use_independent:
-            for ir in independent_rows[:max_windows]:
-                if not isinstance(ir, dict):
-                    continue
-                try:
-                    row_index = int(ir.get("row_index", 0) or 0)
-                except (TypeError, ValueError):
-                    row_index = 0
-                if 0 <= row_index < len(rows):
-                    window_rows = [list(rows[row_index])]
-                else:
-                    # Rebuild from independent_row cells without inventing values.
-                    cell_map = ir.get("cells") or {}
-                    rebuilt: List[Any] = []
-                    for header in headers:
-                        payload = None
-                        if isinstance(cell_map, dict):
-                            for item in cell_map.values():
-                                if (
-                                    isinstance(item, dict)
-                                    and str(item.get("header") or "") == str(header)
-                                ):
-                                    payload = item
-                                    break
-                        if not isinstance(payload, dict):
-                            rebuilt.append("")
-                            continue
-                        val = payload.get("normalized_value")
-                        if val is None:
-                            val = payload.get("original_value")
-                        rebuilt.append("" if val is None else str(val))
-                    window_rows = [rebuilt]
-                indices = [row_index]
-                window_payload = {
-                    **ref_payload,
-                    "rows": window_rows,
-                    "row_indices": indices,
-                    "row_index": row_index,
-                    "independent_row": ir,
-                    "independent_row_id": ir.get("row_id") or "",
-                }
-                window_chunk: Dict[str, Any] = {
-                    "text": table_row_window_text(
-                        table,
-                        indices,
-                        window_rows,
-                        filename=filename,
-                        section=section,
-                    ),
-                    "page": page,
-                    "page_start": page,
-                    "page_end": page_end,
-                    "chunk_type": CHUNK_TYPE_TABLE_ROW_WINDOW,
-                    "content_type": "table",
-                    "index_kind": CHUNK_TYPE_TABLE_ROW_WINDOW,
-                    "row_index": row_index,
-                    "row_indices": indices,
-                    "section": section,
-                    "subsection": subsection,
-                    "extraction_method": extraction_method,
-                    "table_id": table_id,
-                    "table_ids": json.dumps([table_id]),
-                    "table_json": json.dumps(window_payload, ensure_ascii=False),
-                    "filename": filename,
-                }
-                if document_id:
-                    window_chunk["document_id"] = str(document_id)
-                if index_version:
-                    window_chunk["index_version"] = index_version
-                if needs_verification:
-                    window_chunk["table_needs_verification"] = True
-                index_chunks.append(window_chunk)
-        elif len(rows) > window_threshold:
+        # Sliding windows for large real matrices only.
+        # STE independent_rows → one-chunk-per-row fan-out removed: it indexed
+        # chart/figure false positives as t_p*_i*_ retrieval units.
+        if len(rows) > window_threshold:
             for indices, window_rows in _iter_row_windows(
                 rows, window_size=window_size, max_windows=max_windows
             ):

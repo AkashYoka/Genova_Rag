@@ -429,8 +429,16 @@ def compact_table_prompt_block(
     *,
     max_rows: int = 20,
     relevant_row_indices: Optional[Sequence[int]] = None,
+    relevant_col_indices: Optional[Sequence[int]] = None,
+    slim: Optional[bool] = None,
+    include_understanding: bool = False,
 ) -> str:
-    """Structured prompt appendix with headers, rows, spans, and warnings."""
+    """Structured prompt appendix with headers, rows, spans, and warnings.
+
+    ``slim=True`` (default via settings) emits a short markdown grid with
+    ``c{{i}}`` / ``r{{j}}`` indices instead of repeating full headers on every
+    cell — large dosing matrices otherwise explode input tokens.
+    """
     data = _as_dict(table)
     headers = [str(h or "") for h in (data.get("headers") or [])]
     rows = [list(r) for r in (data.get("rows") or [])]
@@ -440,6 +448,40 @@ def compact_table_prompt_block(
     merged = data.get("merged_cells") or []
     low_conf = data.get("low_confidence_cells") or []
     table_id = str(data.get("table_id") or "")
+
+    if slim is None:
+        try:
+            from app.config import get_settings
+
+            slim = bool(getattr(get_settings(), "TABLE_RAG_PROMPT_SLIM", True))
+        except Exception:
+            slim = True
+
+    col_keep: Optional[List[int]] = None
+    if relevant_col_indices:
+        col_keep = sorted(
+            {
+                int(i)
+                for i in relevant_col_indices
+                if 0 <= int(i) < max(len(headers), 1)
+            }
+        )
+        if not col_keep:
+            col_keep = None
+
+    def _project_headers() -> List[str]:
+        if not col_keep:
+            return headers
+        return [headers[i] if i < len(headers) else f"col{i}" for i in col_keep]
+
+    def _project_row(row: list) -> list:
+        if not col_keep:
+            return list(row or [])
+        width = max(len(headers), len(row or []))
+        cells = list(row or []) + [""] * width
+        return [cells[i] for i in col_keep]
+
+    proj_headers = _project_headers()
 
     page_label = (
         ",".join(str(p) for p in pages) if pages and len(pages) > 1 else str(page)
@@ -451,51 +493,97 @@ def compact_table_prompt_block(
     ]
     if caption:
         lines.append(f"caption: {caption}")
-    if headers:
-        # Explicit col indices prevent adjacent-band confusion
-        # (e.g. body-weight >60-70 vs >70-90).
-        col_bits = [f"[col{i}] {h}" for i, h in enumerate(headers)]
-        lines.append("headers: " + " | ".join(col_bits))
-        lines.append(
-            "column_index_map: "
-            + "; ".join(f"col{i}={h!r}" for i, h in enumerate(headers))
-        )
-        lines.append(
-            "LOOKUP RULE: match the question numeric axes to the exact header "
-            "band (honor exclusive/inclusive bounds). Read only the intersecting "
-            "cell — never an adjacent weight or IgE column. State matched row "
-            "label, column header, and [row_idx,col_idx] before quoting the value."
-        )
+    lines.append(
+        "LOOKUP RULE: match numeric axes to exact header bands; read only the "
+        "intersecting cell (never adjacent weight/IgE). Cite [row_idx,col_idx]."
+    )
 
-    def _format_row(idx: int, row: list) -> str:
-        cells = [str(c or "") for c in row]
-        width = max(len(headers), len(cells))
-        while len(cells) < width:
-            cells.append("")
-        cells = cells[:width]
-        labeled = []
-        for ci, val in enumerate(cells):
-            header = headers[ci] if ci < len(headers) else f"col{ci}"
-            labeled.append(f"[r{idx},c{ci}|{header}]={val}")
-        return f"row[{idx}]: " + " | ".join(labeled)
-
+    keep_rows: Optional[List[int]] = None
     if relevant_row_indices:
-        keep = sorted({int(i) for i in relevant_row_indices if 0 <= int(i) < len(rows)})
-        if keep and len(keep) < len(rows):
-            for idx in keep:
-                lines.append(_format_row(idx, list(rows[idx])))
-            lines.append(f"(showing {len(keep)} relevant of {len(rows)} rows)")
+        keep_rows = sorted(
+            {int(i) for i in relevant_row_indices if 0 <= int(i) < len(rows)}
+        )
+        if not keep_rows or len(keep_rows) >= len(rows):
+            keep_rows = None
+
+    if slim:
+        # Compact markdown with column indices in the header row only.
+        if proj_headers:
+            header_cells = [f"c{i}" for i in (col_keep or range(len(proj_headers)))]
+            # Map shown col position → original index label already in header_cells
+            # when col_keep set; otherwise c0..cn
+            if col_keep:
+                header_cells = [f"c{ci}" for ci in col_keep]
+            else:
+                header_cells = [f"c{i}" for i in range(len(proj_headers))]
+            lines.append(
+                "| row | "
+                + " | ".join(
+                    f"{header_cells[i]} {proj_headers[i]}"
+                    for i in range(len(proj_headers))
+                )
+                + " |"
+            )
+            lines.append("| --- | " + " | ".join("---" for _ in proj_headers) + " |")
+
+        def _emit_slim_row(idx: int, row: list) -> None:
+            cells = [str(c or "").replace("|", "/") for c in _project_row(row)]
+            while len(cells) < len(proj_headers):
+                cells.append("")
+            cells = cells[: len(proj_headers) or len(cells)]
+            lines.append(f"| r{idx} | " + " | ".join(cells) + " |")
+
+        if keep_rows:
+            for idx in keep_rows:
+                _emit_slim_row(idx, list(rows[idx]))
+            lines.append(f"(showing {len(keep_rows)} relevant of {len(rows)} rows)")
         else:
-            relevant_row_indices = None
+            shown = rows[:max_rows]
+            for idx, row in enumerate(shown):
+                _emit_slim_row(idx, list(row))
+            if len(rows) > max_rows:
+                lines.append(f"... ({len(rows) - max_rows} more rows)")
+    else:
+        if proj_headers:
+            if col_keep:
+                col_bits = [f"[col{ci}] {headers[ci]}" for ci in col_keep]
+            else:
+                col_bits = [f"[col{i}] {h}" for i, h in enumerate(proj_headers)]
+            lines.append("headers: " + " | ".join(col_bits))
+            lines.append(
+                "column_index_map: "
+                + "; ".join(
+                    f"col{ci}={headers[ci]!r}"
+                    for ci in (col_keep or range(len(proj_headers)))
+                )
+            )
 
-    if not relevant_row_indices:
-        shown = rows[:max_rows]
-        for idx, row in enumerate(shown):
-            lines.append(_format_row(idx, list(row)))
-        if len(rows) > max_rows:
-            lines.append(f"... ({len(rows) - max_rows} more rows)")
+        def _format_row(idx: int, row: list) -> str:
+            cells = [str(c or "") for c in _project_row(row)]
+            width = max(len(proj_headers), len(cells))
+            while len(cells) < width:
+                cells.append("")
+            cells = cells[:width]
+            labeled = []
+            src_cols = col_keep or list(range(width))
+            for pos, val in enumerate(cells):
+                ci = src_cols[pos] if pos < len(src_cols) else pos
+                header = headers[ci] if ci < len(headers) else f"col{ci}"
+                labeled.append(f"[r{idx},c{ci}|{header}]={val}")
+            return f"row[{idx}]: " + " | ".join(labeled)
 
-    if merged:
+        if keep_rows:
+            for idx in keep_rows:
+                lines.append(_format_row(idx, list(rows[idx])))
+            lines.append(f"(showing {len(keep_rows)} relevant of {len(rows)} rows)")
+        else:
+            shown = rows[:max_rows]
+            for idx, row in enumerate(shown):
+                lines.append(_format_row(idx, list(row)))
+            if len(rows) > max_rows:
+                lines.append(f"... ({len(rows) - max_rows} more rows)")
+
+    if merged and not slim:
         lines.append("merged_cells:")
         for item in merged[:12]:
             if not isinstance(item, dict):
@@ -517,8 +605,9 @@ def compact_table_prompt_block(
                     f"{_cell(item.get('text'))!r} "
                     f"(conf={item.get('confidence')})"
                 )
-    llm_block = _understanding_index_text(data)
-    if llm_block:
-        lines.append("")
-        lines.append(llm_block)
+    if include_understanding:
+        llm_block = _understanding_index_text(data)
+        if llm_block:
+            lines.append("")
+            lines.append(llm_block)
     return "\n".join(lines)

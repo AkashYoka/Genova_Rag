@@ -996,9 +996,11 @@ def retrieve(
 
     # ── Stage 2: Cross-encoder reranking ─────────────────────────────────────
     final_k = top_k if top_k is not None else settings.TOP_K_RERANK
-    # Table-heavy routes keep a slightly wider final window so row hits survive.
+    # Table-heavy dosing routes: fewer final chunks to control LLM input tokens.
+    # (Previously widened by +2 which ballooned hydrated table appendices.)
     if query_modality == "table":
-        final_k = max(final_k, min(final_k + 2, stage1_top_k))
+        table_k = int(getattr(settings, "TABLE_RAG_ANSWER_TOP_K", 5) or 5)
+        final_k = min(final_k, max(3, table_k))
     reranker = get_reranker()
 
     rerank_enabled = reranker is not None
@@ -1013,7 +1015,13 @@ def retrieve(
         top_chunks = candidates[:final_k]
 
     # Expand table / Table-N hits with neighboring chunks for complete grids.
-    if getattr(settings, "RAG_EXPAND_ADJACENT_CHUNKS", True):
+    # Skip for table modality by default — adjacent prose/tables explode tokens.
+    expand_adjacent = bool(getattr(settings, "RAG_EXPAND_ADJACENT_CHUNKS", True))
+    if query_modality == "table" and not bool(
+        getattr(settings, "RAG_EXPAND_ADJACENT_FOR_TABLES", False)
+    ):
+        expand_adjacent = False
+    if expand_adjacent:
         top_chunks = _expand_adjacent_chunks(
             top_chunks,
             user_id=user_id,
@@ -1046,7 +1054,9 @@ def retrieve(
         try:
             from app.rag.table_rag import hydrate_retrieved_tables
 
-            top_chunks = hydrate_retrieved_tables(top_chunks, user_id=user_id)
+            top_chunks = hydrate_retrieved_tables(
+                top_chunks, user_id=user_id, query=query
+            )
         except Exception as exc:
             logger.warning("TableRAG hydrate skipped: %s", exc)
 

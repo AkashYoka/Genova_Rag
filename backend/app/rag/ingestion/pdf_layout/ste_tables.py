@@ -1,6 +1,6 @@
 """STE Textract AnalyzeDocument + Bedrock Nova table extraction for Genova layout.
 
-Uses the in-repo package ``backend/ste`` (Textract AnalyzeDocument TABLES +
+Uses the in-repo package ``app/ste`` (Textract AnalyzeDocument TABLES +
 optional Bedrock Nova 2 Lite reconstruction). Peer to ``textract_tables.py``:
 produces ``TableData`` for ``parse_pdf`` / TableRAG. Semantic chunking for
 prose is unchanged.
@@ -8,6 +8,7 @@ prose is unchanged.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -19,6 +20,44 @@ logger = logging.getLogger(__name__)
 EXTRACTION_ENGINE = "ste_textract_analyze_bedrock"
 DEFAULT_IOU = 0.55
 ProgressCallback = Callable[[str, int], None]
+
+
+def ensure_ste_importable() -> None:
+    """Make ``import ste`` work via ``app.ste`` (shipped inside the app package).
+
+    Production only deploys ``app/``; STE lives at ``app/ste`` and is aliased to
+    the top-level name ``ste`` so existing ``from ste...`` imports keep working
+    without a Docker image rewrite.
+    """
+    try:
+        from app.ste_path import install_ste_alias
+
+        install_ste_alias()
+    except Exception:
+        pass
+
+    try:
+        import ste  # noqa: F401
+
+        return
+    except ImportError:
+        pass
+
+    # Fallback: app.ste direct
+    try:
+        import importlib
+
+        app_ste = importlib.import_module("app.ste")
+        sys.modules.setdefault("ste", app_ste)
+        import ste  # noqa: F401
+
+        return
+    except ImportError as exc:
+        raise ModuleNotFoundError(
+            "No module named 'ste' / 'app.ste'. Ensure app/ste is present in "
+            "the deployed app package (STE was moved under app/ so normal app "
+            "deploys include it without Docker COPY changes)."
+        ) from exc
 
 
 def _cell_text(value: Any) -> str:
@@ -421,6 +460,7 @@ def extract_ste_tables_from_pdf(
             except Exception:
                 pass
 
+    ensure_ste_importable()
     from ste.pipeline import extract_pdf
     from ste.settings import Settings as SteSettings
 

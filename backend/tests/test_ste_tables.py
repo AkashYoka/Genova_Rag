@@ -390,14 +390,15 @@ def test_parse_pdf_flag_on_prefers_ste_and_dedupes(monkeypatch, tmp_path):
     assert payload["caption"] == "STE table"
 
 
-def test_independent_row_windows_from_ste(monkeypatch):
+def test_ste_independent_rows_do_not_fan_out_windows(monkeypatch):
+    """STE independent_rows must not create per-row table_row_window chunks."""
     from app.rag.table_rag.indexing import (
+        CHUNK_TYPE_TABLE_CARD,
         CHUNK_TYPE_TABLE_ROW_WINDOW,
         expand_table_rag_chunks,
     )
 
     table = _fake_ste_table()
-    # Ensure independent_rows flow through table_json.
     table.provenance["independent_rows"] = table.independent_rows
     chunk = {
         "text": table.markdown,
@@ -426,11 +427,9 @@ def test_independent_row_windows_from_ste(monkeypatch):
         enabled=True,
     )
     assert len(records) == 1
+    cards = [c for c in expanded if c.get("chunk_type") == CHUNK_TYPE_TABLE_CARD]
     windows = [
         c for c in expanded if c.get("chunk_type") == CHUNK_TYPE_TABLE_ROW_WINDOW
     ]
-    # One independent row → one retrieval unit (even though row count < threshold).
-    assert len(windows) == 1
-    assert windows[0]["row_index"] == 0
-    payload = json.loads(windows[0]["table_json"])
-    assert payload.get("independent_row_id") == "t1_row_1"
+    assert len(cards) == 1
+    assert windows == []

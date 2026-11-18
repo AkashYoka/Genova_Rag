@@ -23,6 +23,14 @@ BACKEND_DIR = ROOT / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+# STE lives at app/ste; alias top-level ``ste`` for tests that import it directly.
+try:
+    from app.ste_path import install_ste_alias
+
+    install_ste_alias()
+except Exception:
+    pass
+
 os.environ["SECRET_KEY"] = "test-secret-key-that-is-long-enough"
 os.environ["DATABASE_URL"] = "sqlite:///./test_bootstrap.db"
 os.environ["DEBUG"] = "false"

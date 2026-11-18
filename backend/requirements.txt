@@ -35,7 +35,7 @@ boto3>=1.39.0
 # PDF tables (layout-aware): AWS Textract DetectDocumentText + geometry.
 # Optional STE AnalyzeDocument+Bedrock tables (PDF_STE_TABLES_ENABLED):
 #   pip install -r ste/requirements.txt
-# Engine package lives at backend/ste/ (import ste).
+# Engine package lives at app/ste/ (import ste via app.ste_path alias).
 PyMuPDF
 pymupdf4llm
 google-genai

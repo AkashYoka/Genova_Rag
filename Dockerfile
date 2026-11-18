@@ -58,13 +58,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=python-builder /opt/venv /opt/venv
 
-# Copy backend code
+# Copy backend code. STE ships inside app/ste (aliased as top-level ``ste``)
+# so deploys that only sync ``app/`` still get AnalyzeDocument tables.
 COPY backend/app ./app
 COPY backend/__init__.py ./backend/__init__.py
+
+ENV PYTHONPATH=/app
 
 # Create data directories with proper permissions
 RUN mkdir -p /app/data/uploads /app/data/chroma_db /app/data/graphs && \
     chown -R appuser:appuser /app
+
+# Fail the image build if STE is missing (catch packaging regressions early).
+RUN python -c "from app.ste_path import install_ste_alias; install_ste_alias(); import ste; print('ste', ste.__version__)"
 
 # Switch to non-root user
 USER appuser

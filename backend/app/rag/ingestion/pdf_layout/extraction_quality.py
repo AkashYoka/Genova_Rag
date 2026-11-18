@@ -6,11 +6,40 @@ imply a valid grid. Failed checks trigger DetectDocumentText fallback or
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 from app.config import get_settings
 from app.rag.ingestion.pdf_layout.types import TableData, normalize_ws
+
+# Chart/figure OCR grids must never become document_tables / TableRAG ids
+# (e.g. t_p43_i0_…). "Figure on page N" and majority Column-N headers are
+# the usual STE false-positive signature.
+_FIGURE_CAPTION_RE = re.compile(
+    r"(?is)^\s*(?:figure|fig\.?|chart|graph|exhibit)\s+(?:on\s+page\b|.*\bpage\s+\d+)",
+)
+_FIGURE_LEAD_RE = re.compile(
+    r"(?is)^\s*(?:figure|fig\.?|chart|graph|exhibit)\b",
+)
+_TABLE_LEAD_RE = re.compile(r"(?is)^\s*(?:table|tbl\.?)\b")
+_SYNTHETIC_HEADER_RE = re.compile(r"(?i)^(?:column\s+\d+|col\s*\d+|)$")
+
+
+def is_figure_like_table(table: TableData) -> bool:
+    """True when a grid looks like a chart/figure OCR false positive."""
+    caption = normalize_ws(str(getattr(table, "caption", "") or ""))
+    if caption and _FIGURE_CAPTION_RE.match(caption):
+        return True
+    if caption and _FIGURE_LEAD_RE.match(caption) and not _TABLE_LEAD_RE.match(caption):
+        return True
+    headers = [normalize_ws(h) for h in (table.headers or [])]
+    if headers:
+        synthetic = sum(1 for h in headers if _SYNTHETIC_HEADER_RE.match(h))
+        majority = max(2, (len(headers) + 1) // 2)
+        if synthetic >= majority and not _TABLE_LEAD_RE.match(caption or ""):
+            return True
+    return False
 
 
 @dataclass
@@ -106,6 +135,10 @@ def evaluate_table_quality(
 
     # Header presence: leaf headers that are mostly synthetic Column N are weak.
     hard_fail_reasons: List[str] = []
+    if is_figure_like_table(table):
+        reasons.append("figure_like_table")
+        hard_fail_reasons.append("figure_like_table")
+        score -= 0.9
     if headers:
         synthetic = sum(
             1 for h in headers if h.lower().startswith("column ") or not h

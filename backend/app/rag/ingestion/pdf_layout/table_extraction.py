@@ -406,16 +406,27 @@ def resolve_page_tables(
         )
 
         page_ste = ste_tables_for_page(plan.ste_tables, page_number)
+        # Same quality gate as Textract — drop chart/figure OCR false positives
+        # before they become document_tables / t_p*_i*_ ids.
+        from app.rag.ingestion.pdf_layout.extraction_quality import (
+            filter_quality_tables,
+        )
+
+        ste_accepted, ste_rejected, ste_reports = filter_quality_tables(page_ste)
+        metrics["ste_tables_raw"] = len(page_ste)
+        metrics["ste_tables_rejected"] = len(ste_rejected)
+        if ste_reports:
+            metrics["ste_quality_reports"] = ste_reports[:12]
         iou_thr = float(getattr(settings, "PDF_STE_IOU_DEDUPE", 0.55) or 0.55)
         before_n = len(final_tables)
         final_tables = merge_tables_prefer_ste(
-            final_tables, page_ste, iou_threshold=iou_thr
+            final_tables, ste_accepted, iou_threshold=iou_thr
         )
-        metrics["ste_tables"] = len(page_ste)
+        metrics["ste_tables"] = len(ste_accepted)
         metrics["ste_deduped_textract"] = max(
-            0, before_n + len(page_ste) - len(final_tables)
+            0, before_n + len(ste_accepted) - len(final_tables)
         )
-        if page_ste:
+        if ste_accepted:
             table_source = _STE_ENGINE
 
     return final_tables, table_source, metrics, warnings

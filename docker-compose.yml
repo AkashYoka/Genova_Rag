@@ -56,6 +56,10 @@ x-backend-environment: &backend-environment
   AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
   AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
   RERANKER_ENABLED: ${RERANKER_ENABLED:-false}
+  # STE tables (AnalyzeDocument + Bedrock). Image must include backend/ste.
+  PDF_STE_TABLES_ENABLED: ${PDF_STE_TABLES_ENABLED:-true}
+  PDF_STE_BEDROCK_ENABLED: ${PDF_STE_BEDROCK_ENABLED:-true}
+  PDF_STE_SKIP_DETECT_WHEN_STE: ${PDF_STE_SKIP_DETECT_WHEN_STE:-true}
 
 services:
   redis:

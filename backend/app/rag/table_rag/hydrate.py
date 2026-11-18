@@ -65,16 +65,20 @@ def hydrate_retrieved_tables(
     chunks: Sequence[Dict[str, Any]],
     *,
     user_id: str,
+    query: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Attach full ``table`` payloads from ``document_tables`` onto chunks.
 
     Also sets ``table_prompt_block`` for answer-generation formatting and
     preserves relevant ``row_index`` hints from table_row_window hits.
+    ``query`` is accepted for call-site compat; row/col pruning uses retrieval
+    window hints + ``TABLE_RAG_PROMPT_MAX_ROWS`` only.
 
     Enforces ``index_version`` parity between the retrieved chunk and the SQL
     row when both sides declare a version; mismatches are flagged but still
     hydrate so answer-gen can proceed with a warning.
     """
+    _ = query
     if not chunks:
         return []
 
@@ -153,10 +157,15 @@ def hydrate_retrieved_tables(
                 )
                 item["table_index_version_mismatch"] = True
             relevant = sorted(row_hits.get(key) or [])
+            max_rows = int(getattr(settings, "TABLE_RAG_PROMPT_MAX_ROWS", 8) or 8)
+            if relevant and len(relevant) > max_rows:
+                relevant = relevant[:max_rows]
             item["table_prompt_block"] = compact_table_prompt_block(
                 full_table,
-                max_rows=20,
+                max_rows=max_rows,
                 relevant_row_indices=relevant or None,
+                slim=bool(getattr(settings, "TABLE_RAG_PROMPT_SLIM", True)),
+                include_understanding=False,
             )
             if relevant:
                 item["relevant_row_indices"] = relevant
@@ -168,7 +177,13 @@ def hydrate_retrieved_tables(
             if payload:
                 table = payload.to_dict()
                 item["table"] = table
-                item["table_prompt_block"] = compact_table_prompt_block(table)
+                max_rows = int(getattr(settings, "TABLE_RAG_PROMPT_MAX_ROWS", 8) or 8)
+                item["table_prompt_block"] = compact_table_prompt_block(
+                    table,
+                    max_rows=max_rows,
+                    slim=bool(getattr(settings, "TABLE_RAG_PROMPT_SLIM", True)),
+                    include_understanding=False,
+                )
                 if table.get("needs_verification") or table.get("low_confidence_cells"):
                     item["table_needs_verification"] = True
         out.append(item)

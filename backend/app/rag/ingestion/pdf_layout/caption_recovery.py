@@ -15,10 +15,12 @@ from app.rag.ingestion.pdf_layout.types import BBox, normalize_ws
 
 logger = logging.getLogger(__name__)
 
-# Leading label for titled floats / matrices across domains.
+# Leading label for titled matrices only.
+# Figure/Chart/Graph captions must NOT attach to nearby STE grids — that produced
+# junk document_tables (e.g. t_p43_i0_… with caption "Figure on page N").
 _CAPTION_LEAD_RE = re.compile(
-    r"(?is)^\s*((?:Table|Tbl\.?|Figure|Fig\.?|Exhibit|Annex|Appendix|"
-    r"Schedule|Chart|Plate|Map)\s+[A-Za-z0-9][A-Za-z0-9._-]*)"
+    r"(?is)^\s*((?:Table|Tbl\.?|Exhibit|Annex|Appendix|"
+    r"Schedule|Plate|Map)\s+[A-Za-z0-9][A-Za-z0-9._-]*)"
     r"(?:\s*[.:)\-–—]\s*|\s+)(.*)$"
 )
 _CONTINUATION_RE = re.compile(

@@ -625,11 +625,10 @@ def _multi_doc_prompt_prefix(document_ids: Optional[List[str]], chunks: List[Dic
     )
 
 
-def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 20) -> str:
+def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: Optional[int] = None) -> str:
     """Compact structured table appendix so answer stage sees headers/rows, not text only.
 
-    Prefers TableRAG-hydrated ``table_prompt_block`` (full grid + merged cells +
-    confidence warnings) when present.
+    Prefers TableRAG-hydrated ``table_prompt_block`` (slim grid when enabled).
     """
     prompt_block = chunk.get("table_prompt_block")
     if isinstance(prompt_block, str) and prompt_block.strip():
@@ -646,6 +645,8 @@ def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 20) -> str:
         return ""
     if not isinstance(table, dict):
         return ""
+    if max_rows is None:
+        max_rows = int(getattr(settings, "TABLE_RAG_PROMPT_MAX_ROWS", 8) or 8)
     try:
         from app.rag.table_rag.representations import compact_table_prompt_block
 
@@ -653,6 +654,9 @@ def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 20) -> str:
             table,
             max_rows=max_rows,
             relevant_row_indices=chunk.get("relevant_row_indices"),
+            relevant_col_indices=chunk.get("relevant_col_indices"),
+            slim=bool(getattr(settings, "TABLE_RAG_PROMPT_SLIM", True)),
+            include_understanding=False,
         )
     except Exception:
         pass
@@ -678,31 +682,24 @@ def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: int = 20) -> str:
 def _format_context(chunks: List[Dict[str, Any]]) -> str:
     """Build the evidence block for ``RAG_PROMPT_TEMPLATE`` ``{context}``.
 
-    Exact format per chunk (code):
-      f"[{i}] Source: {filename}, Page {page}\\n{text}"
-      joined with "\\n\\n"
-
-    When available, section / subsection / chunk_type are included so the model
-    can prefer the correct table or section for the stated topic. Table chunks
-    also append a compact ``table_json`` appendix (headers + bounded rows).
-
-    Exact example (ILLUSTRATIVE chunk text; format is exact)
-    -------------------------------------------------------
-    IN chunks[0] = {
-      "filename": "document.pdf", "page": 9,
-      "text": "The recommended value from Table 1 is 300 every 4 weeks.",
-    }
-    OUT starts with:
-      [1] Source: document.pdf, Page 9
-      The recommended value from Table 1 is 300 every 4 weeks.
-
-    Next: RAG_PROMPT_TEMPLATE.format(context=OUT, question=question)
+    Token controls:
+    - Hydrated table chunks prefer ``table_prompt_block`` only (no duplicate text).
+    - Deduplicate by ``table_id`` so card + row-window do not both expand.
+    - Enforce ``RAG_CONTEXT_MAX_CHARS`` budget (drop lowest-priority tail).
     """
-    parts = []
-    for i, chunk in enumerate(chunks, start=1):
+    skip_text = bool(
+        getattr(settings, "TABLE_RAG_SKIP_CHUNK_TEXT_WHEN_HYDRATED", True)
+    )
+    max_chars = int(getattr(settings, "RAG_CONTEXT_MAX_CHARS", 28000) or 28000)
+    parts: List[str] = []
+    seen_table_ids: set = set()
+    used = 0
+    emitted = 0
+
+    for chunk in chunks:
         filename = chunk.get("filename", "document")
         page = chunk.get("page", "?")
-        text = chunk.get("text", "")
+        text = chunk.get("text", "") or ""
         meta_bits = []
         section = (chunk.get("section") or "").strip()
         subsection = (chunk.get("subsection") or "").strip()
@@ -713,14 +710,53 @@ def _format_context(chunks: List[Dict[str, Any]]) -> str:
             meta_bits.append(f"Subsection: {subsection}")
         if chunk_type:
             meta_bits.append(f"Type: {chunk_type}")
-        header = f"[{i}] Source: {filename}, Page {page}"
+
+        table_id = str(chunk.get("table_id") or "").strip()
+        appendix = _table_json_appendix(chunk)
+        is_tableish = bool(appendix) or chunk_type.startswith("table")
+
+        if table_id and table_id in seen_table_ids and is_tableish:
+            continue
+
+        if appendix and skip_text:
+            # Prefer hydrated block only. Optional short caption cue (never a
+            # full table dump — those alone were ~4k+ chars per chunk).
+            cue = ""
+            for line in text.splitlines():
+                s = line.strip()
+                if not s:
+                    continue
+                if len(s) > 160:
+                    continue
+                if s.lower().startswith(("table row", "table card", "structured table")):
+                    continue
+                cue = s
+                break
+            body = f"{cue}\n{appendix}" if cue and cue not in appendix else appendix
+        elif appendix:
+            body = f"{text}\n\n{appendix}" if text else appendix
+        else:
+            body = text
+
+        if not str(body).strip():
+            continue
+
+        emitted += 1
+        header = f"[{emitted}] Source: {filename}, Page {page}"
         if meta_bits:
             header = f"{header} | " + " | ".join(meta_bits)
-        body = text
-        appendix = _table_json_appendix(chunk)
-        if appendix:
-            body = f"{text}\n\n{appendix}" if text else appendix
-        parts.append(f"{header}\n{body}")
+        part = f"{header}\n{body}"
+        extra = len(part) + (2 if parts else 0)
+        if parts and used + extra > max_chars:
+            break
+        if not parts and len(part) > max_chars:
+            part = part[: max_chars - 20] + "\n…[truncated]"
+            extra = len(part)
+        parts.append(part)
+        used += extra
+        if table_id and is_tableish:
+            seen_table_ids.add(table_id)
+
     return "\n\n".join(parts)
 
 

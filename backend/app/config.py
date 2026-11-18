@@ -217,7 +217,7 @@ class Settings(BaseSettings):
     # STE Textract AnalyzeDocument + Bedrock Nova 2 Lite (default on).
     # When enabled, STE tables are primary; overlapping DetectDocumentText
     # tables are deduped. Prose still uses the semantic chunker.
-    # Engine: backend/ste/ (AnalyzeDocument TABLES on page images).
+    # Engine: app/ste/ (AnalyzeDocument TABLES on page images).
     # Override with env PDF_STE_TABLES_ENABLED=false if needed.
     PDF_STE_TABLES_ENABLED: bool = True
     PDF_STE_BEDROCK_ENABLED: bool = True
@@ -258,11 +258,23 @@ class Settings(BaseSettings):
     # Pull neighboring chunks when a hit is a table or references Table N.
     RAG_EXPAND_ADJACENT_CHUNKS: bool = True
     RAG_ADJACENT_CHUNK_WINDOW: int = 1
+    # Adjacent expand is expensive for table-heavy dosing questions; off by default.
+    RAG_EXPAND_ADJACENT_FOR_TABLES: bool = False
+    # Hard cap on assembled Document Context chars (~7–10k tokens for dense tables).
+    RAG_CONTEXT_MAX_CHARS: int = 28000
     # TableRAG: structured SQL storage + table_card / row_window index chunks.
     TABLE_RAG_ENABLED: bool = True
     TABLE_RAG_MAX_ROWS_PER_TABLE: int = 200
     TABLE_RAG_HYDRATE_ON_RETRIEVE: bool = True
     TABLE_RAG_INDEX_VERSION: str = "v2_card_window"
+    # Final chunk count for table-modality answers (token control).
+    TABLE_RAG_ANSWER_TOP_K: int = 5
+    # Slim markdown grids in prompts (vs per-cell [r,c|header]=value).
+    TABLE_RAG_PROMPT_SLIM: bool = True
+    # Max body rows in the LLM table appendix (band match may shrink further).
+    TABLE_RAG_PROMPT_MAX_ROWS: int = 8
+    # Prefer hydrated table_prompt_block over duplicating chunk text.
+    TABLE_RAG_SKIP_CHUNK_TEXT_WHEN_HYDRATED: bool = True
     # LLM table understanding during semantic chunking (interpretation only).
     TABLE_RAG_LLM_UNDERSTANDING_ENABLED: bool = True
     TABLE_RAG_LLM_BATCH_SIZE: int = 2
