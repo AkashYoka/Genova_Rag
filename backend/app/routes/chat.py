@@ -1489,8 +1489,10 @@ def ask_question_stream(
         assistant_persisted = False
         assistant_message_id = None
 
-        try:
-            # Re-bind after middleware may have cleared ContextVars on response start.
+        def _rebind_trace() -> None:
+            # Starlette iterates sync StreamingResponse bodies via a threadpool.
+            # ContextVars do not survive yield → resume across worker threads, so
+            # re-bind before every stretch of work that records AI trace children.
             try:
                 from app.services.ai_tracing import ai_trace_var
 
@@ -1498,9 +1500,14 @@ def ask_question_stream(
                     ai_trace_var.set(trace_ctx)
             except Exception:
                 pass
+
+        try:
+            _rebind_trace()
             if trace_id:
                 yield f"data: {json.dumps({'type': 'meta', 'trace_id': trace_id})}\n\n"
-            for chunk in generate_answer_stream(
+
+            _rebind_trace()
+            answer_stream = generate_answer_stream(
                 question=payload.question,
                 user_id=user_id,
                 document_id=None if payload.document_ids else payload.document_id,
@@ -1509,7 +1516,13 @@ def ask_question_stream(
                 chat_history=chat_history,
                 llm_provider=payload.llm_provider,
                 session_id=str(session_id),
-            ):
+            )
+            while True:
+                _rebind_trace()
+                try:
+                    chunk = next(answer_stream)
+                except StopIteration:
+                    break
                 # Parse to accumulate full answer for history
                 try:
                     if chunk.startswith("data: "):
@@ -1536,6 +1549,8 @@ def ask_question_stream(
                 except Exception:
                     pass
                 yield chunk
+
+            _rebind_trace()
 
             # Only persist a completed stream — interrupted/failed streams skip assistant save
             if stream_failed or not stream_completed:
