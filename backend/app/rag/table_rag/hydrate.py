@@ -7,7 +7,8 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from app.config import get_settings
 from app.rag.table_rag.ids import parse_table_payload
-from app.rag.table_rag.representations import compact_table_prompt_block
+from app.rag.table_rag.independent_rows import independent_rows_prompt_block
+from app.rag.table_rag.nxt import compact_table_prompt_block
 from app.rag.table_rag.store import load_tables_by_ids
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,72 @@ def _collect_row_hints(chunk: Dict[str, Any]) -> List[int]:
     return hints
 
 
+def _content_tokens(text: str) -> set[str]:
+    import re
+
+    stop = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "table",
+        "dose",
+        "doses",
+        "every",
+        "weeks",
+        "patients",
+        "patient",
+    }
+    toks = re.findall(r"[a-zA-Z][a-zA-Z0-9\-]{2,}", (text or "").lower())
+    return {t for t in toks if t not in stop}
+
+
+def _build_table_prompt(
+    table: Dict[str, Any],
+    *,
+    query: Optional[str],
+    max_rows: int,
+    relevant_row_indices: Optional[List[int]],
+    slim: bool,
+) -> Tuple[str, Optional[List[int]]]:
+    """Assessment-style prompt: independent row facts + optional grid."""
+    relevant = list(relevant_row_indices or [])
+    # Structured questions get every row as a self-contained fact (like dose_rules).
+    # Do not truncate away lower bands the LLM must match.
+    fact_max = None
+    try:
+        from app.rag.table_rag.routing import route_query
+
+        route = route_query(query or "")
+        structured = bool(route.wants_structured_lookup)
+    except Exception:
+        structured = False
+
+    if structured:
+        fact_max = max(max_rows, len(table.get("rows") or []))
+    else:
+        fact_max = max_rows
+
+    grid = compact_table_prompt_block(
+        table,
+        max_rows=fact_max if structured else max_rows,
+        relevant_row_indices=relevant or None,
+        slim=slim,
+        include_understanding=False,
+    )
+    block = independent_rows_prompt_block(
+        table,
+        max_rows=fact_max,
+        relevant_row_indices=relevant or None,
+        include_grid=True,
+        grid_block=grid,
+    )
+    return block, relevant or None
+
+
 def hydrate_retrieved_tables(
     chunks: Sequence[Dict[str, Any]],
     *,
@@ -69,16 +136,10 @@ def hydrate_retrieved_tables(
 ) -> List[Dict[str, Any]]:
     """Attach full ``table`` payloads from ``document_tables`` onto chunks.
 
-    Also sets ``table_prompt_block`` for answer-generation formatting and
-    preserves relevant ``row_index`` hints from table_row_window hits.
-    ``query`` is accepted for call-site compat; row/col pruning uses retrieval
-    window hints + ``TABLE_RAG_PROMPT_MAX_ROWS`` only.
-
-    Enforces ``index_version`` parity between the retrieved chunk and the SQL
-    row when both sides declare a version; mismatches are flagged but still
-    hydrate so answer-gen can proceed with a warning.
+    Builds an assessment-style ``table_prompt_block``: each body row becomes an
+    independent ``header=value`` fact line so the answer LLM can match the
+    question in-prompt (no domain-specific axis code).
     """
-    _ = query
     if not chunks:
         return []
 
@@ -98,7 +159,6 @@ def hydrate_retrieved_tables(
             logger.warning("TableRAG hydrate failed: %s", exc)
             loaded = {}
 
-    # Collect relevant row indices per table from row-window hits.
     row_hits: Dict[str, Set[int]] = {}
     for chunk in chunks:
         ref = _table_ref(chunk)
@@ -124,10 +184,11 @@ def hydrate_retrieved_tables(
         stored = loaded.get(key)
         if stored and stored.get("table"):
             full_table = dict(stored["table"])
-            # Propagate multipage list onto the hydrated grid.
             pages = stored.get("pages") or full_table.get("pages") or []
             if pages and not full_table.get("pages"):
                 full_table["pages"] = pages
+            if stored.get("caption") and not full_table.get("caption"):
+                full_table["caption"] = stored["caption"]
             item["table"] = full_table
             item["table_id"] = stored["table_id"]
             item["table_json"] = json.dumps(full_table, ensure_ascii=False)
@@ -135,7 +196,6 @@ def hydrate_retrieved_tables(
                 stored.get("needs_verification")
                 or full_table.get("needs_verification")
             )
-            # index_version parity check
             chunk_version = str(item.get("index_version") or expected_version or "").strip()
             stored_version = str(stored.get("index_version") or "").strip()
             if chunk_version and stored_version and chunk_version != stored_version:
@@ -160,31 +220,52 @@ def hydrate_retrieved_tables(
             max_rows = int(getattr(settings, "TABLE_RAG_PROMPT_MAX_ROWS", 8) or 8)
             if relevant and len(relevant) > max_rows:
                 relevant = relevant[:max_rows]
-            item["table_prompt_block"] = compact_table_prompt_block(
+            block, used_rows = _build_table_prompt(
                 full_table,
+                query=query,
                 max_rows=max_rows,
                 relevant_row_indices=relevant or None,
                 slim=bool(getattr(settings, "TABLE_RAG_PROMPT_SLIM", True)),
-                include_understanding=False,
             )
-            if relevant:
-                item["relevant_row_indices"] = relevant
+            item["table_prompt_block"] = block
+            if used_rows:
+                item["relevant_row_indices"] = used_rows
             if pages:
                 item["pages"] = pages
         else:
-            # Fallback: use whatever table_json the chunk already carries.
             payload = parse_table_payload(item.get("table_json"))
             if payload:
                 table = payload.to_dict()
                 item["table"] = table
                 max_rows = int(getattr(settings, "TABLE_RAG_PROMPT_MAX_ROWS", 8) or 8)
-                item["table_prompt_block"] = compact_table_prompt_block(
+                block, used_rows = _build_table_prompt(
                     table,
+                    query=query,
                     max_rows=max_rows,
+                    relevant_row_indices=None,
                     slim=bool(getattr(settings, "TABLE_RAG_PROMPT_SLIM", True)),
-                    include_understanding=False,
                 )
+                item["table_prompt_block"] = block
+                if used_rows:
+                    item["relevant_row_indices"] = used_rows
                 if table.get("needs_verification") or table.get("low_confidence_cells"):
                     item["table_needs_verification"] = True
         out.append(item)
+
+    # Prefer captions that share content tokens with the query (generic overlap).
+    if query and query.strip():
+        qtok = _content_tokens(query)
+        scored: List[Tuple[int, Dict[str, Any]]] = []
+        for item in out:
+            table = item.get("table") if isinstance(item.get("table"), dict) else {}
+            cap = str(
+                (table or {}).get("caption")
+                or item.get("section")
+                or item.get("caption")
+                or ""
+            )
+            scored.append((len(qtok & _content_tokens(cap)), item))
+        if any(s > 0 for s, _ in scored):
+            scored.sort(key=lambda x: x[0], reverse=True)
+            out = [item for _, item in scored]
     return out

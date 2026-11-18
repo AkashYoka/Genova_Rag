@@ -610,6 +610,17 @@ def _boost_table_candidates(
             factor += 0.25
         if is_table and q_tokens:
             overlap = len(q_tokens & _query_content_tokens(text))
+            # Caption/section overlap prefers the matrix whose title matches the
+            # question (any domain) over sibling tables in the same PDF.
+            captionish = " ".join(
+                str(item.get(k) or "")
+                for k in ("caption", "section", "subsection", "table_title")
+            )
+            cap_overlap = len(q_tokens & _query_content_tokens(captionish))
+            if cap_overlap >= 2:
+                factor += 0.35
+            elif cap_overlap == 1:
+                factor += 0.18
             if overlap >= 2:
                 factor += 0.2
             elif overlap == 1:
