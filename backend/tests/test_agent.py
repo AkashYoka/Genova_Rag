@@ -151,3 +151,29 @@ def test_generate_answer_error(mock_agent_executor, mock_retriever):
     with pytest.raises(ExternalServiceException) as exc_info:
         generate_answer("test question", "user123", "doc123")
     assert "LLM Down" in str(exc_info.value)
+
+
+def test_ai_trace_step_propagates_body_exception_without_generator_throw():
+    """Regression: body exceptions must not trigger a second yield."""
+    from app.rag.llm.agent import _ai_trace_step
+
+    step = MagicMock(status="running")
+    with patch("app.services.ai_tracing.begin_step", return_value=step), patch(
+        "app.services.ai_tracing.end_step"
+    ) as end_step:
+        with pytest.raises(ValueError, match="boom"):
+            with _ai_trace_step("unit_test"):
+                raise ValueError("boom")
+        end_step.assert_called_once()
+        assert end_step.call_args.kwargs.get("error") is not None
+
+
+def test_ai_trace_step_survives_setup_failure():
+    from app.rag.llm.agent import _ai_trace_step
+
+    with patch(
+        "app.services.ai_tracing.begin_step",
+        side_effect=RuntimeError("tracing down"),
+    ):
+        with _ai_trace_step("unit_test") as step:
+            assert step is None

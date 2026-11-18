@@ -38,14 +38,41 @@ from app.rag.prompts.prompts import (
 
 @contextmanager
 def _ai_trace_step(name: str, *, input_summary: Any = None) -> Iterator[Any]:
-    """Best-effort stage recorder; never raises into the RAG path."""
-    try:
-        from app.services.ai_tracing import trace_step
+    """Best-effort stage recorder; setup/teardown failures never break the RAG path.
 
-        with trace_step(name, input_summary=input_summary) as step:
-            yield step
+    Must not yield again after a body exception — that raises
+    ``RuntimeError: generator didn't stop after throw()``.
+    """
+    step = None
+    try:
+        from app.services.ai_tracing import begin_step
+
+        step = begin_step(name, input_summary=input_summary)
     except Exception:
-        yield None
+        step = None
+
+    try:
+        yield step
+    except Exception as exc:
+        if step is not None:
+            try:
+                from app.services.ai_tracing import end_step
+
+                end_step(step, error=exc)
+            except Exception:
+                pass
+        raise
+    else:
+        if step is not None:
+            try:
+                from app.services.ai_tracing import end_step
+
+                if getattr(step, "status", None) == "running":
+                    end_step(step, status="success")
+                else:
+                    end_step(step, status=getattr(step, "status", None) or "success")
+            except Exception:
+                pass
 
 
 def _resolve_runtime_prompts(
