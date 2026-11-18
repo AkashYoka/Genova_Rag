@@ -315,6 +315,9 @@ class Settings(BaseSettings):
     EMBEDDING_PROVIDER: str = "ollama"
     EMBEDDING_MODEL: str = "nomic-embed-text"
     EMBEDDING_DIMENSION: int = 768
+    # Titan V2 hard-caps at 8192 tokens. Char budget must stay below that for
+    # dense medical tables (~2–3 chars/token). Override per env if needed.
+    EMBEDDING_MAX_INPUT_CHARS: int = 16000
 
     # ── ChromaDB ─────────────────────────────────────────
     # Separate persist dirs per embedding family so indexes are never mixed.
