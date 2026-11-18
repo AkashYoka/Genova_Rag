@@ -85,9 +85,9 @@ function userLabel(item: AITraceListItem): string {
   return item.username || item.email || (item.user_id ? item.user_id.slice(0, 8) : "—");
 }
 
-function statusTone(status: string): "positive" | "negative" | "neutral" {
-  if (status === "success") return "positive";
-  if (status === "failed") return "negative";
+function statusTone(status: string): "ok" | "bad" | "warn" | "neutral" {
+  if (status === "success") return "ok";
+  if (status === "failed") return "bad";
   return "neutral";
 }
 
@@ -330,11 +330,13 @@ function AiTracesPanelInner({
           {
             label: "Success",
             value: summary ? String(summary.success) : "—",
+            caption: "Completed traces",
             emphasis: "data",
           },
           {
             label: "Failed",
             value: summary ? String(summary.failed) : "—",
+            caption: "Errored traces",
           },
           {
             label: "Avg duration",
@@ -538,9 +540,10 @@ function AiTracesPanelInner({
                   <td title={item.question}>{truncate(item.question, 72)}</td>
                   <td>{item.request_type}</td>
                   <td>
-                    <LedgerStatus tone={statusTone(item.status)}>
-                      {item.status}
-                    </LedgerStatus>
+                    <LedgerStatus
+                      label={item.status}
+                      tone={statusTone(item.status)}
+                    />
                   </td>
                   <td className="whitespace-nowrap text-[12px]">
                     {formatWhen(item.created_at)}
