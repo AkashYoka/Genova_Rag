@@ -161,6 +161,29 @@ def validate_and_merge_llm_result(
     if isinstance(conf, (int, float)) and 0 <= float(conf) <= 1:
         table.confidence = float(conf)
 
+    # Bedrock often leaves vertically-merged categorical labels empty mid-span.
+    # Re-fill with structural nearest-block assignment so shared attributes are
+    # not lost downstream.
+    from ste.shared_attribute_expander import (
+        body_row_positions_from_cells_meta,
+        expand_marker_regions,
+        expand_shared_attributes,
+    )
+
+    prov = table.provenance if isinstance(table.provenance, dict) else {}
+    cells_meta = prov.get("cells_meta") if isinstance(prov, dict) else None
+    header_n = int(prov.get("header_row_count") or 0) if isinstance(prov, dict) else 0
+    row_positions = body_row_positions_from_cells_meta(
+        cells_meta if isinstance(cells_meta, list) else None,
+        header_row_count=header_n,
+        body_rows=len(table.rows),
+    )
+    post_fill = expand_shared_attributes(table.rows, row_positions=row_positions)
+    post_fill.extend(expand_marker_regions(table.rows))
+    for w in post_fill:
+        table.warnings.append(f"bedrock_post:{w}")
+        usage["warnings"].append(f"bedrock_post:{w}")
+
     # Rebuild cells from merged grid
     from ste.cell_status import build_cells
 
@@ -287,8 +310,11 @@ def should_skip_bedrock_simple(table: ExtractedTable) -> Tuple[bool, str]:
     if cells and (empty / cells) > 0.22:
         return False, "sparse_grid"
     header_rows = list(getattr(table, "header_rows", None) or [])
-    if len(header_rows) > 2:
+    # Multi-band headers (incl. false "header + first data row") need Bedrock.
+    if len(header_rows) >= 2:
         return False, "multi_header"
+    if any(" / " in str(h or "") for h in headers):
+        return False, "joined_header_paths"
     return True, "simple_high_confidence"
 
 

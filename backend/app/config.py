@@ -2,11 +2,46 @@
 Application configuration via pydantic-settings.
 All config is loaded from environment variables with sensible defaults.
 A .env file is optional — local Ollama defaults work without one.
+
+Critical STE / Textract / AI-trace ingest flags are hardcoded below and
+re-applied in ``force_ingest_pipeline_flags`` so server Docker/.env cannot
+silently disable STE+Bedrock or weaken table extraction.
 """
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from pydantic import model_validator, field_validator
+
+# Locked ingest/table-pipeline values (ignore conflicting OS / Docker env).
+# Do not put machine-local paths (e.g. Scoop tessdata) here.
+_FORCED_INGEST_PIPELINE_FLAGS: dict = {
+    "PDF_LAYOUT_AWARE_ENABLED": True,
+    "PDF_OCR_ENABLED": True,
+    "PDF_OCR_BACKEND": "tesseract",
+    "PDF_TEXTRACT_FALLBACK_ENABLED": True,
+    "PDF_TEXTRACT_TABLES_ENABLED": True,
+    "PDF_TEXTRACT_ASYNC_MULTIPAGE": False,
+    "PDF_STE_TABLES_ENABLED": True,
+    "PDF_STE_BEDROCK_ENABLED": True,
+    "PDF_STE_BACKEND": "textract",
+    "PDF_STE_USE_CACHE": True,
+    "PDF_STE_OUTPUT_DIR": "./data/ste_runs",
+    "PDF_STE_IOU_DEDUPE": 0.55,
+    "PDF_STE_PAGES": "",
+    "PDF_STE_SKIP_DETECT_WHEN_STE": True,
+    "PDF_STE_MAX_WORKERS": 4,
+    "PDF_STE_BEDROCK_MAX_WORKERS": 3,
+    "PDF_STE_DPI": 150,
+    "PDF_STE_BEDROCK_SKIP_SIMPLE": False,
+    "PDF_INGEST_PROGRESS_MIN_INTERVAL_MS": 750,
+    "AI_TRACE_ENABLED": True,
+    "AI_TRACE_CAPTURE_PAYLOADS": True,
+    "AI_TRACE_REDACT_PII": False,
+    "AI_TRACE_CHUNK_PREVIEW_CHARS": 4000,
+    "AI_TRACE_RETENTION_DAYS": 30,
+    "AI_TRACE_AUDIT_ACCESS": True,
+}
+
 
 class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────
@@ -171,7 +206,7 @@ class Settings(BaseSettings):
     PDF_LAYOUT_WRITE_DIAGNOSTICS: bool = True
     PDF_LAYOUT_REPORT_DIR: str = "./data/layout_reports"
     PDF_OCR_ENABLED: bool = True
-    PDF_OCR_BACKEND: str = "auto"  # auto | tesseract | rapidocr | easyocr
+    PDF_OCR_BACKEND: str = "tesseract"  # auto | tesseract | rapidocr | easyocr
     PDF_OCR_DPI: int = 300
     PDF_OCR_PSM: int = 3
     PDF_OCR_LANG: str = "eng"
@@ -244,7 +279,9 @@ class Settings(BaseSettings):
     # STE page-render DPI (150 is usually enough for AnalyzeDocument TABLES).
     PDF_STE_DPI: int = 150
     # Skip Bedrock when Textract grid already looks simple/high-confidence.
-    PDF_STE_BEDROCK_SKIP_SIMPLE: bool = True
+    # Always run Bedrock on STE tables by default. Skipping "simple" grids
+    # left Textract false header bands as ``Header / first-row`` paths.
+    PDF_STE_BEDROCK_SKIP_SIMPLE: bool = False
     # Debounce Document.processing_progress DB writes (ms).
     PDF_INGEST_PROGRESS_MIN_INTERVAL_MS: int = 750
     # RAGAS evaluation (scripts/evaluate_ragas.py)
@@ -314,11 +351,11 @@ class Settings(BaseSettings):
     # Persistence failures never break chat responses.
     AI_TRACE_ENABLED: bool = True
     # When False, store metadata/scores/durations only (no full prompts/context).
-    AI_TRACE_CAPTURE_PAYLOADS: bool = False
+    AI_TRACE_CAPTURE_PAYLOADS: bool = True
     # Optional emails/phones/SSN mask in stored traces. Off so admins can read
     # real RAG chunks (dosing tables). Never strips clinical mg/kg/IgE text.
     AI_TRACE_REDACT_PII: bool = False
-    AI_TRACE_CHUNK_PREVIEW_CHARS: int = 500
+    AI_TRACE_CHUNK_PREVIEW_CHARS: int = 4000
     AI_TRACE_RETENTION_DAYS: int = 30
     AI_TRACE_AUDIT_ACCESS: bool = True
 
@@ -459,6 +496,18 @@ class Settings(BaseSettings):
         if normalized in {"bedrock_nova", "nova", "nova2", "nova_2_lite"}:
             return "bedrock"
         return normalized
+
+    @model_validator(mode="after")
+    def force_ingest_pipeline_flags(self) -> "Settings":
+        """Hardcode STE+Bedrock / layout / AI-trace ingest flags.
+
+        Server Docker Compose and remote .env often still pin older values
+        (e.g. PDF_STE_BEDROCK_SKIP_SIMPLE=true). Those env vars win over field
+        defaults in pydantic-settings — so we overwrite after load.
+        """
+        for key, value in _FORCED_INGEST_PIPELINE_FLAGS.items():
+            object.__setattr__(self, key, value)
+        return self
 
     @model_validator(mode="after")
     def validate_vision_provider_keys(self) -> "Settings":

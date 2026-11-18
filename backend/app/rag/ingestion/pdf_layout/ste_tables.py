@@ -486,7 +486,7 @@ def extract_ste_tables_from_pdf(
         getattr(settings, "PDF_STE_BEDROCK_MAX_WORKERS", 3) or 3
     )
     bedrock_skip_simple = bool(
-        getattr(settings, "PDF_STE_BEDROCK_SKIP_SIMPLE", True)
+        getattr(settings, "PDF_STE_BEDROCK_SKIP_SIMPLE", False)
     )
     if pages is None:
         raw_pages = (getattr(settings, "PDF_STE_PAGES", "") or "").strip()

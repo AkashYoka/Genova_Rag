@@ -314,7 +314,7 @@ def extract_pdf(
         table_index = 0
         t_bedrock = 0.0
         t_export = 0.0
-        skip_simple = bool(getattr(resolved_settings, "bedrock_skip_simple", True))
+        skip_simple = bool(getattr(resolved_settings, "bedrock_skip_simple", False))
         bedrock_workers = max(
             1, min(8, int(getattr(resolved_settings, "bedrock_max_workers", 3) or 3))
         )

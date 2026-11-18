@@ -390,8 +390,8 @@ def test_parse_pdf_flag_on_prefers_ste_and_dedupes(monkeypatch, tmp_path):
     assert payload["caption"] == "STE table"
 
 
-def test_ste_independent_rows_do_not_fan_out_windows(monkeypatch):
-    """STE independent_rows must not create per-row table_row_window chunks."""
+def test_ste_expand_does_not_emit_card_or_window_chunks():
+    """Layout table only — no table_card / table_row_window fan-out."""
     from app.rag.table_rag.indexing import (
         CHUNK_TYPE_TABLE_CARD,
         CHUNK_TYPE_TABLE_ROW_WINDOW,
@@ -411,19 +411,11 @@ def test_ste_independent_rows_do_not_fan_out_windows(monkeypatch):
         "table_json": json.dumps(table.to_json()),
         "filename": "demo.pdf",
     }
-    monkeypatch.setattr(
-        "app.rag.table_rag.indexing.get_settings",
-        lambda: types.SimpleNamespace(
-            TABLE_RAG_ROW_WINDOW_THRESHOLD=10,
-            TABLE_RAG_ROW_WINDOW_SIZE=8,
-            TABLE_RAG_MAX_ROW_WINDOWS=40,
-        ),
-    )
     expanded, records = expand_table_rag_chunks(
         [chunk],
         document_id="d1",
         filename="demo.pdf",
-        index_version="v2_card_window",
+        index_version="v3_layout_table",
         enabled=True,
     )
     assert len(records) == 1
@@ -431,5 +423,6 @@ def test_ste_independent_rows_do_not_fan_out_windows(monkeypatch):
     windows = [
         c for c in expanded if c.get("chunk_type") == CHUNK_TYPE_TABLE_ROW_WINDOW
     ]
-    assert len(cards) == 1
+    assert cards == []
     assert windows == []
+    assert any(c.get("chunk_type") == "table" for c in expanded)

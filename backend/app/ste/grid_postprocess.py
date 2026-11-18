@@ -176,7 +176,18 @@ def stitch_wrapped_label_column(rows: List[List[str]], col: int = 1) -> List[str
     def _standalone_heading(tok: str) -> bool:
         """Distinct row headings must not wrap-merge into each other."""
         t = normalize_ws(tok)
-        return bool(re.match(r"^[A-Z][A-Za-z]{3,}$", t))
+        if not t:
+            return False
+        # Short ALLCAPS codes (UAE, USA, KSA) are distinct row keys.
+        if re.match(r"^[A-Z]{2,6}$", t):
+            return True
+        # Single Capitalized word
+        if re.match(r"^[A-Z][A-Za-z]{3,}$", t):
+            return True
+        # Title-Case multi-word entities ("Saudi Arabia", "New Zealand")
+        if re.match(r"^[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+$", t):
+            return True
+        return False
 
     def _complete(parts: List[str]) -> bool:
         joined = normalize_ws(" ".join(parts))

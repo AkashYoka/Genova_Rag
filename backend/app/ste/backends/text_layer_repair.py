@@ -399,9 +399,11 @@ def repair_fragmented_column_values(
     Some engines report a vertically merged value as several adjacent cells
     with ``row_span = 1`` (``"Every" / "4" / "Weeks"`` on three different
     rows) instead of one merged cell. This groups such vertically contiguous
-    fragments, rebuilds the phrase from native PDF lines, and repeats it over
-    the blank rows up to the next value in the same column. Only columns that
-    contain at least one fragmented group are touched.
+    fragments, rebuilds the phrase from native PDF lines, and writes it only
+    onto the fragment rows themselves. Blank rows between labels are left for
+    ``expand_shared_attributes`` (nearest-anchor fill) so a centered OCR label
+    does not paint past the true merge boundary. Only columns that contain at
+    least one fragmented group are touched.
     """
     warnings: List[str] = []
     changed = 0
@@ -445,11 +447,13 @@ def repair_fragmented_column_values(
                     continue
             groups.append([item])
 
-        values: List[Tuple[int, str, Box]] = []
+        # (start_row, end_row, text, bbox) — end is the last fragment row only.
+        values: List[Tuple[int, int, str, Box]] = []
         qualified = False
         for group in groups:
             if len(group) == 1:
-                values.append(group[0])
+                row_i, text_i, box_i = group[0]
+                values.append((row_i, row_i, text_i, box_i))
                 continue
             y_low = min(item[2][1] for item in group) - 2.0
             y_high = max(item[2][3] for item in group) + 2.0
@@ -462,7 +466,8 @@ def repair_fragmented_column_values(
                 and band[0] - 2.0 <= _center_x(line_box) <= band[2] + 2.0
             ]
             if len(lines) < 2:
-                values.extend(group)
+                for row_i, text_i, box_i in group:
+                    values.append((row_i, row_i, text_i, box_i))
                 continue
             lines.sort(key=lambda item: (item[1][1], item[1][0]))
             block_text = normalize_ws(" ".join(text for text, _ in lines))
@@ -476,10 +481,14 @@ def repair_fragmented_column_values(
                     for tokens in group_tokens
                 )
             ):
-                values.extend(group)
+                for row_i, text_i, box_i in group:
+                    values.append((row_i, row_i, text_i, box_i))
                 continue
             start_row = min(item[0] for item in group)
-            values.append((start_row, block_text, _union([item[2] for item in group])))
+            end_row = max(item[0] for item in group)
+            values.append(
+                (start_row, end_row, block_text, _union([item[2] for item in group]))
+            )
             qualified = True
 
         if not qualified:
@@ -487,19 +496,14 @@ def repair_fragmented_column_values(
 
         values.sort(key=lambda item: item[0])
         seen_rows: set[int] = set()
-        unique_values: List[Tuple[int, str, Box]] = []
+        unique_values: List[Tuple[int, int, str, Box]] = []
         for value in values:
             if value[0] in seen_rows:
                 continue
             seen_rows.add(value[0])
             unique_values.append(value)
 
-        for index, (start, value_text, value_box) in enumerate(unique_values):
-            end = (
-                unique_values[index + 1][0] - 1
-                if index + 1 < len(unique_values)
-                else last_row
-            )
+        for start, end, value_text, value_box in unique_values:
             if end < start:
                 continue
             value_tokens = _tokens(value_text)

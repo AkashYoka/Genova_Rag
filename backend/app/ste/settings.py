@@ -54,7 +54,7 @@ class Settings:
     aws_region: Optional[str] = None
     max_workers: int = 4
     bedrock_max_workers: int = 3
-    bedrock_skip_simple: bool = True
+    bedrock_skip_simple: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -81,7 +81,7 @@ class Settings:
             or os.environ.get("AWS_DEFAULT_REGION"),
             max_workers=env_int("STE_MAX_WORKERS", 4) or 4,
             bedrock_max_workers=env_int("STE_BEDROCK_MAX_WORKERS", 3) or 3,
-            bedrock_skip_simple=env_bool("STE_BEDROCK_SKIP_SIMPLE", True),
+            bedrock_skip_simple=env_bool("STE_BEDROCK_SKIP_SIMPLE", False),
         )
 
     def with_overrides(self, **kwargs: Any) -> "Settings":

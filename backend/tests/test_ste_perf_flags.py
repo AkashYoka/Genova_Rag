@@ -36,6 +36,36 @@ def test_should_skip_bedrock_simple_high_confidence():
     assert reason == "simple_high_confidence"
 
 
+def test_should_not_skip_bedrock_multi_header_or_joined_paths():
+    multi = ExtractedTable(
+        table_id="t_multi",
+        page=1,
+        bbox=SteBBox(0, 0, 100, 100),
+        headers=["Country", "Model"],
+        header_rows=[
+            ["Country", "Model"],
+            ["UAE", "Peppol 5-corner, PINT-AE"],
+        ],
+        rows=[["Saudi Arabia", "Clearance"]],
+        confidence=0.99,
+    )
+    skip, reason = should_skip_bedrock_simple(multi)
+    assert skip is False
+    assert reason == "multi_header"
+
+    joined = ExtractedTable(
+        table_id="t_joined",
+        page=1,
+        bbox=SteBBox(0, 0, 100, 100),
+        headers=["Country / UAE", "Model / Peppol"],
+        rows=[["Saudi Arabia", "Clearance"]],
+        confidence=0.99,
+    )
+    skip2, reason2 = should_skip_bedrock_simple(joined)
+    assert skip2 is False
+    assert reason2 == "joined_header_paths"
+
+
 def test_should_not_skip_bedrock_sparse_or_low_conf():
     sparse = ExtractedTable(
         table_id="t2",

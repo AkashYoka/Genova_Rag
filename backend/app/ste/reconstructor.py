@@ -12,7 +12,11 @@ from ste.cell_status import build_cells, fill_unavailable_empties
 from ste.grid_postprocess import is_unit_banner_row, postprocess_grid
 from ste.header_hierarchy import expand_jammed_headers, header_paths, leaf_headers
 from ste.models import BBox, ExtractedTable, Word, normalize_ws, pad_row
-from ste.shared_attribute_expander import expand_marker_regions, expand_shared_attributes
+from ste.shared_attribute_expander import (
+    body_row_positions_from_cells_meta,
+    expand_marker_regions,
+    expand_shared_attributes,
+)
 from ste.structure_extractor import grid_from_words, split_header_body
 from ste.unavailable_regions import (
     expand_unavailable_regions,
@@ -85,10 +89,35 @@ def cell_span_map(
     return out
 
 
+def _looks_like_body_row(row: Sequence[str]) -> bool:
+    """True when a candidate header band is really the first data row.
+
+    Textract AnalyzeDocument often marks the first body row as COLUMN_HEADER,
+    which then becomes ``Header / value`` paths and drops a real data row.
+    """
+    nonempty = [normalize_ws(c) for c in row if normalize_ws(c)]
+    if not nonempty:
+        return False
+    # Sentence-length cells are almost never header labels.
+    if any(len(c.split()) >= 6 for c in nonempty):
+        return True
+    if any(len(c) > 48 for c in nonempty):
+        return True
+    # Mixed short + long (e.g. "UAE" + long Peppol description) → body.
+    longish = sum(1 for c in nonempty if len(c) > 32 or len(c.split()) >= 4)
+    shortish = sum(1 for c in nonempty if len(c) <= 24)
+    if longish >= 2 and shortish >= 1:
+        return True
+    return False
+
+
 def _header_continuation(row: Sequence[str]) -> bool:
     """Extend under-counted headers using structural signals only."""
     if is_unit_banner_row(row):
         return True
+    # Never promote a row that already looks like body content.
+    if _looks_like_body_row(row):
+        return False
     nonempty = [normalize_ws(c) for c in row if normalize_ws(c)]
     if not nonempty:
         return False
@@ -152,6 +181,9 @@ def reconstruct_from_grid(
     while body and extended < 3 and _header_continuation(body[0]):
         header_rows.append(body.pop(0))
         extended += 1
+    # Demote Textract false-positive header bands (first data row as header).
+    while len(header_rows) > 1 and _looks_like_body_row(header_rows[-1]):
+        body.insert(0, header_rows.pop())
     if not body:
         return None
 
@@ -192,11 +224,16 @@ def reconstruct_from_grid(
     body = [pad_row(r, width) for r in body]
     original_headers = pad_row(original_headers, width)
 
-    warnings.extend(expand_shared_attributes(body))
+    used_header_count = len(header_rows) if header_rows else int(header_row_count or 0)
+    row_positions = body_row_positions_from_cells_meta(
+        cells_meta,
+        header_row_count=used_header_count,
+        body_rows=len(body),
+    )
+    warnings.extend(expand_shared_attributes(body, row_positions=row_positions))
     warnings.extend(expand_marker_regions(body))
     warnings.extend(fill_unavailable_empties(body))
 
-    used_header_count = len(header_rows) if header_rows else int(header_row_count or 0)
     body, unavail_regions, unavail_warnings, cell_region_map = expand_unavailable_regions(
         body,
         cells_meta=cells_meta,

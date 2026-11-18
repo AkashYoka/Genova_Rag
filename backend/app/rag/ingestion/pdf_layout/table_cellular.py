@@ -103,7 +103,12 @@ def _column_is_label_like(rows: Sequence[Sequence[str]], col: int) -> bool:
 
 
 def expand_shared_attributes(rows: List[List[str]]) -> List[List[str]]:
-    """Fill blank cells in categorical columns from neighboring filled values."""
+    """Fill blank categorical cells from the nearest identical-value block.
+
+    Structural only: consecutive identical labels form a block; empties inherit
+    the nearest block's value by row-index centroid. Exact ties prefer the
+    earlier block. No domain vocabularies.
+    """
     if not rows:
         return rows
     width = max((len(r) for r in rows), default=0)
@@ -111,22 +116,30 @@ def expand_shared_attributes(rows: List[List[str]]) -> List[List[str]]:
     for col in range(width):
         if not _column_is_label_like(rows, col):
             continue
-        # Forward fill within contiguous blank bands using last non-empty.
-        last = ""
-        for r in range(len(rows)):
-            val = normalize_ws(rows[r][col])
-            if val:
-                last = val
-            elif last:
-                rows[r][col] = last
-        # Backward fill remaining leading blanks from the next known value.
-        nxt = ""
-        for r in reversed(range(len(rows))):
-            val = normalize_ws(rows[r][col])
-            if val:
-                nxt = val
-            elif nxt:
-                rows[r][col] = nxt
+        blocks: List[tuple[float, str]] = []
+        i = 0
+        n = len(rows)
+        while i < n:
+            val = normalize_ws(rows[i][col])
+            if not val:
+                i += 1
+                continue
+            j = i + 1
+            while j < n and normalize_ws(rows[j][col]) == val:
+                j += 1
+            centroid = (i + j - 1) / 2.0
+            blocks.append((centroid, val))
+            i = j
+        if not blocks:
+            continue
+        for ri, row in enumerate(rows):
+            if normalize_ws(row[col]):
+                continue
+            _cent, best_val = min(
+                blocks,
+                key=lambda item: (abs(item[0] - ri), item[0]),
+            )
+            row[col] = best_val
     return rows
 
 
