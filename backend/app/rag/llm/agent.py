@@ -770,10 +770,7 @@ def _apply_table_interpretation(
     document_id: Optional[str] = None,
     document_ids: Optional[List[str]] = None,
 ) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Passthrough — LLM table reasoning / VerifiedCell path removed.
-
-    Retrieved table chunks already sit in ``context`` as normal RAG evidence.
-    """
+    """Passthrough — retrieved table chunks already sit in ``context``."""
     _ = (question, user_id, document_id, document_ids)
     return context, sources, list(chunks or [])
 
@@ -1177,12 +1174,15 @@ def _reconcile_answer_inner(
     """
     from app.rag.table_rag.telemetry import record_answer_state, record_reconcile_action
 
-    # Table-evidence answer-state machine removed — no verified-cell pin.
-    record_answer_state("not_applicable")
     if _is_table_gate_message(answer):
+        record_answer_state("gate")
         record_reconcile_action("none")
         return answer
     meta = _verified_meta_from_sources(sources)
+    if meta and str(meta.get("status") or "matched") in ("", "matched", "calculated"):
+        record_answer_state("verified_cell")
+    else:
+        record_answer_state("not_applicable")
     if not meta:
         # Hard insufficient / ambiguous: force abstain framing.
         # Soft insufficient: allow prose RAG without boilerplate.
@@ -1502,7 +1502,7 @@ def _reconcile_answer_with_verified_cell(
     answer: str,
     sources: List[Dict[str, Any]],
 ) -> str:
-    """Verified-cell reconcile removed — return the generated answer cleaned."""
+    """Return the generated answer cleaned (no verified-cell pin path)."""
     _ = sources
     try:
         return _strip_prompt_leaks(answer or "")
@@ -1560,8 +1560,9 @@ def _sources_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     Stream path yields: data: {"type":"sources","data":[<items>]}\n\n  BEFORE tokens.
     """
-    return [
-        {
+    out: List[Dict[str, Any]] = []
+    for chunk in chunks:
+        item: Dict[str, Any] = {
             "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
             "filename": chunk["filename"],
             "page": _coerce_source_page(chunk.get("page")),
@@ -1570,8 +1571,14 @@ def _sources_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "bbox": chunk.get("bbox", "") or "",
             "chunk_type": _source_chunk_type(chunk),
         }
-        for chunk in chunks
-    ]
+        tid = chunk.get("table_id")
+        if tid:
+            item["table_id"] = str(tid)
+        verified = chunk.get("verified_cell")
+        if isinstance(verified, dict) and verified.get("value") is not None:
+            item["verified_cell"] = verified
+        out.append(item)
+    return out
 
 
 def _classify_turn_intent(

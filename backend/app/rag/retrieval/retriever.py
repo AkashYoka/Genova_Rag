@@ -588,22 +588,20 @@ def _boost_table_candidates(
 
         if is_table:
             factor += 0.35
-            if chunk_type in ("table_row_window", "table_row") or index_kind in (
+            # Layout ``table`` is the sole indexed unit (cards/windows dropped).
+            if chunk_type == "table" or item.get("table_json"):
+                factor += 0.22 if modality_l == "table" else 0.12
+            elif chunk_type in ("table_row_window", "table_row") or index_kind in (
                 "table_row_window",
                 "table_row",
             ):
-                # Exact-value / multi-constraint lookups land on row windows.
-                factor += 0.25 if modality_l == "table" else 0.15
+                # Legacy corpora may still hold windows until reindex.
+                factor += 0.1
             elif chunk_type in ("table_card", "table_summary") or index_kind in (
                 "table_card",
                 "table_summary",
             ):
-                factor += 0.22 if modality_l == "table" else 0.12
-            elif (
-                chunk_type == "table_interpretation"
-                or index_kind == "table_interpretation"
-            ):
-                factor += 0.15 if modality_l == "table" else 0.08
+                factor += 0.1
         if re.search(r"(?i)\btable\s+\d+\b", text) and re.search(
             r"(?i)dose|dosing|schedule|frequency|amount|rate|weight|"
             r"every\s+\d+\s+(?:weeks?|days?|hours?|months?)",

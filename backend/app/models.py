@@ -539,9 +539,9 @@ class DocumentChunk(Base):
 class DocumentTable(Base):
     """Complete extracted table structure for TableRAG retrieval.
 
-    Chroma/BM25 hold table_card and table_row_window *index* texts; this row is
-    the durable source of headers, rows, merged cells, bboxes, and confidence
-    flags passed to answer generation.
+    Chroma/BM25 hold layout ``table`` chunk texts; this row is the durable
+    source of headers, rows, merged cells, bboxes, and confidence flags
+    passed to hydrate / answer generation.
     """
 
     __tablename__ = "document_tables"

@@ -262,11 +262,11 @@ class Settings(BaseSettings):
     RAG_EXPAND_ADJACENT_FOR_TABLES: bool = False
     # Hard cap on assembled Document Context chars (~7–10k tokens for dense tables).
     RAG_CONTEXT_MAX_CHARS: int = 28000
-    # TableRAG: structured SQL storage + table_card / row_window index chunks.
+    # TableRAG: structured SQL storage + layout ``table`` vector chunks only.
     TABLE_RAG_ENABLED: bool = True
     TABLE_RAG_MAX_ROWS_PER_TABLE: int = 200
     TABLE_RAG_HYDRATE_ON_RETRIEVE: bool = True
-    TABLE_RAG_INDEX_VERSION: str = "v2_card_window"
+    TABLE_RAG_INDEX_VERSION: str = "v3_layout_table"
     # Final chunk count for table-modality answers (token control).
     TABLE_RAG_ANSWER_TOP_K: int = 5
     # Slim markdown grids in prompts (vs per-cell [r,c|header]=value).
@@ -284,7 +284,7 @@ class Settings(BaseSettings):
     TABLE_RAG_LLM_MAX_OUTPUT_TOKENS: int = 2048
     # Deprecated: interpretation is folded into table_card (kept for env compat).
     TABLE_RAG_SEPARATE_INTERPRETATION_EMBEDDING: bool = False
-    # Row windows for tables larger than TABLE_RAG_ROW_WINDOW_THRESHOLD.
+    # Deprecated: table_card / table_row_window indexing removed (env compat only).
     TABLE_RAG_ROW_WINDOW_THRESHOLD: int = 10
     TABLE_RAG_ROW_WINDOW_SIZE: int = 8
     TABLE_RAG_MAX_ROW_WINDOWS: int = 40

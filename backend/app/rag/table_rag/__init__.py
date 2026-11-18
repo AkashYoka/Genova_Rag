@@ -1,12 +1,8 @@
-"""TableRAG: structured table storage, indexing, routing, and retrieval.
+"""TableRAG: structured table storage, layout-table indexing, and retrieval.
 
-Builds on the Textract → ``TableData`` → ``table_json`` path without replacing
-text RAG. Tables are persisted as complete structures in SQL, and table/row
-textual representations are indexed through the same Chroma + BM25 stores used
-for paragraph chunks.
-
-LLM table understanding (during semantic chunking) attaches interpretation
-metadata only; extracted cell values remain ground truth.
+Builds on the Textract/STE → ``TableData`` → ``table_json`` path without
+replacing text RAG. Tables are persisted in SQL; layout ``chunk_type=table``
+vectors are the sole Chroma/BM25 table unit (no card/row-window fan-out).
 """
 
 from app.rag.table_rag.hydrate import hydrate_retrieved_tables
