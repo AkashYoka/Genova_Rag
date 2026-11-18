@@ -64,7 +64,7 @@ def _textract_allowed(settings: Any) -> bool:
 
 
 def _ste_enabled(settings: Any) -> bool:
-    return bool(getattr(settings, "PDF_STE_TABLES_ENABLED", False))
+    return bool(getattr(settings, "PDF_STE_TABLES_ENABLED", True))
 
 
 def resolve_table_engine(settings: Any) -> str:

@@ -214,11 +214,12 @@ class Settings(BaseSettings):
     # grids into the required fully-cellular format (domain-agnostic prompt).
     PDF_TABLE_LLM_NORMALIZE_ENABLED: bool = True
     PDF_TABLE_LLM_NORMALIZE_MAX_TOKENS: int = 8192
-    # STE Textract AnalyzeDocument + Bedrock Nova 2 Lite (optional).
+    # STE Textract AnalyzeDocument + Bedrock Nova 2 Lite (default on).
     # When enabled, STE tables are primary; overlapping DetectDocumentText
     # tables are deduped. Prose still uses the semantic chunker.
     # Engine: backend/ste/ (AnalyzeDocument TABLES on page images).
-    PDF_STE_TABLES_ENABLED: bool = False
+    # Override with env PDF_STE_TABLES_ENABLED=false if needed.
+    PDF_STE_TABLES_ENABLED: bool = True
     PDF_STE_BEDROCK_ENABLED: bool = True
     # Blank → BEDROCK_MODEL_ID (us.amazon.nova-2-lite-v1:0).
     PDF_STE_BEDROCK_MODEL_ID: str = ""
