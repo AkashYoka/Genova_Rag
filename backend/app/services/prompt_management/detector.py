@@ -36,7 +36,7 @@ _FILENAME_DOMAIN_HINTS: List[tuple[re.Pattern[str], str]] = [
     (re.compile(r"trading|ohlc|candlestick|equit(y|ies)|portfolio|securit", re.I), "trading"),
     (
         re.compile(
-            r"medical|prescrib|ndc|dosage|contraindic|anaphylaxis|pharmac|xolair|avastin",
+            r"medical|prescrib|ndc|dosage|contraindic|anaphylaxis|pharmac",
             re.I,
         ),
         "medical",

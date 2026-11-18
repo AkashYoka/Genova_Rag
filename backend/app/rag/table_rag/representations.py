@@ -494,8 +494,8 @@ def compact_table_prompt_block(
     if caption:
         lines.append(f"caption: {caption}")
     lines.append(
-        "LOOKUP RULE: match numeric axes to exact header bands; read only the "
-        "intersecting cell (never adjacent weight/IgE). Cite [row_idx,col_idx]."
+        "LOOKUP RULE: match query values to exact header bands; read only the "
+        "intersecting cell (never an adjacent column or row). Cite [row_idx,col_idx]."
     )
 
     keep_rows: Optional[List[int]] = None

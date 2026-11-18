@@ -1,10 +1,10 @@
 """Per-query RAG debug traces for retrieval / prompt investigations.
 
 True PII spans (emails, phones, SSN-like) are redacted when
-``RAG_DEBUG_REDACT=True`` (default). Clinical dosing vocabulary
-(``dose``, ``weight``, ``mg``, IgE bands, etc.) is intentionally NOT
-redacted — that is the document content admins need to inspect.
-Enable full prompt assembly via ``RAG_DEBUG_ENABLED=True``.
+``RAG_DEBUG_REDACT=True`` (default). Quantities, units, and table
+band labels are intentionally NOT redacted — that is the document
+content admins need to inspect. Enable full prompt assembly via
+``RAG_DEBUG_ENABLED=True``.
 """
 from __future__ import annotations
 
@@ -74,8 +74,8 @@ class RagDebugTrace:
 def redact_sensitive_spans(text: str) -> str:
     """Redact identity/credential PII only — keep clinical document text intact.
 
-    Older builds wiped ``dose``/``weight``/``mg``/IgE bands which destroyed
-    Xolair dosing tables in admin traces. That behavior is intentionally gone.
+    Older builds wiped quantity/unit/band vocabulary which destroyed
+    table content in admin traces. That behavior is intentionally gone.
     """
     if not text:
         return text

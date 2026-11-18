@@ -1,4 +1,4 @@
-"""Domain-agnostic caption recovery for empty Docling captions."""
+"""Domain-agnostic caption recovery for empty PDF table captions."""
 from __future__ import annotations
 
 from app.rag.ingestion.pdf_layout.caption_recovery import (

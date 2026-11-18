@@ -298,7 +298,8 @@ class Settings(BaseSettings):
     # Adjacent expand is expensive for table-heavy dosing questions; off by default.
     RAG_EXPAND_ADJACENT_FOR_TABLES: bool = False
     # Hard cap on assembled Document Context chars (~7–10k tokens for dense tables).
-    RAG_CONTEXT_MAX_CHARS: int = 28000
+    # Raised so one scoped full grid + pruned facts fit without truncating mid-table.
+    RAG_CONTEXT_MAX_CHARS: int = 36000
     # TableRAG: structured SQL storage + layout ``table`` vector chunks only.
     TABLE_RAG_ENABLED: bool = True
     TABLE_RAG_MAX_ROWS_PER_TABLE: int = 200
@@ -308,8 +309,11 @@ class Settings(BaseSettings):
     TABLE_RAG_ANSWER_TOP_K: int = 5
     # Slim markdown grids in prompts (vs per-cell [r,c|header]=value).
     TABLE_RAG_PROMPT_SLIM: bool = True
-    # Max body rows in the LLM table appendix (band match may shrink further).
+    # Max body rows in the LLM table appendix (structured lookups pass all rows).
     TABLE_RAG_PROMPT_MAX_ROWS: int = 8
+    # Fully expand top-N caption-overlapping tables into cell facts + full grid;
+    # remaining retrieved tables get a caption stub (budget + focus).
+    TABLE_RAG_FULL_FACT_TABLES: int = 4
     # Prefer hydrated table_prompt_block over duplicating chunk text.
     TABLE_RAG_SKIP_CHUNK_TEXT_WHEN_HYDRATED: bool = True
     # LLM table understanding during semantic chunking (interpretation only).
@@ -353,7 +357,7 @@ class Settings(BaseSettings):
     # When False, store metadata/scores/durations only (no full prompts/context).
     AI_TRACE_CAPTURE_PAYLOADS: bool = True
     # Optional emails/phones/SSN mask in stored traces. Off so admins can read
-    # real RAG chunks (dosing tables). Never strips clinical mg/kg/IgE text.
+    # real RAG chunks (including numeric tables). Never strips quantity/unit text.
     AI_TRACE_REDACT_PII: bool = False
     AI_TRACE_CHUNK_PREVIEW_CHARS: int = 4000
     AI_TRACE_RETENTION_DAYS: int = 30

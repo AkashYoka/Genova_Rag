@@ -37,7 +37,7 @@ QUIZ_MAX_BATCH_ATTEMPTS = 24
 
 # Explicit quiz/MCQ/assessment intent only — avoid matching ordinary "questions"/"test"
 # wording in normal document Q&A (e.g. "What questions appear…", "practice questions"
-# inside a factual ask, "Give me the dose").
+# inside a factual ask, "Give me the value").
 QUIZ_INTENT_RE = re.compile(
     r"(?:"
     r"\bquiz(?:zes)?\b|\bmcqs?\b|\bmultiple[\s-]?choice\b|"
@@ -68,7 +68,7 @@ SUMMARY_AND_QUIZ_RE = re.compile(
 )
 DOCUMENT_MODE_RE = re.compile(
     r"\b("
-    r"pdf|document|file|label|prescribing|this\s+doc|"
+    r"pdf|document|file|this\s+doc|"
     r"uploaded|indexed|based\s+on\s+(?:the\s+)?(?:pdf|document|file)"
     r")\b",
     re.IGNORECASE,
@@ -488,7 +488,7 @@ def _build_source_material(
             intent.topic_hint or "",
             flags=re.IGNORECASE,
         )
-        query = re.sub(r"\s+", " ", query).strip() or "key facts dosing indications safety"
+        query = re.sub(r"\s+", " ", query).strip() or "key facts requirements specifications summary"
         try:
             chunks = retrieve(
                 query=query,

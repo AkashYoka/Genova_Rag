@@ -148,7 +148,7 @@ def _clean_table_rows(rows: Sequence[Sequence[Any]]) -> List[List[str]]:
 _TABLE_CUE_RE = re.compile(
     r"(?i)\b("
     r"table\s*\d+|tbl\.?\s*\d+|"
-    r"dosing\s+table|dose\s+table|schedule\s+table|"
+    r"schedule\s+table|matrix|grid|"
     r"see\s+table|refer\s+to\s+table"
     r")\b"
 )

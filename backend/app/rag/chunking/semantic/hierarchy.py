@@ -10,9 +10,7 @@ from app.rag.chunking.semantic.types import SectionNode, SectionSpec, SourceBloc
 
 _WS_RE = re.compile(r"\s+")
 _MAX_TITLE = 500
-_TOC_TITLE_RE = re.compile(
-    r"(?i)^(?:table\s+of\s+)?contents\*?\s*$|prescribing\s+information:\s*contents"
-)
+_TOC_TITLE_RE = re.compile(r"(?i)^(?:table\s+of\s+)?contents\*?\s*$")
 
 
 def _is_toc_title(value: str) -> bool:

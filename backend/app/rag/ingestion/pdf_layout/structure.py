@@ -26,18 +26,16 @@ from app.rag.ingestion.pdf_layout.types import (
 _NUMBERED_HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,3})\s+\S")
 _CHAPTER_RE = re.compile(r"^(chapter|appendix|part|section)\b", re.I)
 _SENTENCE_END_RE = re.compile(r"[.!?;:]$")
-# Prescribing-info / manual TOCs: "1 INDICATIONS AND USAGE ........ 3"
+# Manual TOCs: "1 Overview ........ 3"
 _TOC_DOT_LEADER_RE = re.compile(r"\.{2,}\s*\d{1,4}\s*$")
 _TOC_NUMBERED_PAGE_RE = re.compile(
     r"^(\d+(?:\.\d+){0,3})\s+(.+?)\s+(\d{1,4})\s*$"
 )
 _CONTENTS_TITLE_RE = re.compile(
-    r"(?i)^(?:(?:full\s+)?prescribing\s+information:\s*)?contents\*?\s*$"
-    r"|^\s*table\s+of\s+contents\s*$"
+    r"(?i)^(?:table\s+of\s+)?contents\*?\s*$"
 )
 _TOC_EXIT_RE = re.compile(
-    r"(?i)^full\s+prescribing\s+information\s*$"
-    r"|^warning:\s*"
+    r"(?i)^warning:\s*"
     r"|^\d+(?:\.\d+)*\s+[A-Za-z].{2,}$"
 )
 
@@ -73,13 +71,11 @@ def is_contents_title(text: str) -> bool:
 
 
 def is_toc_exit_heading(text: str) -> bool:
-    """Body start after a CONTENTS listing (e.g. FULL PRESCRIBING INFORMATION)."""
+    """Body start after a CONTENTS listing (warning / numbered section)."""
     t = normalize_ws(text or "")
     if not t or looks_like_toc_entry(t) or is_contents_title(t):
         return False
-    if re.match(r"(?i)^full\s+prescribing\s+information\s*$", t):
-        return True
-    if re.match(r"(?i)^warning:\s*", t):
+    if _TOC_EXIT_RE.match(t):
         return True
     # Numbered section heading without trailing page number.
     return bool(_NUMBERED_HEADING_RE.match(t) and not _TOC_NUMBERED_PAGE_RE.match(t))

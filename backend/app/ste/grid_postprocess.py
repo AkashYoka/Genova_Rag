@@ -19,7 +19,7 @@ _RANGE_SPACED_HYPHEN_RE = re.compile(
 )
 # Short repeated unit / banner tokens (any domain).
 _UNIT_BANNER_RE = re.compile(
-    r"(?i)^(?:(?:dose|amount|value|unit|qty|quantity|rate|score|count|n|total)"
+    r"(?i)^(?:(?:amount|value|unit|qty|quantity|rate|score|count|n|total)"
     r"(?:\s*\([^)]{0,12}\))?|\([^)]{0,12}\))$"
 )
 _DEFAULT_UNAVAIL_FULL = re.compile(

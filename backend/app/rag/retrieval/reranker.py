@@ -93,7 +93,7 @@ class Reranker:
         query = _EX_Q
         documents = [
           {"text": "... schedule ... every 4 weeks ...", "page": 9, "score": 0.031},
-          {"text": "... asthma dosing table ...", "page": 5, "score": 0.028},
+          {"text": "... schedule table ...", "page": 5, "score": 0.028},
         ]
         pairs = [
           (_EX_Q, documents[0]["text"]),

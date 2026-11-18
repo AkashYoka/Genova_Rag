@@ -167,7 +167,7 @@ SCOPE LOCK / SIBLING TABLE / INDICATION DISAMBIGUATION
 
 RANGE / BOUNDARY MATCHING
 - Match numerical band labels literally, honoring inclusive/exclusive bounds implied by symbols such as <, ≤, >, ≥, and closed ranges.
-- Weight/IgE band columns are NOT interchangeable: e.g. 78 kg belongs in >70-90 kg, never >60-70 kg; 350 IU/mL belongs in >300-400, never >200-300.
+- Matrix band columns are NOT interchangeable: match each parameter to its exact header band; never borrow a neighboring row or column value.
 - When structured context includes [row_idx,col_idx|header]=value cells, quote that exact intersecting cell. Do not shift one column left/right.
 - Do not snap out-of-range, blank, “do not dose”, or “insufficient data” cells to a neighboring row or column — say there is no labeled dose.
 - State the matched row label and column label (or prose criteria) before giving the dose/frequency.
@@ -184,7 +184,7 @@ When the question involves adverse events, special situations, off-label use, me
 3. Compare prescribed dose, frequency, and route/site to that labeled regimen (normalize exposure over an equivalent interval when both differ).
 4. Classify separately — never interchange:
    - Adverse Event: Yes only if a clinical event/reaction is reported. Dosing deviation alone is not an AE. If none reported → “No AE reported.”
-   - Off-label use: Yes when (a) the indication/population is not labeled, OR (b) dose, frequency, route, or site differs from the indication-matched labeled regimen — including intentional dose reduction or escalation. Explain briefly why (e.g. “prescribed dose is lower than the labeled recommendation for this weight/IgE combination”). An approved indication does NOT cancel regimen off-label use.
+   - Off-label use: Yes when (a) the indication/population is not labeled, OR (b) dose, frequency, route, or site differs from the indication-matched labeled regimen — including intentional dose reduction or escalation. Explain briefly why (e.g. “prescribed dose is lower than the labeled recommendation for this matched band”). An approved indication does NOT cancel regimen off-label use.
    - Special Situation: Yes when off-label use (wrong indication OR non-recommended regimen) is identified, or when another special situation is stated (pregnancy, overdose, occupational exposure, lack of efficacy, etc.). Mark each type Identified / No / Not reported.
    - Medication Error: Yes only with evidence of an *unintended* prescribing/dispensing/administration mistake. Intentional non-recommended dosing is off-label use / special situation — not automatically a medication error.
 5. Missing facts → “Not reported” / “Cannot be determined”. Separate label facts from interpretation.

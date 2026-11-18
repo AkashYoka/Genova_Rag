@@ -301,13 +301,22 @@ def lines_from_detect_blocks(
 
 
 _BANNER_TOKEN_RE = re.compile(
-    r"(?i)^(?:dose|value|amount|unit|rate|freq(?:uency)?|"
-    r"total|count|%|\(\s*[a-zμµ/%]{1,6}\s*\))$"
+    r"(?i)^(?:"
+    r"value|amount|unit|rate|freq(?:uency)?|total|count|qty|quantity|%|"
+    r"\(\s*[a-zA-Zμµ%/²³.]{1,10}\s*\)|"
+    r"[a-z]{1,16}\s*\(\s*[a-zA-Zμµ%/²³.]{1,10}\s*\)"
+    r")$"
+)
+_RANGE_BAND_RE = re.compile(
+    r"(?i)(?:≥|>=|>|≤|<=|<)?\s*\d+(?:\.\d+)?\s*(?:–|-|—|to)\s*\d+(?:\.\d+)?"
+)
+_MULTI_RANGE_SPLIT_RE = re.compile(
+    r"(?i)(?=(?:≥|>=|>|≤|<=|<)\s*\d)|(?<=\d)\s+(?=(?:≥|>=|>|≤|<=|<)?\s*\d)"
 )
 
 
 def _is_label_banner_row(row: Sequence[str]) -> bool:
-    """Detect non-data banner rows like blank|blank|Dose|(mg)|blank."""
+    """Detect non-data banner rows like blank|blank|Amount|($)|blank."""
     cells = [normalize_ws(c) for c in row]
     nonempty = [c for c in cells if c]
     if len(nonempty) < 2 or len(nonempty) > max(3, len(cells) // 3):
@@ -322,17 +331,8 @@ def _is_label_banner_row(row: Sequence[str]) -> bool:
     return True
 
 
-_DOSE_UNIT_RE = re.compile(r"(?i)^(?:dose(?:\s*\(\s*mg\s*\))?|\(\s*mg\s*\))$")
-_WEIGHT_RANGE_RE = re.compile(
-    r"(?i)(?:≥|>=|>|≤|<=|<)?\s*\d+(?:\.\d+)?\s*(?:–|-|—|to)\s*\d+(?:\.\d+)?"
-)
-_MULTI_WEIGHT_SPLIT_RE = re.compile(
-    r"(?i)(?=(?:≥|>=|>|≤|<=|<)\s*\d)|(?<=\d)\s+(?=(?:≥|>=|>|≤|<=|<)?\s*\d)"
-)
-
-
-def _is_unit_dose_row(row: Sequence[str]) -> bool:
-    """True when value columns are mostly Dose/(mg) banners (even if keys filled)."""
+def _is_unit_banner_row(row: Sequence[str]) -> bool:
+    """True when value columns are mostly short unit/measure banners."""
     cells = [normalize_ws(c) for c in row]
     if len(cells) < 3:
         return False
@@ -340,19 +340,35 @@ def _is_unit_dose_row(row: Sequence[str]) -> bool:
     nonempty = [c for c in value_cells if c]
     if not nonempty:
         return False
-    doseish = sum(1 for c in nonempty if _DOSE_UNIT_RE.match(c))
-    # Sparse geometry often parks a single Dose/(mg) under the matrix.
-    if doseish >= 1 and doseish == len(nonempty):
+    bannerish = sum(1 for c in nonempty if _BANNER_TOKEN_RE.match(c))
+    if bannerish >= 1 and bannerish == len(nonempty):
+        return True
+    # Repeated identical short label across non-numeric value cells.
+    labels = [
+        c
+        for c in nonempty
+        if not (re.search(r"\d", c) and not c.startswith("("))
+    ]
+    if (
+        len(labels) >= 2
+        and len({c.lower() for c in labels}) == 1
+        and len(labels[0]) <= 24
+        and re.match(r"(?i)^[a-z(]", labels[0])
+    ):
         return True
     if len(nonempty) < 2:
         return False
-    return doseish >= max(2, (len(nonempty) + 1) // 2)
+    return bannerish >= max(2, (len(nonempty) + 1) // 2)
 
 
-def _split_jammed_weight_header(text: str) -> List[str]:
+# Back-compat alias for older call sites / tests.
+_is_unit_dose_row = _is_unit_banner_row
+
+
+def _split_jammed_range_header(text: str) -> List[str]:
     """Split ``≥10-12 >12-15 >15-20 …`` smashed into one header cell."""
     token = normalize_ws(text)
-    if not token or not _WEIGHT_RANGE_RE.search(token):
+    if not token or not _RANGE_BAND_RE.search(token):
         return [token] if token else []
     ranges = re.findall(
         r"(?i)(?:≥|>=|>|≤|<=|<)?\s*\d+(?:\.\d+)?\s*(?:–|-|—|to)\s*\d+(?:\.\d+)?",
@@ -361,16 +377,20 @@ def _split_jammed_weight_header(text: str) -> List[str]:
     if len(ranges) < 2:
         return [token]
     parts = [
-        normalize_ws(p) for p in _MULTI_WEIGHT_SPLIT_RE.split(token) if normalize_ws(p)
+        normalize_ws(p) for p in _MULTI_RANGE_SPLIT_RE.split(token) if normalize_ws(p)
     ]
     cleaned: List[str] = []
     for part in parts:
-        part = re.sub(r"(?i)\bbody\s*weight\b", "", part)
-        part = re.sub(r"(?i)\bdose\b|\(\s*mg\s*\)|\bkg\b", "", part)
+        part = re.sub(r"(?i)\(\s*[a-zA-Zμµ%/²³.]{1,10}\s*\)", "", part)
+        part = re.sub(r"(?i)\b(?:value|amount|unit|rate|total|count)\b", "", part)
         part = normalize_ws(part)
-        if part and _WEIGHT_RANGE_RE.search(part):
+        if part and _RANGE_BAND_RE.search(part):
             cleaned.append(part)
     return cleaned if len(cleaned) >= 2 else [token]
+
+
+_split_jammed_weight_header = _split_jammed_range_header
+_WEIGHT_RANGE_RE = _RANGE_BAND_RE
 
 
 def _expand_jammed_header_columns(
@@ -380,7 +400,7 @@ def _expand_jammed_header_columns(
 ) -> Tuple[List[str], List[List[str]], List[List[str]]]:
     """Spread smashed multi-range headers into neighboring empty/Column-N leaves.
 
-    Geometry often keeps one body column per weight band but OCR packs several
+    Geometry often keeps one body column per band but OCR packs several
     band labels into a single header cell (leaving ``Column N`` placeholders).
     Redistribute labels across those weak neighbors — do not insert columns.
     """
@@ -397,7 +417,7 @@ def _expand_jammed_header_columns(
     jam_col = -1
     jam_parts: List[str] = []
     for ci, h in enumerate(headers):
-        parts = _split_jammed_weight_header(h)
+        parts = _split_jammed_range_header(h)
         if len(parts) >= 3:
             jam_col = ci
             jam_parts = parts
@@ -410,8 +430,7 @@ def _expand_jammed_header_columns(
         return (
             not h
             or _is_weak_header_label(h)
-            or _DOSE_UNIT_RE.match(h) is not None
-            or h.lower() in {"kg", "body weight", "body weight (kg)"}
+            or bool(_BANNER_TOKEN_RE.match(h))
             or ci == jam_col
         )
 
@@ -440,60 +459,29 @@ def _expand_jammed_header_columns(
             header_rows[-1][ci] = band
             for ri in range(len(header_rows) - 1):
                 cell = normalize_ws(header_rows[ri][ci])
-                if cell and len(_split_jammed_weight_header(cell)) >= 3:
+                if cell and len(_split_jammed_range_header(cell)) >= 3:
                     header_rows[ri][ci] = ""
     return headers, header_rows, body
 
 
-def _compose_weight_dose_leaf(parts: Sequence[str]) -> str:
-    """Build ``Body Weight {band} kg Dose (mg)`` from stacked header path parts."""
-    cleaned = [normalize_ws(p) for p in parts if normalize_ws(p)]
-    if not cleaned:
-        return ""
-    band = ""
-    has_body_weight = False
-    has_dose = False
-    has_kg = False
-    other: List[str] = []
-    for part in cleaned:
-        low = part.lower()
-        if "body" in low and "weight" in low:
-            has_body_weight = True
-            m = _WEIGHT_RANGE_RE.search(part)
-            if m and not band:
-                band = normalize_ws(m.group(0))
+def _compose_header_leaf(parts: Sequence[str]) -> str:
+    """Join stacked header-path parts as-is — never invent domain labels."""
+    cleaned: List[str] = []
+    for part in parts:
+        text = normalize_ws(part)
+        if not text:
             continue
-        if low in {"weight", "body"}:
-            has_body_weight = True
+        if cleaned and cleaned[-1].lower() == text.lower():
             continue
-        if _DOSE_UNIT_RE.match(part) or low in {"dose", "(mg)", "mg"}:
-            has_dose = True
-            continue
-        if low == "kg":
-            has_kg = True
-            continue
-        if _WEIGHT_RANGE_RE.search(part):
-            band = normalize_ws(part)
-            continue
-        other.append(part)
-    if band or has_body_weight or has_dose:
-        bits: List[str] = []
-        if has_body_weight or band:
-            bits.append("Body Weight")
-        if band:
-            bits.append(band)
-        if has_kg or band:
-            bits.append("kg")
-        if has_dose:
-            bits.append("Dose (mg)")
-        if other and not band:
-            bits.extend(other)
-        return normalize_ws(" ".join(bits))
+        cleaned.append(text)
     return normalize_ws(" ".join(cleaned))
 
 
-def _is_weight_label_row(row: Sequence[str]) -> bool:
-    """True for jammed/sparse weight-band label rows still sitting in body."""
+_compose_weight_dose_leaf = _compose_header_leaf
+
+
+def _is_range_label_row(row: Sequence[str]) -> bool:
+    """True for jammed/sparse range-band label rows still sitting in body."""
     cells = [normalize_ws(c) for c in row]
     if not cells or cells[0]:
         return False
@@ -501,9 +489,9 @@ def _is_weight_label_row(row: Sequence[str]) -> bool:
     if not nonempty:
         return False
     for cell in nonempty:
-        if len(_split_jammed_weight_header(cell)) >= 2:
+        if len(_split_jammed_range_header(cell)) >= 2:
             return True
-    rangeish = sum(1 for c in nonempty if _WEIGHT_RANGE_RE.search(c))
+    rangeish = sum(1 for c in nonempty if _RANGE_BAND_RE.search(c))
     pure_nums = sum(1 for c in nonempty if _PURE_NUM_RE.match(c))
     if rangeish and pure_nums == 0:
         return True
@@ -512,6 +500,9 @@ def _is_weight_label_row(row: Sequence[str]) -> bool:
     if rangeish == len(nonempty):
         return True
     return False
+
+
+_is_weight_label_row = _is_range_label_row
 
 
 def _leaf_headers(header_rows: Sequence[Sequence[str]]) -> List[str]:
@@ -533,27 +524,8 @@ def _leaf_headers(header_rows: Sequence[Sequence[str]]) -> List[str]:
         if not parts:
             leaves.append(f"Column {c + 1}")
             continue
-        composed = _compose_weight_dose_leaf(parts)
-        if composed and (
-            _WEIGHT_RANGE_RE.search(composed)
-            or "dose" in composed.lower()
-            or "weight" in composed.lower()
-        ):
-            leaves.append(composed)
-            continue
-        child = parts[-1]
-        if len(parts) >= 2 and re.search(r"\d", child) and not re.search(r"\d", parts[0]):
-            dose_bits = [
-                p for p in parts[:-1] if _DOSE_UNIT_RE.match(p) or p.lower() == "kg"
-            ]
-            if dose_bits:
-                leaves.append(_compose_weight_dose_leaf(parts))
-            else:
-                leaves.append(child)
-        elif len(parts) > 1:
-            leaves.append(normalize_ws(" ".join(parts)))
-        else:
-            leaves.append(child)
+        # Always join stacked path parts; never invent missing domain words.
+        leaves.append(_compose_header_leaf(parts) if len(parts) > 1 else parts[0])
     return leaves
 
 
@@ -618,23 +590,23 @@ _HEADERISH_TOKEN_RE = re.compile(
 
 
 def _is_data_row(row: Sequence[str]) -> bool:
-    """True when a row looks like table body (dose integers / IgE bins)."""
+    """True when a row looks like table body (numeric values / range keys)."""
     cells = [normalize_ws(c) for c in row]
     nonempty = [c for c in cells if c]
     if not nonempty:
         return False
-    # Dose/(mg) / weight-label banner rows are header bands, not body.
-    if _is_unit_dose_row(cells) or _is_weight_label_row(cells):
+    # Unit-banner / range-label rows are header bands, not body.
+    if _is_unit_banner_row(cells) or _is_range_label_row(cells):
         return False
     pure_nums = sum(1 for c in nonempty if _PURE_NUM_RE.match(c))
-    doseish = sum(1 for c in nonempty if _DOSE_UNIT_RE.match(c))
-    if doseish and doseish >= pure_nums:
+    bannerish = sum(1 for c in nonempty if _BANNER_TOKEN_RE.match(c))
+    if bannerish and bannerish >= pure_nums:
         return False
     if (not cells[0]) and pure_nums == len(nonempty) and pure_nums <= 3:
         return False
     if pure_nums >= 2:
         return True
-    # IgE/range key + at least one numeric dose.
+    # Range/key cell + at least one numeric value.
     if cells and re.search(r"\d", cells[0]) and pure_nums >= 1:
         if re.search(r"[<>≥≤]|-|to", cells[0], re.I):
             return True
@@ -830,15 +802,15 @@ def _finalize_geometry_table(
     for row in body:
         if (
             _is_label_banner_row(row)
-            or _is_unit_dose_row(row)
-            or _is_weight_label_row(row)
+            or _is_unit_banner_row(row)
+            or _is_range_label_row(row)
         ):
             header_rows.append(_pad_row(row, width))
             for ci, cell in enumerate(row):
                 token = normalize_ws(cell)
                 if not token:
                     continue
-                if _WEIGHT_RANGE_RE.search(token):
+                if _RANGE_BAND_RE.search(token):
                     if ci < len(headers) and not normalize_ws(headers[ci]):
                         if not _PURE_NUM_RE.match(token):
                             headers[ci] = token
@@ -846,9 +818,9 @@ def _finalize_geometry_table(
                 if ci < len(headers) and not normalize_ws(headers[ci]):
                     headers[ci] = token
                 elif ci < len(headers) and token.lower() not in headers[ci].lower():
-                    if (
-                        _BANNER_TOKEN_RE.match(token) or _DOSE_UNIT_RE.match(token)
-                    ) and not re.search(r"\d", headers[ci]):
+                    if _BANNER_TOKEN_RE.match(token) and not re.search(
+                        r"\d", headers[ci]
+                    ):
                         headers[ci] = f"{headers[ci]} {token}".strip()
             continue
         cleaned_body.append(row)
@@ -856,10 +828,10 @@ def _finalize_geometry_table(
     headers, header_rows, body = _expand_jammed_header_columns(
         headers, header_rows, body
     )
-    # Second pass: Dose/(mg) banners can sit after the first real key row.
+    # Second pass: unit banners can sit after the first real key row.
     kept_body: List[List[str]] = []
     for row in body:
-        if _is_unit_dose_row(row) or _is_weight_label_row(row):
+        if _is_unit_banner_row(row) or _is_range_label_row(row):
             header_rows.append(_pad_row(row, max(len(row), len(headers), 1)))
             continue
         kept_body.append(row)
@@ -875,18 +847,7 @@ def _finalize_geometry_table(
     )
     if header_rows:
         headers = _leaf_headers(header_rows)
-    # Ensure pure weight-band leaves get Body Weight / kg / Dose composition.
-    composed_leaves: List[str] = []
-    for h in _pad_row(headers, width):
-        if _WEIGHT_RANGE_RE.search(h) and "body weight" not in h.lower():
-            composed_leaves.append(
-                _compose_weight_dose_leaf([h, "Dose (mg)"])
-                if not _DOSE_UNIT_RE.search(h)
-                else _compose_weight_dose_leaf([h])
-            )
-        else:
-            composed_leaves.append(h)
-    headers = composed_leaves
+    headers = _pad_row(headers, width)
 
     if not body and not headers:
         return None

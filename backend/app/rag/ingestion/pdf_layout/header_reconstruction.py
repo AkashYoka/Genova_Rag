@@ -17,7 +17,7 @@ from app.rag.ingestion.pdf_layout.types import normalize_ws
 _DIGIT_RE = re.compile(r"\d")
 # Parenthesized units like "(mg)" or explicit banner tokens — not free words.
 _UNITISH_RE = re.compile(
-    r"(?i)^(?:\(\s*[a-zA-Zμµ%/²³]{1,8}\s*\)|dose|value|amount|unit|rate|"
+    r"(?i)^(?:\(\s*[a-zA-Zμµ%/²³]{1,8}\s*\)|value|amount|unit|rate|"
     r"freq(?:uency)?|total|count|%)$"
 )
 _FREQ_FRAGMENT_RE = re.compile(
@@ -388,13 +388,13 @@ def _reconstruct_frequency_column(rows: List[List[str]]) -> List[str]:
 
 
 def _reconstruct_split_phrase_cells(rows: List[List[str]]) -> List[str]:
-    """Join horizontally adjacent unsupported-phrase fragments in a row.
+    """Join horizontally adjacent unavailable-phrase fragments in a row.
 
-    Example: ``Insufficient`` | ``Data`` | ``to Recommend`` | ``a Dose``.
+    Example: ``Insufficient`` | ``Data`` | ``Not`` | ``Applicable``.
     """
     warnings: List[str] = []
     phrase_token = re.compile(
-        r"(?i)^(?:insufficient|data|to|recommend|a|dose|not|applicable|n/?a)$"
+        r"(?i)^(?:insufficient|data|not|available|applicable|reported|n/?a|nil|none|to|a|the|of|for|and)$"
     )
     for ri, row in enumerate(rows):
         width = len(row)

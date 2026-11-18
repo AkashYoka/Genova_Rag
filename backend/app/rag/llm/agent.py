@@ -679,6 +679,21 @@ def _table_json_appendix(chunk: Dict[str, Any], *, max_rows: Optional[int] = Non
     return "\n".join(lines)
 
 
+def _answer_temperature(question: str) -> float:
+    """Use greedy decoding for structured table lookups; else configured default."""
+    try:
+        from app.rag.table_rag.routing import route_query
+
+        if route_query(question or "").wants_structured_lookup:
+            return 0.0
+    except Exception:
+        pass
+    try:
+        return float(settings.LLM_TEMPERATURE)
+    except Exception:
+        return 0.3
+
+
 def _format_context(chunks: List[Dict[str, Any]]) -> str:
     """Build the evidence block for ``RAG_PROMPT_TEMPLATE`` ``{context}``.
 
@@ -775,133 +790,16 @@ def _apply_table_interpretation(
     return context, sources, list(chunks or [])
 
 
-_LEADING_DOSE_RE = re.compile(
-    r"(?is)^(?:.{0,280}?)(?:\*\*)?(\d{2,4}(?:\.\d+)?)\s*mg(?:\*\*)?"
-)
-
-
-def _verified_meta_from_sources(sources: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    for src in sources or []:
-        meta = src.get("verified_cell") or src.get("verified_calculation")
-        if isinstance(meta, dict) and meta.get("value") is not None:
-            return meta
-    return None
-
-
-_TABLE_GATE_PREFIXES = (
-    "Inconclusive —",
-    "Inconclusive -",
-    "I could not verify a unique row–column cell",
-)
-
-
-def _is_table_gate_message(text: str) -> bool:
-    """True when ``text`` is already a gate response (keeps reconcile idempotent)."""
-    body = (text or "").strip()
-    return any(body.startswith(prefix) for prefix in _TABLE_GATE_PREFIXES)
-
-
 def _streaming_gate_message(sources: List[Dict[str, Any]]) -> Optional[str]:
     """Table evidence gate removed — always stream the normal answer."""
     _ = sources
     return None
 
 
-def _format_table_evidence_failure(hard: Dict[str, Any]) -> str:
-    """Legacy table-evidence abstain formatter (path removed; kept for safety)."""
-    status = str(hard.get("status") or "not_found")
-    dims = [str(d) for d in (hard.get("missing_dimensions") or []) if d]
-    candidates = hard.get("candidate_values") or []
-    table_ids = hard.get("candidate_table_ids") or []
-    reason = str(hard.get("reason") or "").strip()
-    verification = str(hard.get("verification_status") or status)
-    state = "invalid" if status in {
-        "invalid_table_structure",
-        "verification_failed",
-        "empty_cell",
-        "selector_failed",
-        "out_of_range",
-    } else "insufficient"
-    if state == "invalid":
-        lines = [
-            "Inconclusive — the retrieved table structure cannot support "
-            "reliable verification.",
-            "Insufficient table evidence: no row–column cell can be verified "
-            "from this structure.",
-        ]
-        if table_ids:
-            lines.append(
-                "- Candidate tables: "
-                + ", ".join(str(t) for t in table_ids[:8] if t)
-            )
-        if reason:
-            lines.append(f"- Reason: {reason}")
-        lines.append(f"- Verification status: {verification}")
-        lines.append(
-            "I am not stating a definitive labeled value, classification, or "
-            "compliance conclusion from this evidence."
-        )
-        return "\n".join(lines)
-    if status == "ambiguous" or (
-        isinstance(candidates, list) and len(candidates) > 1
-    ):
-        lines = [
-            "Inconclusive — table evidence is ambiguous.",
-            "I cannot confirm a labeled regimen, on-label/off-label status, or "
-            "dosing deviation until the applicable table/cell is uniquely resolved.",
-        ]
-        if dims:
-            lines.append(f"- Unresolved applicability: {', '.join(dims[:6])}")
-        if table_ids:
-            lines.append(
-                "- Candidate tables: "
-                + ", ".join(str(t) for t in table_ids[:8] if t)
-            )
-        if candidates:
-            lines.append(
-                "- Conflicting candidate values (not verified): "
-                + ", ".join(str(v) for v in candidates[:8])
-            )
-        if reason:
-            lines.append(f"- Reason: {reason}")
-        lines.append(f"- Verification status: {verification}")
-        lines.append(
-            "Please specify the missing applicability constraint, or ask about "
-            "one cited table by number/caption."
-        )
-        return "\n".join(lines)
-    evidence_page = hard.get("evidence_page")
-    evidence_caption = str(hard.get("evidence_caption") or "").strip()
-    lines = [
-        "Inconclusive — no uniquely verified table cell is available.",
-        "Insufficient table evidence: no row–column cell in the retrieved "
-        "tables uniquely answers this question, so I am not inventing a "
-        "matrix value.",
-    ]
-    if evidence_caption or evidence_page:
-        where = []
-        if evidence_caption:
-            where.append(evidence_caption)
-        if evidence_page:
-            where.append(f"page {evidence_page}")
-        lines.append("- Cited table: " + " — ".join(where))
-    if table_ids:
-        lines.append(
-            "- Candidate tables: " + ", ".join(str(t) for t in table_ids[:8] if t)
-        )
-    if reason:
-        lines.append(f"- Reason: {reason}")
-    lines.append(f"- Verification status: {verification}")
-    return "\n".join(lines)
-
-
 _LEAK_DIRECTIVE_RE = re.compile(
     r"(?i)(must state this value|your final answer must|takeaway value must|"
-    r"cite this page|provenance rule|do not treat the label cell|"
-    r"compare the stated amount|any other conflicting numeric value|"
-    r"coordinate verification|same-row verified field|"
-    r"do not borrow a dose or frequency|evaluate in order before stating|"
-    r"do not replace it with a neighboring)"
+    r"cite this page|provenance rule|coordinate verification|"
+    r"evaluate in order before stating|do not replace it with a neighboring)"
 )
 
 
@@ -923,586 +821,11 @@ def _strip_prompt_leaks(text: str) -> str:
     return cleaned or text
 
 
-_MG_AMOUNT_RE = re.compile(r"(?i)(\d{2,4}(?:\.\d+)?)\s*mg\b")
-_SCHEDULE_CLAIM_RE = re.compile(r"(?i)\bevery\s+(\d+)\s*(weeks?|days?|months?)\b")
-_LABEL_CLAIM_RE = re.compile(
-    r"(?i)\b(label|labeled|labelled|table\s+\d|dosing table|recommended|"
-    r"regimen|dose|dosing)\b"
-)
-
-
-def _verified_schedule(meta: Dict[str, Any]) -> Optional[str]:
-    """Schedule cell from the verified row (e.g. ``Every 4 weeks``)."""
-    evidence = meta.get("evidence") or {}
-    for value in (evidence.get("row_fields") or {}).values():
-        m = _SCHEDULE_CLAIM_RE.search(str(value))
-        if m:
-            return f"every {m.group(1)} {m.group(2).lower()}"
-    return None
-
-
-def _harmonize_label_claims(
-    text: str,
-    verified_num: str,
-    meta: Dict[str, Any],
-) -> str:
-    """Rewrite label sentences that contradict the verified cell.
-
-    Only sentences that carry label language, cite a different amount, and do
-    not already contain the verified amount are rewritten, so enumerations and
-    comparative prose stay intact. Table rows are never rewritten.
-    """
-    if not text:
-        return text
-    schedule = _verified_schedule(meta)
-    parts = re.split(r"((?<=[.!?])\s+)", text)
-    for i in range(0, len(parts), 2):
-        sentence = parts[i]
-        stripped = sentence.lstrip()
-        if (
-            verified_num in sentence
-            or not _LABEL_CLAIM_RE.search(sentence)
-            or not _MG_AMOUNT_RE.search(sentence)
-            or stripped.startswith("|")
-        ):
-            continue
-        sentence = _MG_AMOUNT_RE.sub(f"{verified_num} mg", sentence)
-        if schedule:
-            sentence = _SCHEDULE_CLAIM_RE.sub(schedule, sentence)
-        parts[i] = sentence
-    return "".join(parts).strip()
-
-
-_UNIT_ALIAS_GROUPS = (
-    frozenset({"mg", "milligram", "milligrams"}),
-    frozenset({"g", "gram", "grams"}),
-    frozenset({"mcg", "µg", "μg", "ug", "microgram", "micrograms"}),
-    frozenset({"ml", "milliliter", "millilitre", "milliliters"}),
-    frozenset({"iu", "units", "unit"}),
-)
-# Any of these on a verified mg/g dose cell is treated as a conflict.
-_DOSE_UNIT_CONFLICTS = frozenset(
-    {
-        "iu",
-        "units",
-        "unit",
-        "mcg",
-        "µg",
-        "μg",
-        "ug",
-        "µ",
-        "μ",
-        "microgram",
-        "micrograms",
-    }
-)
-
-
-def _normalize_unit_token(unit: str) -> str:
-    text = (unit or "").lower().replace("µ", "μ").replace("μg", "mcg")
-    return re.sub(r"[^a-zμ%]", "", text)
-
-
-def _units_equivalent(a: str, b: str) -> bool:
-    na, nb = _normalize_unit_token(a), _normalize_unit_token(b)
-    if not na or not nb:
-        return True
-    if na == nb:
-        return True
-    for group in _UNIT_ALIAS_GROUPS:
-        if na in group and nb in group:
-            return True
-    return False
-
-
-def _is_ige_axis_context(text: str, start: int, end: int) -> bool:
-    """True when a number+IU(/mL) span is describing IgE/serum, not a dose.
-
-    Only inspects text *before* the span (plus a tiny trailing allowance for
-    punctuation) so a later ``IgE 350 IU/mL`` sentence cannot poison a dose claim.
-    """
-    window = (text[max(0, start - 56) : min(len(text), end + 2)] or "").lower()
-    return bool(
-        re.search(
-            r"\b(ige|ig\s*e|serum|pretreatment|pre-treatment|anti-ige)\b",
-            window,
-        )
-    )
-
-
-def _harmonize_verified_units(text: str, verified_num: str, verified_unit: str) -> str:
-    """Rewrite wrong units attached to the verified amount (e.g. 300 IU → 300 mg).
-
-    Also rewrites mistaken dose claims like ``300 IU/mL`` when the verified cell
-    unit is mg — unless the span is clearly an IgE/serum axis mention.
-    """
-    if not text or not verified_num or not verified_unit:
-        return text
-    vu = verified_unit.strip()
-    # Bold compound mistaken dose units: **300 IU/mL every 2 weeks**
-    bold_compound = re.compile(
-        rf"(?i)\*\*(?<!\d)({re.escape(verified_num)})\s*"
-        rf"IU\s*/\s*(?:mL|ml)([^*]*)\*\*"
-    )
-
-    def _bold_compound_repl(match: re.Match[str]) -> str:
-        if _units_equivalent("iu", vu):
-            return match.group(0)
-        if _is_ige_axis_context(text, match.start(), match.end()):
-            return match.group(0)
-        return f"**{match.group(1)} {vu}{match.group(2)}**"
-
-    out = bold_compound.sub(_bold_compound_repl, text)
-
-    # Bare compound mistaken dose units: 300 IU/mL
-    compound = re.compile(
-        rf"(?i)(?<!\d)({re.escape(verified_num)})\s*IU\s*/\s*(?:mL|ml)\b"
-    )
-
-    def _compound_repl(match: re.Match[str]) -> str:
-        if _units_equivalent("iu", vu):
-            return match.group(0)
-        if _is_ige_axis_context(out, match.start(), match.end()):
-            return match.group(0)
-        return f"{match.group(1)} {vu}"
-
-    out = compound.sub(_compound_repl, out)
-
-    pattern = re.compile(
-        rf"(?i)(?<!\d)({re.escape(verified_num)})\s*"
-        rf"(\*\*)?\s*([A-Za-zμµ%]{{1,12}})\b"
-    )
-
-    def _repl(match: re.Match[str]) -> str:
-        found_unit = match.group(3)
-        after = out[match.end() : match.end() + 1]
-        # Leave true IgE axis mentions (number IU/mL near IgE language).
-        if (after == "/" or "/" in found_unit) and _is_ige_axis_context(
-            out, match.start(), match.end()
-        ):
-            return match.group(0)
-        if _units_equivalent(found_unit, vu):
-            return match.group(0)
-        star = match.group(2) or ""
-        if star:
-            return f"{match.group(1)} {star}{vu}{star}"
-        return f"{match.group(1)} {vu}"
-
-    # Also catch markdown-bold forms: **300 IU** / **300 µg** / **300 μg**
-    bold_pat = re.compile(
-        rf"(?i)\*\*{re.escape(verified_num)}\s*"
-        rf"([A-Za-zμµ%]{{1,12}})\*\*"
-    )
-
-    def _bold_repl(match: re.Match[str]) -> str:
-        found = match.group(1)
-        if _units_equivalent(found, vu):
-            return match.group(0)
-        return f"**{verified_num} {vu}**"
-
-    out = bold_pat.sub(_bold_repl, out)
-    out = pattern.sub(_repl, out)
-
-    # Final sweep for microgram / IU / units glued to the verified amount when
-    # the authoritative unit is mg/g (OCR often emits µg / μg / mcg / IU).
-    if _normalize_unit_token(vu) in {"mg", "g"}:
-        sweep = re.compile(
-            rf"(?i)(\*\*)?(?<!\d)({re.escape(verified_num)})\s*"
-            rf"(µg|μg|mcg|ug|iu|units?|µ|μ)(\*\*)?"
-        )
-
-        def _sweep_repl(match: re.Match[str]) -> str:
-            found = match.group(3)
-            if _units_equivalent(found, vu):
-                return match.group(0)
-            if _normalize_unit_token(found) in {"iu"} and _is_ige_axis_context(
-                out, match.start(), match.end()
-            ):
-                return match.group(0)
-            star_l = match.group(1) or ""
-            star_r = match.group(4) or star_l
-            if star_l or star_r:
-                return f"**{match.group(2)} {vu}**"
-            return f"{match.group(2)} {vu}"
-
-        out = sweep.sub(_sweep_repl, out)
-    return out
-
-
-def _answer_has_verified_unit_conflict(
-    text: str, verified_num: str, verified_unit: str
-) -> bool:
-    """True when the verified amount appears with a conflicting unit."""
-    if not text or not verified_num or not verified_unit:
-        return False
-    # Mistaken dose as IU/mL counts as conflict unless IgE-context.
-    for m in re.finditer(
-        rf"(?i)(?<!\d){re.escape(verified_num)}\s*IU\s*/\s*(?:mL|ml)\b",
-        text[:900],
-    ):
-        if not _is_ige_axis_context(text, m.start(), m.end()):
-            return True
-    for m in re.finditer(
-        rf"(?i)(?<!\d){re.escape(verified_num)}\s*"
-        rf"(?:\*\*)?\s*([A-Za-zμµ%]{{1,12}})\b",
-        text[:900],
-    ):
-        found = m.group(1)
-        tail = text[m.end() : m.end() + 3]
-        if (tail.startswith("/") or "/" in found) and _is_ige_axis_context(
-            text, m.start(), m.end()
-        ):
-            continue
-        if not _units_equivalent(found, verified_unit):
-            return True
-    return False
-
-
-def _reconcile_answer_inner(
-    answer: str,
-    sources: List[Dict[str, Any]],
-) -> str:
-    """If the model contradicts a verified cell, pin the authoritative value.
-
-    Domain-agnostic: for pure lookups, the leading amount must match the cell.
-    For compare-mode (stated administered amount vs label cell), only ensure the
-    label cell appears — do not rewrite the takeaway to the label amount.
-    Also pins ``VerifiedCalculation`` results the same way as ``VerifiedCell``.
-
-    Hard ambiguous / failed verification: replace any definitive conclusion with
-    a clarification-only response (never append a warning under a confident answer).
-    """
-    from app.rag.table_rag.telemetry import record_answer_state, record_reconcile_action
-
-    if _is_table_gate_message(answer):
-        record_answer_state("gate")
-        record_reconcile_action("none")
-        return answer
-    meta = _verified_meta_from_sources(sources)
-    if meta and str(meta.get("status") or "matched") in ("", "matched", "calculated"):
-        record_answer_state("verified_cell")
-    else:
-        record_answer_state("not_applicable")
-    if not meta:
-        # Hard insufficient / ambiguous: force abstain framing.
-        # Soft insufficient: allow prose RAG without boilerplate.
-        hard = [
-            s
-            for s in (sources or [])
-            if s.get("insufficient_table_evidence") and not s.get("soft_insufficient")
-        ]
-        if hard:
-            candidates = hard[0].get("candidate_values") or []
-            status = str(hard[0].get("status") or "")
-            # Unique candidate value with no multi-table conflict — keep prose.
-            if (
-                status == "ambiguous"
-                and isinstance(candidates, list)
-                and len(candidates) == 1
-                and len(hard[0].get("candidate_table_ids") or []) <= 1
-            ):
-                record_reconcile_action("none")
-                return answer
-            if status in {
-                "ambiguous",
-                "verification_failed",
-                "empty_cell",
-                "invalid_table_structure",
-                "selector_failed",
-                "out_of_range",
-            } or (isinstance(candidates, list) and len(candidates) > 1):
-                record_reconcile_action("abstain_replaced")
-                return _format_table_evidence_failure(hard[0])
-            # Hard not_found / other: replace definitive matrix claims.
-            body = (answer or "").strip()
-            if re.search(
-                r"(?i)\b(label recommends?|verified label|authoritative verified|"
-                r"clinical takeaway|matrix value|table recommends?)\b",
-                body,
-            ):
-                record_reconcile_action("abstain_replaced")
-                return _format_table_evidence_failure(hard[0])
-            record_reconcile_action("abstain_banner_injected")
-            return (
-                "I could not verify a unique row–column cell in the retrieved "
-                "tables, so I am not inventing a matrix value.\n\n"
-                + body
-            ).strip()
-        record_reconcile_action("none")
-        return answer
-
-    # Only pin answers for matched verified cells / calculations.
-    if str(meta.get("status") or "matched") not in ("", "matched", "calculated"):
-        record_reconcile_action("none")
-        return answer
-
-    raw_val = str(meta.get("value") or "").strip()
-    if not raw_val:
-        record_reconcile_action("none")
-        return answer
-    compare_mode = bool(
-        meta.get("compare_mode")
-        or (meta.get("evidence") or {}).get("prescribed_value") is not None
-    )
-    is_calculation = bool(meta.get("calculation"))
-    # Do not pin axis/category labels (row-header text mistaken as the cell).
-    # Generic safeguard: value equals a row header AND column is not a value field.
-    row_headers = [str(h or "").strip() for h in (meta.get("row_headers") or []) if h]
-    col_blob = " ".join(str(h or "") for h in (meta.get("col_headers") or []))
-    if row_headers and any(
-        raw_val.lower() == h.lower() for h in row_headers
-    ) and not re.search(
-        r"(?i)\b(dose|amount|value|price|cost|rate|qty|quantity|total|limit|strength|result)\b",
-        col_blob,
-    ):
-        record_reconcile_action("none")
-        return answer
-    # Do not pin schedule/frequency cells as the authoritative matrix value —
-    # they corrupt dose answers when selected as the sole verified token.
-    if re.search(r"(?i)\bfreq|frequency|schedule|interval\b", col_blob) or (
-        re.search(r"(?i)^every\s+\d+", raw_val)
-        and not re.search(
-            r"(?i)\b(dose|amount|value|price|cost|rate|qty|quantity|total|limit|strength|result)\b",
-            col_blob,
-        )
-    ):
-        record_reconcile_action("none")
-        return answer
-    # Attach a value unit from headers / evidence when the cell is a bare number
-    # (e.g. Dose (mg)). Prefer explicit evidence.unit over header/caption inference.
-    evidence = meta.get("evidence") if isinstance(meta.get("evidence"), dict) else {}
-    explicit_unit = str(
-        meta.get("unit") or evidence.get("unit") or ""
-    ).strip()
-    if raw_val and not re.search(r"[A-Za-z%]", raw_val):
-        blob = " ".join(
-            str(x or "")
-            for x in (
-                meta.get("col_headers"),
-                meta.get("row_headers"),
-                meta.get("headers"),
-                meta.get("table_headers"),
-                evidence.get("table_caption"),
-                evidence.get("table_section"),
-                explicit_unit,
-            )
-        )
-        um = re.search(
-            r"(?i)(?:dose|amount|value|price|cost|limit|strength)\s*\(\s*"
-            r"(mg|g|mcg|µg|ug|ml|mL|%|usd|eur|iu)\s*\)"
-            r"|\(\s*(mg|g|mcg|µg|ug|ml|mL|%|usd|eur)\s*\)"
-            r"|\bdoses?\b[^.\n]{0,40}\b(mg|g|mcg|ml)\b",
-            blob,
-        )
-        unit = explicit_unit or (
-            (um.group(1) or um.group(2) or um.group(3)) if um else ""
-        )
-        if unit and unit.lower() not in raw_val.lower():
-            raw_val = f"{raw_val} {unit}"
-    m_val = re.search(r"(-?\d+(?:\.\d+)?)", raw_val)
-    if not m_val:
-        # Non-numeric verified token — require verbatim presence.
-        if raw_val.lower() in (answer or "").lower():
-            record_reconcile_action("none")
-            return answer
-        record_reconcile_action("numeric_pinned")
-        label = "Verified calculation" if is_calculation else "Verified table value"
-        return (
-            f"**{label}: {raw_val}** "
-            f"(Page {meta.get('page')}; "
-            f"row {meta.get('row_headers')}; column {meta.get('col_headers')}).\n\n"
-            + (answer or "")
-        )
-
-    verified_num = m_val.group(1)
-    verified_unit_m = re.search(
-        r"(?i)-?\d+(?:\.\d+)?\s*([A-Za-zμµ%]{1,12})\b",
-        raw_val,
-    )
-    verified_unit = (verified_unit_m.group(1) if verified_unit_m else "") or explicit_unit
-    verified_unit = str(verified_unit or "").strip()
-    verified_page = meta.get("page")
-    answer_text = answer or ""
-
-    # Wrong-cohort / wrong-table answers: do not stamp an authoritative pin that
-    # conflicts with the clinical point (e.g. adult matrix on a pediatric case).
-    if re.search(
-        r"(?i)\b(wrong (table|cohort|matrix)|incorrect table|"
-        r"should not (use|have used)|pediatric|adult table|"
-        r"not (the )?(correct|appropriate) table)\b",
-        answer_text,
-    ) and re.search(
-        r"(?i)\b(pediatric|adult|indication|cohort|table\s*[123])\b",
-        answer_text,
-    ):
-        record_reconcile_action("none")
-        return answer_text
-
-    if not compare_mode and not is_calculation:
-        answer_text = _harmonize_label_claims(answer_text, verified_num, meta)
-        if verified_unit:
-            answer_text = _harmonize_verified_units(
-                answer_text, verified_num, verified_unit
-            )
-
-    def _provenance_mismatch(text: str) -> bool:
-        """True when the answer cites a different Page N for this cell value."""
-        if verified_page is None:
-            return False
-        try:
-            vp = int(verified_page)
-        except (TypeError, ValueError):
-            return False
-        # Other page citations near the verified numeric → provenance drift.
-        for m in re.finditer(
-            rf"(?i)(?:page|p\.?)\s*(\d+)",
-            text[:800],
-        ):
-            try:
-                cited = int(m.group(1))
-            except ValueError:
-                continue
-            if cited != vp:
-                return True
-        return False
-
-    def _with_provenance_pin(text: str) -> str:
-        if not _provenance_mismatch(text):
-            return text
-        return (
-            f"**Authoritative verified table value: {raw_val}** "
-            f"(Page {verified_page}; row {meta.get('row_headers')}; "
-            f"column {meta.get('col_headers')}; "
-            f"table {meta.get('table_id') or 'verified'}). "
-            "\n\n"
-            + text
-        )
-
-    if compare_mode:
-        # Stated amount may lead the answer; require the label cell somewhere.
-        if verified_num in answer_text:
-            record_reconcile_action("none")
-            return _with_provenance_pin(answer_text)
-        prescribed = meta.get("prescribed_value")
-        p_unit = meta.get("prescribed_unit") or ""
-        p_s = (
-            f"{prescribed}{(' ' + p_unit) if p_unit else ''}".strip()
-            if prescribed is not None
-            else "the stated amount"
-        )
-        record_reconcile_action("numeric_pinned")
-        return (
-            f"**Verified label table value: {raw_val}** "
-            f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
-            f"column {meta.get('col_headers')}). "
-            ""
-            "\n\n"
-            + answer_text
-        )
-
-    auth_label = (
-        "Authoritative verified calculation"
-        if is_calculation
-        else "Authoritative verified table value"
-    )
-    unit_conflict = _answer_has_verified_unit_conflict(
-        answer_text, verified_num, verified_unit
-    )
-    lead = _LEADING_DOSE_RE.search(answer_text)
-    if lead and lead.group(1) == verified_num and not unit_conflict:
-        record_reconcile_action("none")
-        return _with_provenance_pin(answer_text)
-    # Also accept if verified value appears early without a conflicting lead dose
-    # or unit (e.g. reject "300 IU" when the verified cell is "300 mg").
-    head = answer_text[:320]
-    if verified_num in head and not lead and not unit_conflict:
-        record_reconcile_action("none")
-        return _with_provenance_pin(answer_text)
-    if (lead and lead.group(1) != verified_num) or unit_conflict:
-        record_reconcile_action("numeric_pinned")
-        correction = (
-            f"**{auth_label}: {raw_val}** "
-            f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
-            f"column {meta.get('col_headers')}). "
-            f"The label value is {raw_val}. "
-            "\n\n"
-        )
-        return correction + answer_text
-    if verified_num not in answer_text:
-        record_reconcile_action("numeric_pinned")
-        return (
-            f"**{auth_label}: {raw_val}** "
-            f"(Page {meta.get('page')}; row {meta.get('row_headers')}; "
-            f"column {meta.get('col_headers')}).\n\n"
-            + answer_text
-        )
-    record_reconcile_action("none")
-    return _with_provenance_pin(answer_text)
-
-
-def _sanitize_dose_mg_from_source_context(
-    answer: str, sources: List[Dict[str, Any]]
-) -> str:
-    """Rewrite mistaken dose units on recommended/labeled dose claims.
-
-    Safety net for flaky selector runs where verified_cell never reaches
-    reconcile but the answer still invents IU/mcg/µg for a dose claim.
-    Triggered when sources mention dosing tables OR the answer itself is a
-    recommended/labeled dose takeaway (IgE axis mentions are left alone).
-    """
-    if not answer:
-        return answer
-    blob = " ".join(
-        str(
-            (s.get("text") or "")
-            + " "
-            + str(
-                ((s.get("verified_cell") or {}).get("evidence") or {}).get(
-                    "table_caption"
-                )
-                or ""
-            )
-            + " "
-            + " ".join(
-                str(h)
-                for h in ((s.get("verified_cell") or {}).get("table_headers") or [])
-            )
-        )
-        for s in (sources or [])
-        if isinstance(s, dict)
-    )
-    dose_context = bool(
-        re.search(r"(?i)dose\s*\(\s*mg\s*\)|doses?\b.*\bmg\b|xolair|dosing table", blob)
-    ) or bool(
-        re.search(
-            r"(?i)\b(recommended|labeled|label)\b[^.\n]{0,80}\b(dose|regimen)\b",
-            answer,
-        )
-    )
-    if not dose_context:
-        return answer
-    pattern = re.compile(
-        r"(?i)(\*\*)?(?<!\d)(\d{2,4}(?:\.\d+)?)\s*"
-        r"(µg|μg|mcg|ug|iu|units?)(\*\*)?"
-    )
-
-    def _repl(match: re.Match[str]) -> str:
-        if _is_ige_axis_context(answer, match.start(), match.end()):
-            return match.group(0)
-        star_l = match.group(1) or ""
-        star_r = match.group(4) or star_l
-        if star_l or star_r:
-            return f"**{match.group(2)} mg**"
-        return f"{match.group(2)} mg"
-
-    return pattern.sub(_repl, answer)
-
-
 def _reconcile_answer_with_verified_cell(
     answer: str,
     sources: List[Dict[str, Any]],
 ) -> str:
-    """Return the generated answer cleaned (no verified-cell pin path)."""
+    """Passthrough cleaner — no dose/unit rewrite or verified-cell pinning."""
     _ = sources
     try:
         return _strip_prompt_leaks(answer or "")
@@ -1693,8 +1016,8 @@ def _capability_answer(
                     "role": "system",
                     "content": (
                         "You are Document AI Analyst for Genova. Answer briefly about "
-                        "product capabilities only. Do not discuss medical drugs, "
-                        "doses, invoices, project names, or any document content. "
+                        "product capabilities only. Do not discuss invoices, "
+                        "project names, or any document content. "
                         "Conversation history is provided only so you stay oriented; "
                         "do not digress into it unless the user asks."
                     ),
@@ -1996,6 +1319,7 @@ def _generate_answer_direct(
     provider = normalize_llm_provider(llm_provider)
     client = get_llm_client(llm_provider=provider)
     model_id = llm_model_for_provider(provider)
+    answer_temp = _answer_temperature(question)
     llm_t0 = time.perf_counter()
     try:
         with _ai_trace_step("llm_request", input_summary=f"{provider}:{model_id}"):
@@ -2006,7 +1330,7 @@ def _generate_answer_direct(
                 ],
                 model=model_id,
                 max_tokens=settings.LLM_MAX_NEW_TOKENS,
-                temperature=settings.LLM_TEMPERATURE,
+                temperature=answer_temp,
             )
     except Exception as exc:
         try:
@@ -2015,7 +1339,7 @@ def _generate_answer_direct(
             record_llm_call(
                 model_name=model_id,
                 provider=provider,
-                temperature=settings.LLM_TEMPERATURE,
+                temperature=answer_temp,
                 latency_ms=round((time.perf_counter() - llm_t0) * 1000, 3),
                 status="failed",
                 error_message=str(exc),
@@ -2049,7 +1373,7 @@ def _generate_answer_direct(
             model_name=model_id,
             provider=provider,
             system_prompt_version=prompt_ver,
-            temperature=settings.LLM_TEMPERATURE,
+            temperature=answer_temp,
             usage=usage if isinstance(usage, dict) else None,
             latency_ms=round((time.perf_counter() - llm_t0) * 1000, 3),
             validation_result="empty" if answer == MALFORMED_OUTPUT_MESSAGE else "ok",
@@ -2337,6 +1661,7 @@ def _generate_answer_stream_direct(
     try:
         yield f"data: {json.dumps({'type': 'status', 'data': 'generating'})}\n\n"
         client = get_llm_client(llm_provider=provider)
+        answer_temp = _answer_temperature(question)
         stream = client.chat_completion(
             messages=[
                 {"role": "system", "content": resolved.system_prompt},
@@ -2344,7 +1669,7 @@ def _generate_answer_stream_direct(
             ],
             model=model_id,
             max_tokens=settings.LLM_MAX_NEW_TOKENS,
-            temperature=settings.LLM_TEMPERATURE,
+            temperature=answer_temp,
             stream=True,
         )
         for stream_chunk in stream:
@@ -2369,7 +1694,7 @@ def _generate_answer_stream_direct(
                 model_name=model_id,
                 provider=provider,
                 system_prompt_version=prompt_ver,
-                temperature=settings.LLM_TEMPERATURE,
+                temperature=answer_temp,
                 usage=usage if isinstance(usage, dict) else None,
                 latency_ms=round((time.perf_counter() - llm_t0) * 1000, 3),
                 validation_result="ok",
@@ -2396,7 +1721,7 @@ def _generate_answer_stream_direct(
             record_llm_call(
                 model_name=model_id,
                 provider=provider,
-                temperature=settings.LLM_TEMPERATURE,
+                temperature=_answer_temperature(question),
                 latency_ms=round((time.perf_counter() - llm_t0) * 1000, 3),
                 status="failed",
                 error_message=str(e),

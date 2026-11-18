@@ -12,7 +12,7 @@ Caller: ``agent._generate_answer_direct`` / ``_generate_answer_stream_direct``
   retrieve(query=question, user_id=..., document_id=..., top_k=TOP_K_RERANK or None)
 
 Common example question:
-  "According to the dosing schedule table, what value applies for the
+  "According to the schedule table, what value applies for the
    stated patient parameters?"
 """
 import json
@@ -79,11 +79,7 @@ def _exclude_soft_deleted_chunks(
         if str(chunk.get("document_id") or "") not in deleted
     ]
 
-_EX_Q = (
-    "According to the schedule table, what value applies for the stated parameters?"
-)
-_EX_USER = "user-id"
-_EX_DOC = "document-id"
+
 
 
 # ── RRF core ─────────────────────────────────────────────────────────────────
@@ -148,20 +144,14 @@ def rrf_merge(
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
-# Domain-agnostic: questions that typically need a table / schedule / matrix.
+# Structural cues only — no product / indication / unit vocab.
 _STRUCTURED_LOOKUP_RE = re.compile(
     r"(?i)\b("
-    r"table|chart|grid|matrix|schedule|frequency|rate|amount|total|"
-    r"dose|dosing|dosage|parameter|threshold|limit|range|"
-    r"off[- ]?label|special\s+situation|adverse\s+event|prescrib|"
-    r"medication\s+error|indication|body\s*weight|"
-    r"every\s+\d+\s+(?:weeks?|days?|hours?|months?)"
+    r"table|chart|grid|matrix|schedule|lookup|row|column|cell|"
+    r"parameter|threshold|limit|range|total|rate|amount"
     r")\b"
 )
-_STRUCTURED_UNIT_RE = re.compile(
-    r"(?i)\b\d+(?:\.\d+)?\s*(?:mg|kg|g|ml|l|%|\$|usd|eur|inr|"
-    r"weeks?|days?|hours?|hrs?|months?|iu/?mL|ppm|mhz|ghz|gb|mb)\b"
-)
+_STRUCTURED_NUM_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\b")
 _QUERY_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{3,}", re.I)
 _QUERY_STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "for", "with", "from", "that",
@@ -183,17 +173,18 @@ def _query_content_tokens(text: str) -> Set[str]:
 def _structured_table_query_variants(query: str) -> List[str]:
     """Deterministic variants that prioritize tables/schedules for lookup asks.
 
-    Domain-agnostic: no product names, indications, or lab assays. Surfaces
-    numeric+unit tokens from the question so BM25 can hit matching cells.
+    Domain-agnostic: no product names, indications, or unit vocab. Surfaces
+    numeric tokens from the question so BM25 can hit matching cells.
     """
     q = query.strip()
-    if not q or not _STRUCTURED_LOOKUP_RE.search(q):
+    has_lookup = bool(_STRUCTURED_LOOKUP_RE.search(q))
+    nums = _STRUCTURED_NUM_RE.findall(q)
+    if not q or (not has_lookup and len(nums) < 2):
         return []
     variants: List[str] = [
-        "recommended values table chart schedule parameters",
+        "table chart schedule parameters lookup",
         "lookup table row column matching criteria",
     ]
-    nums = _STRUCTURED_UNIT_RE.findall(q)
     if nums:
         variants.append("table " + " ".join(nums[:6]))
     topic_tokens = sorted(_query_content_tokens(q))[:8]
@@ -602,12 +593,6 @@ def _boost_table_candidates(
                 "table_summary",
             ):
                 factor += 0.1
-        if re.search(r"(?i)\btable\s+\d+\b", text) and re.search(
-            r"(?i)dose|dosing|schedule|frequency|amount|rate|weight|"
-            r"every\s+\d+\s+(?:weeks?|days?|hours?|months?)",
-            text,
-        ):
-            factor += 0.25
         if is_table and q_tokens:
             overlap = len(q_tokens & _query_content_tokens(text))
             # Caption/section overlap prefers the matrix whose title matches the
@@ -625,6 +610,26 @@ def _boost_table_candidates(
                 factor += 0.2
             elif overlap == 1:
                 factor += 0.1
+            # Scope lock: "Table 1" in the question strongly prefers that caption.
+            q_refs = {
+                m.group(1).upper()
+                for m in re.finditer(
+                    r"(?i)\b(?:tables?|tbl\.?)\s*([0-9]{1,3}|[A-Z])\b",
+                    query or "",
+                )
+            }
+            if q_refs:
+                c_refs = {
+                    m.group(1).upper()
+                    for m in re.finditer(
+                        r"(?i)\b(?:tables?|tbl\.?)\s*([0-9]{1,3}|[A-Z])\b",
+                        captionish + " " + text[:240],
+                    )
+                }
+                if q_refs & c_refs:
+                    factor += 0.55
+                elif c_refs:
+                    factor *= 0.75
         if modality_l == "table" and is_paragraph:
             factor *= 0.85
         if factor != 1.0:
@@ -737,8 +742,8 @@ def retrieve(
       top_k=settings.TOP_K_RERANK,  # final slice only; stage-1 width is TOP_K_RETRIEVAL
     )
     Note: agent passes ``top_k or settings.TOP_K_RERANK`` as the *final* count.
-    Stage-1 Chroma/BM25 always uses ``TOP_K_RETRIEVAL`` (20) so dosing tables
-    can enter the candidate pool before prescribing-table boost + final slice.
+    Stage-1 Chroma/BM25 always uses ``TOP_K_RETRIEVAL`` (20) so table chunks
+    can enter the candidate pool before table boost + final slice.
 
     Stage 1 per search_query in transform_query(query):
       query_vector = embed_query(search_query)
@@ -1005,7 +1010,7 @@ def retrieve(
 
     # ── Stage 2: Cross-encoder reranking ─────────────────────────────────────
     final_k = top_k if top_k is not None else settings.TOP_K_RERANK
-    # Table-heavy dosing routes: fewer final chunks to control LLM input tokens.
+    # Table-heavy routes: fewer final chunks to control LLM input tokens.
     # (Previously widened by +2 which ballooned hydrated table appendices.)
     if query_modality == "table":
         table_k = int(getattr(settings, "TABLE_RAG_ANSWER_TOP_K", 5) or 5)

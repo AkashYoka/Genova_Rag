@@ -30,14 +30,14 @@ logger = logging.getLogger(__name__)
 _JSON_RE = re.compile(r"\{[\s\S]*\}|\[[\s\S]*\]")
 _NUM_TOKEN_RE = re.compile(r"(?i)(-?\d+(?:\.\d+)?)")
 _UNIT_TOKEN_RE = re.compile(
-    r"(?i)\b(iu/?m?l|ng/?ml|ug/?ml|µg/?ml|μg/?ml|mcg/?ml|kg|mg|g|ml|l|%|years?|yo)\b"
+    r"(?i)\b(kg|mg|g|ml|l|mcg|µg|μg|ug|%|usd|eur|inr)\b"
 )
 _BOUND_OP_RE = re.compile(r"(≤|<=|≥|>=|<|>|–|-|—)")
 
 SYSTEM_PROMPT = """You are a precision document structure analyzer. Given a table's section path, caption, surrounding context, headers, full-column value profiles, and sample rows, output structured JSON matching TableUnderstanding.
 Rules:
 1. Never invent, alter, or normalize cell values.
-2. Explicitly identify `differentiating_dimensions` (e.g., patient cohort, age group, indication, currency, region) that distinguish this table from sibling tables in the same document.
+2. Explicitly identify `differentiating_dimensions` (e.g., cohort, age group, category, currency, region) that distinguish this table from sibling tables in the same document.
 3. Document exact boundary semantics (inclusive vs. exclusive) and footnote exceptions found in headers or surrounding text.
 
 Additional constraints:
@@ -49,12 +49,12 @@ Additional constraints:
 
 SIBLING TABLES (critical when the batch has more than one table):
 - Similar grids often differ by population, category, period, product line, segment,
-  grade, indication-class, or section — not by axis units alone.
+  grade, category, or section — not by axis units alone.
 - For each table, emit applicability_attributes with concrete values copied/paraphrased
   from caption/section/surrounding_text (e.g. key=applicability_class, key=age_band,
   key=reporting_period, key=segment, key=section). Prefer short distinctive values.
 - differentiating_dimensions must list the attribute keys that actually separate this
-  table from its siblings in THIS document (not generic words like "value" or "dose").
+  table from its siblings in THIS document (not generic words like "value" or "amount").
 - applicability_cues must include those distinctive phrases so retrieval can tell
   siblings apart. Do not copy another table's class/population onto this one.
 - If two tables share axes but apply to different classes, say so in purpose/subject.
@@ -183,7 +183,7 @@ def profile_full_table_grid(table: TablePayload | Dict[str, Any]) -> Dict[str, A
                 except (TypeError, ValueError):
                     pass
             for m in _UNIT_TOKEN_RE.finditer(raw):
-                units.append(m.group(1).lower().replace("iu/ml", "iu/ml"))
+                units.append(m.group(1).lower())
             for m in _BOUND_OP_RE.finditer(raw):
                 ops.append(m.group(1))
             if re.search(r"\d\s*(?:–|-|—|to)\s*\d", raw, re.I):

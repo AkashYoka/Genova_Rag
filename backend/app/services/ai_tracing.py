@@ -71,7 +71,7 @@ def _safe_text(value: Any, *, limit: Optional[int] = None) -> str:
     """Truncate text for storage. Does not scrub clinical document content.
 
     Optional light PII masking (emails/phones/SSN) when ``AI_TRACE_REDACT_PII``
-    is enabled. Never strips dosing vocabulary (``mg``, ``weight``, IgE, etc.).
+    is enabled. Never strips quantity/unit vocabulary from table text.
     """
     text = "" if value is None else str(value)
     try:

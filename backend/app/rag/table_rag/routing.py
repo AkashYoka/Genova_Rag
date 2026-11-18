@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class QueryModality(str, Enum):
@@ -13,29 +12,17 @@ class QueryModality(str, Enum):
     BOTH = "both"
 
 
+# Generic structural cues only — no product/indication/unit vocab.
 _TABLE_CUE_RE = re.compile(
-    r"(?i)\b("
-    r"table|chart|grid|matrix|schedule|lookup|"
-    r"row|column|cell|intersection|"
-    r"frequency|every\s+\d+\s+(?:weeks?|days?|hours?|months?)|"
-    r"amount|rate|threshold|parameter|range|"
-    r"compare|versus|vs\.?|higher|lower|maximum|minimum|total"
-    r")\b"
+    r"(?i)\b(table|chart|grid|matrix|schedule|lookup|row|column|cell|intersection)\b"
 )
-_NUMERIC_UNIT_RE = re.compile(
-    r"(?i)\b\d+(?:\.\d+)?\s*(?:[a-zA-Zμµ%/²³°$]{1,12}|"
-    r"weeks?|days?|hours?|months?)\b"
-)
+_NUMERIC_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\b")
 _PARAGRAPH_CUE_RE = re.compile(
     r"(?i)\b("
-    r"what\s+is|explain|describe|summarize|summary|mechanism|"
+    r"what\s+is|explain|describe|summarize|summary|"
     r"how\s+(?:does|do|is|are)|why|"
     r"definition|overview|background|introduction"
     r")\b"
-)
-# Two distinct numeric+unit mentions → likely matrix axis intersection.
-_UNIT_TOKEN_RE = re.compile(
-    r"(?i)\b\d+(?:\.\d+)?\s*([a-zA-Zμµ%/²³]{1,8})\b"
 )
 
 
@@ -55,29 +42,18 @@ class QueryRoute:
 
 
 def route_query(question: str) -> QueryRoute:
-    """Classify whether a question needs paragraph, table, or both retrieval.
-
-    Domain-agnostic heuristics reuse the same numeric/table cues already used
-    by structured lookup, without hardcoding product names.
-    """
+    """Classify whether a question needs paragraph, table, or both retrieval."""
     q = (question or "").strip()
     if not q:
         return QueryRoute(QueryModality.PARAGRAPH, "empty_query")
 
     table_cue = bool(_TABLE_CUE_RE.search(q))
-    numeric = _NUMERIC_UNIT_RE.findall(q)
+    numeric_count = len(_NUMERIC_RE.findall(q))
     paragraph_cue = bool(_PARAGRAPH_CUE_RE.search(q))
-    unit_tokens = {
-        m.group(1).lower().rstrip("s")
-        for m in _UNIT_TOKEN_RE.finditer(q)
-        if m.group(1)
-    }
-    axis_pair = len(unit_tokens) >= 2
-    multi_numeric = len(numeric) >= 2
+    multi_numeric = numeric_count >= 2
+    structured = table_cue and multi_numeric
 
-    structured = axis_pair or (table_cue and multi_numeric)
-
-    if structured or (table_cue and multi_numeric):
+    if structured:
         if paragraph_cue:
             return QueryRoute(
                 QueryModality.BOTH,
@@ -86,11 +62,11 @@ def route_query(question: str) -> QueryRoute:
             )
         return QueryRoute(
             QueryModality.TABLE,
-            "numeric_or_matrix_lookup",
+            "table_numeric_lookup",
             wants_structured_lookup=True,
         )
 
-    if table_cue and numeric:
+    if table_cue and numeric_count >= 1:
         return QueryRoute(
             QueryModality.TABLE,
             "table_cue_with_value",
@@ -104,7 +80,6 @@ def route_query(question: str) -> QueryRoute:
         return QueryRoute(QueryModality.TABLE, "explicit_table_language")
 
     if multi_numeric:
-        # Numerical question without explicit "table" — still prefer tables.
         if paragraph_cue:
             return QueryRoute(
                 QueryModality.BOTH,

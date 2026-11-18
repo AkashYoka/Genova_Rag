@@ -1,19 +1,19 @@
-"""Header promotion / jammed weight-band repair for DetectDocumentText grids."""
+"""Header promotion / jammed range-band repair for DetectDocumentText grids."""
 from __future__ import annotations
 
 from app.rag.ingestion.pdf_layout.textract_tables import (
-    _compose_weight_dose_leaf,
+    _compose_header_leaf,
     _expand_jammed_header_columns,
     _is_data_row,
-    _is_unit_dose_row,
+    _is_unit_banner_row,
     _leaf_headers,
     _promote_leading_header_bands,
-    _split_jammed_weight_header,
+    _split_jammed_range_header,
 )
 
 
-def test_split_jammed_weight_header():
-    parts = _split_jammed_weight_header(
+def test_split_jammed_range_header():
+    parts = _split_jammed_range_header(
         "≥10-12 >12-15 >15-20 >20-25 >25-30 >30-40 >40-50 >50-60 >60-70"
     )
     assert len(parts) >= 6
@@ -22,8 +22,8 @@ def test_split_jammed_weight_header():
 
 def test_expand_jammed_fills_column_placeholders():
     headers = [
-        "Pretreatment Serum IgE (IU/mL)",
-        "Dosing Freq.",
+        "Category",
+        "Period",
         "Column 3",
         "Column 4",
         "Column 5",
@@ -40,47 +40,47 @@ def test_expand_jammed_fills_column_placeholders():
     assert len(out_body[0]) == len(hdrs)
 
 
-def test_unit_dose_row_not_data():
+def test_unit_banner_row_not_data():
     row = [
         "≥30-100",
         "Every 4 Weeks",
-        "Dose (mg)",
-        "Dose (mg)",
-        "Dose (mg)",
-        "Dose (mg)",
+        "Amount (mg)",
+        "Amount (mg)",
+        "Amount (mg)",
+        "Amount (mg)",
         "80",
         "150",
     ]
-    assert _is_unit_dose_row(row)
+    assert _is_unit_banner_row(row)
     assert not _is_data_row(row)
 
 
-def test_promote_dose_banner_into_headers():
-    headers = ["IgE", "Freq", "Column 3", "Column 4", "Column 5", "Column 6"]
+def test_promote_unit_banner_into_headers():
+    headers = ["Key", "Period", "Column 3", "Column 4", "Column 5", "Column 6"]
     header_rows = [list(headers)]
     body = [
-        ["", "", "Dose (mg)", "Dose (mg)", "Dose (mg)", "Dose (mg)"],
+        ["", "", "Amount (mg)", "Amount (mg)", "Amount (mg)", "Amount (mg)"],
         [">100-200", "Every 4 Weeks", "75", "150", "150", "300"],
     ]
     leaves, hrows, out_body = _promote_leading_header_bands(headers, header_rows, body)
     assert len(out_body) == 1
     assert out_body[0][0] == ">100-200"
-    assert any("Dose" in " ".join(r) or "mg" in " ".join(r).lower() for r in hrows)
+    assert any("Amount" in " ".join(r) or "mg" in " ".join(r).lower() for r in hrows)
 
 
-def test_compose_weight_dose_leaf():
-    leaf = _compose_weight_dose_leaf(
-        ["Body Weight", "20-25", "kg", "Dose (mg)"]
+def test_compose_header_leaf_joins_parts_as_is():
+    leaf = _compose_header_leaf(
+        ["Axis Label", "20-25", "kg", "Amount (mg)"]
     )
-    assert leaf == "Body Weight 20-25 kg Dose (mg)"
+    assert leaf == "Axis Label 20-25 kg Amount (mg)"
 
 
-def test_leaf_headers_compose_weight_dose():
+def test_leaf_headers_join_stacked_parts():
     header_rows = [
-        ["Pretreatment Serum IgE (IU/mL)", "Dosing Freq.", "Body Weight", "Body Weight"],
+        ["Row Key", "Period", "Axis Label", "Axis Label"],
         ["", "", "20-25", ">25-30"],
-        ["", "", "Dose (mg)", "Dose (mg)"],
+        ["", "", "Amount (mg)", "Amount (mg)"],
     ]
     leaves = _leaf_headers(header_rows)
-    assert leaves[2] == "Body Weight 20-25 kg Dose (mg)"
-    assert leaves[3] == "Body Weight >25-30 kg Dose (mg)"
+    assert leaves[2] == "Axis Label 20-25 Amount (mg)"
+    assert leaves[3] == "Axis Label >25-30 Amount (mg)"

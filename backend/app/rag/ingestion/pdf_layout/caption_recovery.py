@@ -1,9 +1,8 @@
 """Domain-agnostic table caption recovery from page text near a table bbox.
 
-Docling TableFormer often returns empty ``caption_text`` for matrices even when
-the PDF has an explicit title above the grid (``Table 1. …``, ``Figure 2: …``).
-This module recovers those titles from page geometry so TableRAG can scope-rank
-sibling matrices without domain hardcoding.
+STE/pymupdf extractions often leave ``caption`` empty even when the PDF has an
+explicit title above the grid (``Table 1. …``). This module recovers those
+titles from page geometry so TableRAG can scope-rank sibling matrices.
 """
 from __future__ import annotations
 
@@ -28,8 +27,8 @@ _CONTINUATION_RE = re.compile(
 )
 # Reject obvious body/header grid lines mistaken for titles.
 _NOT_CAPTION_RE = re.compile(
-    r"(?i)^\s*(?:pretreatment|body\s+weight|dosing\s+freq|dose\s*\(mg\)|"
-    r"column\s+\d+|page\s+\d+$|\d+\s*$)"
+    r"(?i)^\s*(?:column\s+\d+|page\s+\d+$|\d+\s*$|"
+    r"[a-z0-9 /()%._-]{0,40}\(\s*[a-z%]{1,8}\s*\)\s*$)"
 )
 
 
@@ -189,8 +188,8 @@ def recover_caption_from_pdf_page(
 ) -> str:
     """Open ``filepath`` page and recover a caption above the table bbox.
 
-    When the stored bbox is missing or full-page (common Docling provenance
-    failure), fall back to the first titled line on the page.
+    When the stored bbox is missing or full-page, fall back to the first
+    titled line on the page.
     """
     if not filepath or page_number < 1:
         return ""
@@ -229,63 +228,10 @@ def recover_caption_from_pdf_page(
             pass
 
 
-def recover_caption_from_docling_neighbors(
-    document: Any,
-    table: Any,
-    *,
-    max_lookback: int = 6,
-) -> str:
-    """Fallback: walk Docling items preceding the table for a titled line."""
-    if document is None or table is None:
-        return ""
-    items: List[Any] = []
-    try:
-        if hasattr(document, "iterate_items"):
-            items = [item for item, _path in document.iterate_items()]
-        elif hasattr(document, "texts") and document.texts:
-            # No stable order vs tables — skip.
-            return ""
-    except Exception:
-        return ""
-    if not items:
-        return ""
-    try:
-        idx = next(i for i, it in enumerate(items) if it is table)
-    except StopIteration:
-        # Identity may differ after export; match by page + rough position.
-        return ""
-    collected: List[str] = []
-    for j in range(idx - 1, max(-1, idx - 1 - max_lookback), -1):
-        item = items[j]
-        label = str(getattr(item, "label", "") or "").lower()
-        if "table" in label:
-            break
-        text = ""
-        for attr in ("text", "orig"):
-            val = getattr(item, attr, None)
-            if callable(val):
-                continue
-            if val:
-                text = normalize_ws(str(val))
-                break
-        if not text:
-            continue
-        collected.insert(0, text)
-        if _is_plausible_caption_start(text):
-            return _merge_caption_lines(collected)
-    # If we collected lines ending with a caption start earlier, re-scan.
-    for i, text in enumerate(collected):
-        if _is_plausible_caption_start(text):
-            return _merge_caption_lines(collected[i:])
-    return ""
-
-
 def enrich_table_caption(
     table_data: Any,
     *,
     filepath: str = "",
-    document: Any = None,
-    docling_table: Any = None,
 ) -> str:
     """Fill ``table_data.caption`` when empty; return the caption used."""
     existing = normalize_ws(str(getattr(table_data, "caption", "") or ""))
@@ -293,9 +239,7 @@ def enrich_table_caption(
         return existing
 
     caption = ""
-    if document is not None and docling_table is not None:
-        caption = recover_caption_from_docling_neighbors(document, docling_table)
-    if not caption and filepath:
+    if filepath:
         page = int(getattr(table_data, "page", 0) or 0)
         bbox = getattr(table_data, "bbox", None)
         if page and bbox is not None:
@@ -308,7 +252,7 @@ def enrich_table_caption(
             if isinstance(prov, dict):
                 prov = dict(prov)
                 prov["caption_recovered"] = True
-                prov["caption_source"] = "page_text_or_docling_neighbor"
+                prov["caption_source"] = "page_text"
                 table_data.provenance = prov
         except Exception:
             pass

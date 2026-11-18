@@ -453,7 +453,7 @@ def compact_section_specs(
                 nxt_title = nxt.title or ""
                 nxt_body = _spec_non_heading_chars(nxt, by_id)
                 # Substantial body text means real content — even if the title
-                # looks numbered like a TOC entry ("1 INDICATIONS AND USAGE").
+                # looks numbered like a TOC entry ("1 Overview").
                 if nxt_body >= min_body_chars:
                     break
                 if _is_toc_banner_title(nxt_title) or _looks_like_toc_section_title(nxt_title) or (

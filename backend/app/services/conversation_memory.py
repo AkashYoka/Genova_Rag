@@ -155,27 +155,18 @@ _DOC_MARKERS = (
     "uploaded document",
     "the invoice",
     "this invoice",
-    "the prescribing",
-    "prescribing information",
     "the textbook",
-    "the label",
     "page ",
     "cited source",
     "from the source",
     "below content",
     "provided content",
-    "adverse event",
-    "special situation",
-    "off-label",
-    "off label",
 )
 
 _DOC_REGEX = (
     re.compile(
-        r"\b(invoice|pdf|document|prescribing|textbook|chunk|citation|igst|"
-        r"cgst|sgst|taxable value|grand total|page\s*\d+|adverse event|"
-        r"special situation|off[- ]?label|dosage|dosing|dose|anaphylaxis|"
-        r"contraindication|indication)\b",
+        r"\b(invoice|pdf|document|textbook|chunk|citation|igst|"
+        r"cgst|sgst|taxable value|grand total|page\s*\d+)\b",
         re.I,
     ),
 )
@@ -286,14 +277,13 @@ def is_document_oriented_question(question: str) -> bool:
     return any(rx.search(q) for rx in _DOC_REGEX)
 
 
-# Unit-bearing numerics that make a clinical/document case self-describing.
+# Number + short unit/suffix tokens that make a lookup self-describing.
 _GROUNDED_NUMERIC_RE = re.compile(
     r"(?i)\b\d+(?:\.\d+)?\s*"
-    r"(?:mg|kg|g|ml|l|%|iu/?mL|ppm|years?\s+old|yo\b|weeks?|months?|days?)\b"
+    r"(?:[a-zA-Z%/μµ²³]{1,8}|\$|€|£)\b"
 )
 _TABLE_LOOKUP_CUE_RE = re.compile(
-    r"(?i)\b(table|chart|grid|matrix|intersection|lookup|row|column|cell|"
-    r"dosing\s+table|dose\s+table|dosage\s+table)\b"
+    r"(?i)\b(table|chart|grid|matrix|intersection|lookup|row|column|cell)\b"
 )
 
 

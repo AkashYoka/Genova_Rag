@@ -25,7 +25,7 @@ from app.rag.ingestion.pdf_layout.types import normalize_ws
 
 logger = logging.getLogger(__name__)
 
-# Range-like tokens commonly used as row/column headers in dosing tables.
+# Range-like tokens commonly used as row/column headers in matrices.
 _RANGE_RE = re.compile(
     r"(?:≥\s*)?(?:>\s*)?\d+(?:\.\d+)?\s*[−\-–—to]+\s*(?:>\s*)?\d+(?:\.\d+)?",
     re.I,

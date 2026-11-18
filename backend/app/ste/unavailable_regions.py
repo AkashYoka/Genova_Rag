@@ -14,7 +14,7 @@ from ste.models import normalize_ws, pad_row
 Coord = Tuple[int, int]
 
 _PURE_NUM_RE = re.compile(
-    r"(?i)^[≥≤<>]?\s*-?\d+(?:[.,]\d+)?(?:\s*(?:%|mg|ml|kg|iu))?$"
+    r"(?i)^[≥≤<>]?\s*-?\d+(?:[.,]\d+)?(?:\s*[a-zA-Z%/μµ²³]{0,6})?$"
 )
 _FULL_UNAVAIL_RE = re.compile(
     r"(?i)\b("
@@ -32,7 +32,6 @@ _FRAG_UNAVAIL_RE = re.compile(
     r"(?i)^("
     r"insufficient|data|not|available|applicable|reported|none|"
     r"to|a|an|the|for|of|or|and|"
-    r"recommend|recommended|dose|dosing|"  # common continuation words only
     r"n/?a|nil|unknown|undetermined"
     r")$"
 )

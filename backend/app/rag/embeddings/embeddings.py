@@ -31,11 +31,7 @@ _EMBEDDING_LRU_MAX_SIZE: int = int(os.getenv("EMBEDDING_LRU_MAX_SIZE", "512"))
 _emb_lru_store: dict = {}
 _emb_lru_order: list = []
 
-# Shared sample question for docstring examples in this module.
-_EX_Q = (
-    "According to the schedule table, what value applies for the "
-    "stated parameters?"
-)
+
 
 
 @runtime_checkable
