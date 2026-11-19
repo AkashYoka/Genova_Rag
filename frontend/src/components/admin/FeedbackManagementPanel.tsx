@@ -1,26 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import {
-  ArrowRight,
-  Loader2,
-  RefreshCw,
-  ThumbsDown,
-  ThumbsUp,
-  X,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { MessageSquare, RefreshCw, Search, ThumbsDown, ThumbsUp } from "lucide-react";
 
 import { api } from "@/lib/api";
 import {
-  LedgerButton,
-  LedgerEmpty,
-  LedgerError,
-  LedgerKpiStrip,
-  LedgerPanel,
-  LedgerScrollTable,
-  LedgerStatus,
-} from "@/components/ledger/LedgerPrimitives";
-import { Input } from "@/components/ui/input";
+  AdminButton,
+  Badge,
+  Callout,
+  Card,
+  DefinitionList,
+  Drawer,
+  EmptyState,
+  Field,
+  PageHeader,
+  Pager,
+  SearchInput,
+  SelectInput,
+  Stat,
+  StatGrid,
+  TableSkeleton,
+  TableWrap,
+  TextInput,
+} from "@/components/admin/console/ConsoleUI";
 
 type FeedbackType = "up" | "down";
 
@@ -73,7 +75,7 @@ const REASON_LABELS: Record<string, string> = {
 };
 
 function formatReason(reason?: string | null): string {
-  if (!reason) return "—";
+  if (!reason) return "No reason given";
   return (
     REASON_LABELS[reason] ||
     reason.replace(/_/g, " ").replace(/^./, (char) => char.toUpperCase())
@@ -82,34 +84,28 @@ function formatReason(reason?: string | null): string {
 
 function formatWhen(iso?: string | null): string {
   if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function userLabel(item: FeedbackItem): string {
   return item.username || item.email || `User ${item.user_id.slice(0, 8)}`;
 }
 
-function DetailBlock({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section>
-      <h3 className="mb-1.5 text-[12px] font-medium text-[var(--gd-muted)]">
-        {label}
-      </h3>
-      <div className="rounded-[8px] border border-[var(--gd-border)] bg-[var(--gd-ground)]/40 p-3 text-[13px] leading-relaxed">
-        {children}
-      </div>
-    </section>
-  );
+function initialsOf(value: string) {
+  return value
+    .split(/[\s._@-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
 }
 
 export function FeedbackManagementPanel() {
@@ -120,14 +116,11 @@ export function FeedbackManagementPanel() {
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [feedbackFilter, setFeedbackFilter] = useState<"all" | FeedbackType>(
-    "all",
-  );
+  const [feedbackFilter, setFeedbackFilter] = useState<"all" | FeedbackType>("all");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [page, setPage] = useState(1);
 
-  // Debounce free-text search so each keystroke doesn't hit the API.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setSearch(searchInput.trim());
@@ -135,15 +128,6 @@ export function FeedbackManagementPanel() {
     }, 350);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
-
-  useEffect(() => {
-    if (!selected) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelected(null);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selected]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,14 +141,10 @@ export function FeedbackManagementPanel() {
       if (search) params.set("search", search);
       if (start) params.set("start", start);
       if (end) params.set("end", end);
-      const result = await api.get<FeedbackResponse>(
-        `/api/v1/admin/feedback?${params.toString()}`,
-      );
+      const result = await api.get<FeedbackResponse>(`/api/v1/admin/feedback?${params}`);
       setData(result);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not load user feedback",
-      );
+      setError(err instanceof Error ? err.message : "Could not load feedback");
     } finally {
       setLoading(false);
     }
@@ -177,70 +157,87 @@ export function FeedbackManagementPanel() {
   const summary = data?.summary;
   const pages = Math.max(1, data?.pages ?? 1);
   const total = data?.total ?? 0;
+  const items = data?.items ?? [];
+  const hasFilters = Boolean(search || start || end || feedbackFilter !== "all");
+
+  const satisfactionCaption = useMemo(() => {
+    if (!summary || summary.total === 0) return "No ratings yet";
+    return `${summary.likes.toLocaleString()} liked · ${summary.dislikes.toLocaleString()} disliked`;
+  }, [summary]);
 
   return (
-    <div className="ledger-stack">
-      {error ? <LedgerError>{error}</LedgerError> : null}
-
-      <LedgerKpiStrip
-        items={[
-          {
-            label: "Total feedback",
-            value: summary ? String(summary.total) : "—",
-            caption: "Rated assistant responses",
-          },
-          {
-            label: "Likes",
-            value: summary ? String(summary.likes) : "—",
-            caption: "Positive ratings",
-            emphasis: "data",
-          },
-          {
-            label: "Dislikes",
-            value: summary ? String(summary.dislikes) : "—",
-            caption: "Negative ratings",
-          },
-          {
-            label: "Satisfaction",
-            value: summary
-              ? `${summary.satisfaction_percentage.toFixed(1)}%`
-              : "—",
-            caption: "Likes ÷ all ratings",
-          },
-        ]}
+    <>
+      <PageHeader
+        title="Feedback"
+        description="What people told us about individual answers, so poor answers can be found and fixed."
+        actions={
+          <AdminButton variant="secondary" onClick={() => void load()} disabled={loading}>
+            <RefreshCw className={loading ? "animate-spin" : undefined} /> Refresh
+          </AdminButton>
+        }
       />
 
-      <div className="ledger-toolbar">
-        <div className="ledger-filters">
-          <div className="ledger-field mb-0">
-            <label htmlFor="feedback-search">Search</label>
-            <Input
-              id="feedback-search"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder="User, question, or response"
-              className="h-10 w-64 rounded-[10px]"
-            />
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="feedback-type">Feedback</label>
-            <select
+      {error ? (
+        <div style={{ marginBottom: 14 }}>
+          <Callout tone="danger">
+            <strong>Feedback could not be loaded.</strong> {error}
+          </Callout>
+        </div>
+      ) : null}
+
+      <StatGrid>
+        <Stat
+          label="Ratings received"
+          icon={<MessageSquare />}
+          value={summary ? summary.total.toLocaleString() : "—"}
+          caption="Across the whole platform"
+        />
+        <Stat
+          label="Liked"
+          icon={<ThumbsUp />}
+          value={summary ? summary.likes.toLocaleString() : "—"}
+          caption="Marked as helpful"
+        />
+        <Stat
+          label="Disliked"
+          icon={<ThumbsDown />}
+          value={summary ? summary.dislikes.toLocaleString() : "—"}
+          caption="Marked as unhelpful"
+          attention={(summary?.dislikes ?? 0) > 0}
+        />
+        <Stat
+          label="Satisfaction"
+          icon={<ThumbsUp />}
+          value={summary ? `${summary.satisfaction_percentage.toFixed(1)}%` : "—"}
+          caption={satisfactionCaption}
+        />
+      </StatGrid>
+
+      <div style={{ marginTop: 20 }}>
+        <div className="adm-toolbar">
+          <SearchInput
+            label="Search feedback"
+            value={searchInput}
+            onChange={setSearchInput}
+            placeholder="Search person, question, or answer"
+          />
+          <Field label="Rating" htmlFor="feedback-type">
+            <SelectInput
               id="feedback-type"
               value={feedbackFilter}
               onChange={(event) => {
                 setFeedbackFilter(event.target.value as "all" | FeedbackType);
                 setPage(1);
               }}
-              className="h-10 rounded-[10px] border border-[#e8e8e8] bg-[var(--gd-surface)] px-3 text-sm"
+              style={{ width: 150 }}
             >
-              <option value="all">All feedback</option>
-              <option value="up">Likes</option>
-              <option value="down">Dislikes</option>
-            </select>
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="feedback-start">From</label>
-            <Input
+              <option value="all">All ratings</option>
+              <option value="up">Liked</option>
+              <option value="down">Disliked</option>
+            </SelectInput>
+          </Field>
+          <Field label="From" htmlFor="feedback-start">
+            <TextInput
               id="feedback-start"
               type="date"
               value={start}
@@ -248,12 +245,11 @@ export function FeedbackManagementPanel() {
                 setStart(event.target.value);
                 setPage(1);
               }}
-              className="h-10 w-40 rounded-[10px]"
+              style={{ width: 158 }}
             />
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="feedback-end">To</label>
-            <Input
+          </Field>
+          <Field label="To" htmlFor="feedback-end">
+            <TextInput
               id="feedback-end"
               type="date"
               value={end}
@@ -261,252 +257,231 @@ export function FeedbackManagementPanel() {
                 setEnd(event.target.value);
                 setPage(1);
               }}
-              className="h-10 w-40 rounded-[10px]"
+              style={{ width: 158 }}
             />
-          </div>
-          <LedgerButton onClick={() => void load()} disabled={loading}>
-            {loading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            Refresh
-          </LedgerButton>
+          </Field>
+          {hasFilters ? (
+            <AdminButton
+              variant="ghost"
+              onClick={() => {
+                setSearchInput("");
+                setSearch("");
+                setStart("");
+                setEnd("");
+                setFeedbackFilter("all");
+                setPage(1);
+              }}
+            >
+              Clear filters
+            </AdminButton>
+          ) : null}
+          <span className="adm-toolbar__spacer" />
+          <span className="adm-toolbar__meta">
+            {loading ? "Loading…" : `${total.toLocaleString()} matching rating${total === 1 ? "" : "s"}`}
+          </span>
         </div>
-        <p className="text-[12px] text-[var(--gd-muted)]">
-          {loading
-            ? "Loading feedback…"
-            : `${total} matching record${total === 1 ? "" : "s"}`}
-        </p>
+
+        <Card
+          title="Ratings"
+          description="Select a row to read the full question, the answer we gave, and what the person said."
+        >
+          {loading && !data ? (
+            <TableSkeleton rows={5} />
+          ) : items.length ? (
+            <TableWrap height="auto">
+              <table className="adm-table">
+                <thead>
+                  <tr>
+                    <th>Person</th>
+                    <th>Rating</th>
+                    <th>Question</th>
+                    <th className="adm-col-md">When</th>
+                    <th className="adm-col-sm">Reason</th>
+                    <th aria-label="Open" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr
+                      key={item.id}
+                      data-clickable="true"
+                      tabIndex={0}
+                      onClick={() => setSelected(item)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelected(item);
+                        }
+                      }}
+                    >
+                      <td>
+                        <div className="adm-cell-title">
+                          <span className="adm-avatar" style={{ width: 28, height: 28 }}>
+                            {initialsOf(userLabel(item))}
+                          </span>
+                          <span className="adm-cell-stack">
+                            <span className="adm-cell-main">{userLabel(item)}</span>
+                            <span className="adm-cell-sub">{item.email || ""}</span>
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <Badge tone={item.feedback === "up" ? "ok" : "danger"}>
+                          {item.feedback === "up" ? "Liked" : "Disliked"}
+                        </Badge>
+                      </td>
+                      <td>
+                        <div className="adm-cell-stack">
+                          <span className="adm-cell-main" style={{ whiteSpace: "normal", maxWidth: 420 }}>
+                            {item.question || "No question recorded"}
+                          </span>
+                          <span className="adm-cell-sub" style={{ maxWidth: 420 }}>
+                            {item.response || "No answer recorded"}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="adm-col-md adm-muted" style={{ fontSize: 12.5, whiteSpace: "nowrap" }}>
+                        {formatWhen(item.created_at)}
+                      </td>
+                      <td className="adm-col-sm adm-muted" style={{ fontSize: 12.5 }}>
+                        {formatReason(item.reason)}
+                      </td>
+                      <td data-align="right">
+                        <span className="adm-link">Read</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
+          ) : (
+            <EmptyState
+              icon={<Search />}
+              title={hasFilters ? "No ratings match these filters" : "No ratings yet"}
+              text={
+                hasFilters
+                  ? "Try a wider date range, or clear the search and rating filters."
+                  : "When people rate an answer in the workspace, it appears here."
+              }
+              action={
+                hasFilters ? (
+                  <AdminButton
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      setSearchInput("");
+                      setSearch("");
+                      setStart("");
+                      setEnd("");
+                      setFeedbackFilter("all");
+                      setPage(1);
+                    }}
+                  >
+                    Clear filters
+                  </AdminButton>
+                ) : undefined
+              }
+            />
+          )}
+          {items.length ? (
+            <div className="adm-card__foot">
+              <span>
+                Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{" "}
+                {total.toLocaleString()}
+              </span>
+              <Pager
+                page={page}
+                pages={pages}
+                total={total}
+                onPage={setPage}
+                noun="ratings"
+                nounOne="rating"
+              />
+            </div>
+          ) : null}
+        </Card>
+
+        <div style={{ marginTop: 12 }}>
+          <Callout icon={<MessageSquare />}>
+            Use dislikes as a starting point, not a verdict. Read the question and the answer together
+            — then check the answer trace if you need to see which document passages were used.
+          </Callout>
+        </div>
       </div>
 
-      <LedgerPanel
-        title="Feedback ledger"
-        description="Click a row to read the full question, response, and reason."
+      <Drawer
+        open={selected !== null}
+        onClose={() => setSelected(null)}
+        title={selected ? userLabel(selected) : "Feedback"}
+        description={
+          selected
+            ? `${formatWhen(selected.created_at)} · ${selected.feedback === "up" ? "Marked helpful" : "Marked unhelpful"}`
+            : undefined
+        }
+        footer={
+          <AdminButton variant="secondary" onClick={() => setSelected(null)}>
+            Close
+          </AdminButton>
+        }
       >
-        <LedgerScrollTable
-          footer={
-            <div className="ledger-foot">
-              <span>
-                Page {page} of {pages}
-                {data?.page_size
-                  ? ` · ${data.page_size} rows per page`
-                  : ""}
-              </span>
-              <div className="flex gap-2">
-                <LedgerButton
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                  disabled={loading || page <= 1}
-                >
-                  Previous
-                </LedgerButton>
-                <LedgerButton
-                  onClick={() => setPage((value) => value + 1)}
-                  disabled={loading || page >= pages}
-                >
-                  Next
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </LedgerButton>
-              </div>
-            </div>
-          }
-        >
-          <table className="ledger-table" style={{ minWidth: 1000 }}>
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Date and time</th>
-                <th>Question</th>
-                <th>Response</th>
-                <th>Feedback</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.items || []).map((item) => (
-                <tr
-                  key={item.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setSelected(item)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setSelected(item);
-                    }
-                  }}
-                  className="cursor-pointer"
-                >
-                  <td>
-                    <div className="max-w-[160px]">
-                      <p className="truncate font-medium">{userLabel(item)}</p>
-                      {item.email ? (
-                        <p className="truncate text-[11px] text-[var(--gd-muted)]">
-                          {item.email}
-                        </p>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="whitespace-nowrap text-[var(--gd-muted)]">
-                    {formatWhen(item.created_at)}
-                  </td>
-                  <td>
-                    <p
-                      className="max-w-[240px] truncate"
-                      title={item.question}
-                    >
-                      {item.question || "—"}
-                    </p>
-                  </td>
-                  <td>
-                    <p
-                      className="max-w-[280px] truncate text-[var(--gd-muted)]"
-                      title={item.response}
-                    >
-                      {item.response || "—"}
-                    </p>
-                  </td>
-                  <td>
-                    <LedgerStatus
-                      label={item.feedback === "up" ? "Liked" : "Disliked"}
-                      tone={item.feedback === "up" ? "ok" : "bad"}
-                    />
-                  </td>
-                  <td className="max-w-[160px]">
-                    <span className="truncate">{formatReason(item.reason)}</span>
-                  </td>
-                </tr>
-              ))}
-              {!loading && !(data?.items || []).length ? (
-                <tr>
-                  <td colSpan={6}>
-                    <LedgerEmpty>
-                      No feedback matches these filters yet.
-                    </LedgerEmpty>
-                  </td>
-                </tr>
-              ) : null}
-              {loading && !data ? (
-                <tr>
-                  <td colSpan={6}>
-                    <LedgerEmpty>Loading feedback…</LedgerEmpty>
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </LedgerScrollTable>
-      </LedgerPanel>
-
-      {selected ? (
-        <div
-          className="fixed inset-0 z-50 flex justify-end bg-black/40"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Feedback detail"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) setSelected(null);
-          }}
-        >
-          <aside className="flex h-full w-full max-w-2xl flex-col border-l border-[var(--gd-border)] bg-[var(--gd-surface)] shadow-2xl">
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--gd-border)] px-5 py-4">
-              <div>
-                <p className="text-[12px] text-[var(--gd-muted)]">
-                  Feedback detail
-                </p>
-                <h2 className="text-[18px] font-semibold tracking-tight">
-                  {userLabel(selected)}
-                </h2>
-                <p className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-[var(--gd-muted)]">
-                  {formatWhen(selected.created_at)}
-                  <LedgerStatus
-                    label={selected.feedback === "up" ? "Liked" : "Disliked"}
-                    tone={selected.feedback === "up" ? "ok" : "bad"}
-                  />
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {selected.feedback === "up" ? (
-                  <ThumbsUp className="h-4 w-4 text-[var(--gd-positive)]" />
-                ) : (
-                  <ThumbsDown className="h-4 w-4 text-[var(--gd-negative)]" />
-                )}
-                <button
-                  type="button"
-                  onClick={() => setSelected(null)}
-                  aria-label="Close feedback detail"
-                  className="rounded p-1 text-[var(--gd-muted)] transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+        {selected ? (
+          <div className="adm-stack">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Badge tone={selected.feedback === "up" ? "ok" : "danger"}>
+                {selected.feedback === "up" ? "Liked" : "Disliked"}
+              </Badge>
+              <Badge plain>{formatReason(selected.reason)}</Badge>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-              <DetailBlock label="User's question">
-                <p className="whitespace-pre-wrap break-words">
-                  {selected.question || "—"}
-                </p>
-              </DetailBlock>
-
-              <DetailBlock label="LLM response">
-                <p className="whitespace-pre-wrap break-words">
-                  {selected.response || "—"}
-                </p>
-              </DetailBlock>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <DetailBlock label="Feedback">
-                  <LedgerStatus
-                    label={selected.feedback === "up" ? "Liked" : "Disliked"}
-                    tone={selected.feedback === "up" ? "ok" : "bad"}
-                  />
-                  <p className="mt-2 text-[13px]">
-                    Reason: {formatReason(selected.reason)}
-                  </p>
-                </DetailBlock>
-
-                <DetailBlock label="Additional comments">
-                  <p className="whitespace-pre-wrap break-words">
-                    {selected.comment || "No additional comment provided."}
-                  </p>
-                </DetailBlock>
+            <Card title="The question">
+              <div className="adm-card__body--pad" style={{ fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                {selected.question || "No question recorded."}
               </div>
+            </Card>
 
-              <DetailBlock label="References">
-                <dl className="grid gap-2 text-[12px]">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <dt className="text-[var(--gd-muted)]">Conversation</dt>
-                    <dd className="ledger-mono break-all">
-                      {selected.session_id || "—"}
-                    </dd>
-                  </div>
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <dt className="text-[var(--gd-muted)]">Response message</dt>
-                    <dd className="ledger-mono break-all">
-                      {selected.message_id}
-                    </dd>
-                  </div>
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <dt className="text-[var(--gd-muted)]">Question message</dt>
-                    <dd className="ledger-mono break-all">
-                      {selected.question_message_id || "—"}
-                    </dd>
-                  </div>
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <dt className="text-[var(--gd-muted)]">User ID</dt>
-                    <dd className="ledger-mono break-all">{selected.user_id}</dd>
-                  </div>
-                </dl>
-              </DetailBlock>
-            </div>
+            <Card title="The answer Genova gave">
+              <div className="adm-card__body--pad" style={{ fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                {selected.response || "No answer recorded."}
+              </div>
+            </Card>
 
-            <div className="flex justify-end border-t border-[var(--gd-border)] px-5 py-4">
-              <LedgerButton onClick={() => setSelected(null)}>Close</LedgerButton>
-            </div>
-          </aside>
-        </div>
-      ) : null}
-    </div>
+            <Card title="What the person said">
+              <div className="adm-card__body--pad">
+                <DefinitionList
+                  items={[
+                    { term: "Rating", value: selected.feedback === "up" ? "Helpful" : "Unhelpful" },
+                    { term: "Reason", value: formatReason(selected.reason) },
+                    {
+                      term: "Comment",
+                      value: selected.comment ? (
+                        <span style={{ whiteSpace: "pre-wrap" }}>{selected.comment}</span>
+                      ) : (
+                        "No additional comment"
+                      ),
+                    },
+                  ]}
+                />
+              </div>
+            </Card>
+
+            <Card title="References" description="Useful when matching this rating to a detailed trace.">
+              <div className="adm-card__body--pad">
+                <DefinitionList
+                  items={[
+                    { term: "Conversation", value: <span className="adm-mono">{selected.session_id || "—"}</span> },
+                    { term: "Answer message", value: <span className="adm-mono">{selected.message_id}</span> },
+                    {
+                      term: "Question message",
+                      value: <span className="adm-mono">{selected.question_message_id || "—"}</span>,
+                    },
+                    { term: "Person", value: <span className="adm-mono">{selected.user_id}</span> },
+                  ]}
+                />
+              </div>
+            </Card>
+          </div>
+        ) : null}
+      </Drawer>
+    </>
   );
 }

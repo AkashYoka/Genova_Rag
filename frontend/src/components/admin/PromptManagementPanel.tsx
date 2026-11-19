@@ -2,27 +2,33 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Check,
+  AlertTriangle,
+  ArrowUpRight,
   Eye,
-  Loader2,
-  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
+  SlidersHorizontal,
   Sparkles,
-  X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { api } from "@/lib/api";
 import {
-  LedgerButton,
-  LedgerEmpty,
-  LedgerError,
-  LedgerKpiStrip,
-  LedgerPanel,
-  LedgerStatus,
-} from "@/components/ledger/LedgerPrimitives";
-import { Input } from "@/components/ui/input";
+  AdminButton,
+  Badge,
+  Callout,
+  Card,
+  ConfirmDialog,
+  Drawer,
+  EmptyState,
+  Field,
+  PageHeader,
+  SkeletonBlock,
+  Stat,
+  StatGrid,
+  TextInput,
+} from "@/components/admin/console/ConsoleUI";
 
 type DomainCard = {
   id: string;
@@ -85,30 +91,39 @@ type TestResult = {
   rationale?: string | null;
 };
 
-const DOMAIN_ACCENT: Record<string, string> = {
-  general: "from-slate-500/15 to-slate-500/5",
-  medical: "from-teal-500/20 to-teal-500/5",
-  payment: "from-amber-500/20 to-amber-500/5",
-  education: "from-sky-500/20 to-sky-500/5",
-  legal: "from-violet-500/20 to-violet-500/5",
-  research: "from-indigo-500/20 to-indigo-500/5",
-  finance: "from-emerald-500/20 to-emerald-500/5",
-  technical: "from-cyan-500/20 to-cyan-500/5",
-};
+type ConfirmState =
+  | { kind: "reset" }
+  | { kind: "restore"; version: number }
+  | { kind: "deactivate" }
+  | null;
 
 function formatWhen(iso?: string | null): string {
   if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDay(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function prettyDomain(slug: string): string {
+  return slug ? slug.replace(/[-_]/g, " ").replace(/^./, (c) => c.toUpperCase()) : "General";
 }
 
 export function PromptManagementPanel() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
 
   const [editorOpen, setEditorOpen] = useState(false);
@@ -120,26 +135,19 @@ export function PromptManagementPanel() {
   const [editContent, setEditContent] = useState("");
   const [versions, setVersions] = useState<Version[]>([]);
 
-  const [testQuestion, setTestQuestion] = useState(
-    "What is the key takeaway from this document?",
-  );
+  const [testQuestion, setTestQuestion] = useState("What is the key takeaway from this document?");
   const [testContext, setTestContext] = useState(
     "Sample excerpt for testing only. Replace with real document text when validating.",
   );
   const [testResult, setTestResult] = useState<TestResult | null>(null);
-  const [previewOnly, setPreviewOnly] = useState<Record<string, unknown> | null>(
-    null,
-  );
+  const [previewOnly, setPreviewOnly] = useState<Record<string, unknown> | null>(null);
 
   const [newDomainOpen, setNewDomainOpen] = useState(false);
   const [newSlug, setNewSlug] = useState("");
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
 
-  const flash = (msg: string) => {
-    setSuccess(msg);
-    window.setTimeout(() => setSuccess(""), 3500);
-  };
+  const [confirm, setConfirm] = useState<ConfirmState>(null);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -149,7 +157,7 @@ export function PromptManagementPanel() {
       const data = await api.get<Overview>("/api/v1/admin/prompts/overview");
       setOverview(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load prompts");
+      setError(err instanceof Error ? err.message : "Could not load answer styles");
     } finally {
       setBusy(false);
     }
@@ -161,15 +169,13 @@ export function PromptManagementPanel() {
 
   const openEditor = async (card: DomainCard) => {
     if (!card.template_id) {
-      setError("This domain has no prompt yet. Refresh or re-seed defaults.");
+      setError("This specialty has no wording yet. Refresh to restore the defaults.");
       return;
     }
     setBusy(true);
     setError("");
     try {
-      const tpl = await api.get<Template>(
-        `/api/v1/admin/prompts/templates/${card.template_id}`,
-      );
+      const tpl = await api.get<Template>(`/api/v1/admin/prompts/templates/${card.template_id}`);
       const vers = await api.get<Version[]>(
         `/api/v1/admin/prompts/templates/${card.template_id}/versions`,
       );
@@ -184,7 +190,7 @@ export function PromptManagementPanel() {
       setPreviewOnly(null);
       setEditorOpen(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open editor");
+      setError(err instanceof Error ? err.message : "Could not open the editor");
     } finally {
       setBusy(false);
     }
@@ -195,24 +201,21 @@ export function PromptManagementPanel() {
     setBusy(true);
     setError("");
     try {
-      const updated = await api.put<Template>(
-        `/api/v1/admin/prompts/templates/${template.id}`,
-        {
-          name: editName.trim() || template.name,
-          description: editDescription,
-          content: editContent,
-          change_note: "Admin edit",
-        },
-      );
+      const updated = await api.put<Template>(`/api/v1/admin/prompts/templates/${template.id}`, {
+        name: editName.trim() || template.name,
+        description: editDescription,
+        content: editContent,
+        change_note: "Admin edit",
+      });
       setTemplate(updated);
-      flash("Changes saved. New chats will use this version.");
+      toast.success("Saved. New answers will use this wording.");
       await load();
       const vers = await api.get<Version[]>(
         `/api/v1/admin/prompts/templates/${updated.id}/versions`,
       );
       setVersions(vers);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(err instanceof Error ? err.message : "Changes could not be saved");
     } finally {
       setBusy(false);
     }
@@ -221,6 +224,7 @@ export function PromptManagementPanel() {
   const toggleActive = async () => {
     if (!template) return;
     setBusy(true);
+    setError("");
     try {
       const path = template.is_active ? "deactivate" : "activate";
       const updated = await api.post<Template>(
@@ -228,25 +232,20 @@ export function PromptManagementPanel() {
         {},
       );
       setTemplate(updated);
-      flash(updated.is_active ? "Prompt activated." : "Prompt deactivated.");
+      toast.success(updated.is_active ? "Style switched on." : "Style switched off.");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Status change failed");
+      setError(err instanceof Error ? err.message : "The status change failed");
     } finally {
       setBusy(false);
+      setConfirm(null);
     }
   };
 
   const resetDefault = async () => {
     if (!template) return;
-    if (
-      !window.confirm(
-        "Reset this prompt to the built-in V1 default? Your current wording will be kept in version history.",
-      )
-    ) {
-      return;
-    }
     setBusy(true);
+    setError("");
     try {
       const updated = await api.post<Template>(
         `/api/v1/admin/prompts/templates/${template.id}/reset-default`,
@@ -256,7 +255,7 @@ export function PromptManagementPanel() {
       setEditName(updated.name);
       setEditDescription(updated.description || "");
       setEditContent(updated.content);
-      flash("Restored the default template.");
+      toast.success("Restored the built-in wording. Your previous text is still in history.");
       await load();
       const vers = await api.get<Version[]>(
         `/api/v1/admin/prompts/templates/${updated.id}/versions`,
@@ -266,13 +265,14 @@ export function PromptManagementPanel() {
       setError(err instanceof Error ? err.message : "Reset failed");
     } finally {
       setBusy(false);
+      setConfirm(null);
     }
   };
 
   const restoreVersion = async (versionNumber: number) => {
     if (!template) return;
-    if (!window.confirm(`Restore version ${versionNumber}?`)) return;
     setBusy(true);
+    setError("");
     try {
       const updated = await api.post<Template>(
         `/api/v1/admin/prompts/templates/${template.id}/versions/${versionNumber}/restore`,
@@ -280,12 +280,13 @@ export function PromptManagementPanel() {
       );
       setTemplate(updated);
       setEditContent(updated.content);
-      flash(`Restored version ${versionNumber}.`);
+      toast.success(`Restored version ${versionNumber}.`);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Restore failed");
+      setError(err instanceof Error ? err.message : "That version could not be restored");
     } finally {
       setBusy(false);
+      setConfirm(null);
     }
   };
 
@@ -294,15 +295,12 @@ export function PromptManagementPanel() {
     setBusy(true);
     setError("");
     try {
-      const result = await api.post<Record<string, unknown>>(
-        "/api/v1/admin/prompts/preview",
-        {
-          question: testQuestion,
-          context: testContext,
-          prompt_type: "rag",
-          domain_slug: editingCard.slug,
-        },
-      );
+      const result = await api.post<Record<string, unknown>>("/api/v1/admin/prompts/preview", {
+        question: testQuestion,
+        context: testContext,
+        prompt_type: "rag",
+        domain_slug: editingCard.slug,
+      });
       setPreviewOnly(result);
       setTestResult(null);
     } catch (err) {
@@ -335,7 +333,7 @@ export function PromptManagementPanel() {
       setPreviewOnly(null);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Test failed");
+      setError(err instanceof Error ? err.message : "The test answer could not be generated");
     } finally {
       setBusy(false);
     }
@@ -343,7 +341,7 @@ export function PromptManagementPanel() {
 
   const createDomain = async () => {
     if (!newSlug.trim() || !newName.trim()) {
-      setError("Domain key and display name are required.");
+      setError("Both a key and a display name are required.");
       return;
     }
     setBusy(true);
@@ -376,413 +374,588 @@ export function PromptManagementPanel() {
       setNewSlug("");
       setNewName("");
       setNewDesc("");
-      flash(`Created domain “${domain.name}”.`);
+      toast.success(`Added “${domain.name}” with a starter style.`);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create domain");
+      setError(err instanceof Error ? err.message : "The specialty could not be created");
     } finally {
       setBusy(false);
     }
   };
 
   const cards = overview?.domains ?? [];
-  const lastUpdatedLabel = useMemo(
-    () => formatWhen(overview?.last_updated),
-    [overview?.last_updated],
-  );
+  const recent = overview?.recent_detections ?? [];
+
+  const lastUpdatedLabel = useMemo(() => formatWhen(overview?.last_updated), [overview?.last_updated]);
+
+  const confirmCopy = useMemo(() => {
+    if (!confirm) return null;
+    if (confirm.kind === "reset") {
+      return {
+        title: "Restore the built-in wording?",
+        description:
+          "The current text is replaced by the original template and saved as a new version. Nothing is deleted, so you can restore your wording from history.",
+        confirmLabel: "Restore default",
+        destructive: true,
+        run: () => void resetDefault(),
+      };
+    }
+    if (confirm.kind === "deactivate") {
+      return {
+        title: "Switch this style off?",
+        description:
+          "Questions that match this specialty will fall back to the General style until you switch it back on. Existing answers are not changed.",
+        confirmLabel: "Switch off",
+        destructive: true,
+        run: () => void toggleActive(),
+      };
+    }
+    return {
+      title: `Restore version ${confirm.version}?`,
+      description:
+        "The editor will load that version’s text. You still need to save to make it live for new answers.",
+      confirmLabel: `Restore v${confirm.version}`,
+      destructive: false,
+      run: () => void restoreVersion(confirm.version),
+    };
+  }, [confirm]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="ledger-stack">
-      {error ? <LedgerError>{error}</LedgerError> : null}
-      {success ? (
-        <div
-          role="status"
-          className="flex items-center gap-2 rounded-[8px] border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[13px] text-emerald-800 dark:text-emerald-200"
-        >
-          <Check className="h-3.5 w-3.5 shrink-0" />
-          {success}
+    <>
+      <PageHeader
+        title="Answer styles"
+        description="Control the wording Genova uses for each document specialty. People never pick a specialty — Genova detects it."
+        actions={
+          <>
+            <AdminButton variant="secondary" onClick={() => void load()} disabled={busy}>
+              <RefreshCw className={busy ? "animate-spin" : undefined} /> Refresh
+            </AdminButton>
+            <AdminButton
+              variant="primary"
+              onClick={() => setNewDomainOpen(true)}
+              disabled={busy}
+            >
+              <Plus /> Add specialty
+            </AdminButton>
+          </>
+        }
+      />
+
+      {error ? (
+        <div style={{ marginBottom: 16 }}>
+          <Callout tone="danger" icon={<AlertTriangle />}>
+            <strong>Something went wrong.</strong> {error}
+          </Callout>
         </div>
       ) : null}
 
-      <LedgerKpiStrip
-        items={[
-          {
-            label: "Domains",
-            value: String(overview?.total_domains ?? "—"),
-            caption: `${overview?.active_domains ?? 0} active`,
-          },
-          {
-            label: "Ready prompts",
-            value: String(overview?.active_prompts ?? "—"),
-            caption: `${overview?.default_prompts ?? 0} marked default`,
-          },
-          {
-            label: "Auto-detections",
-            value: String(overview?.detections_total ?? "—"),
-            caption: `${overview?.fallback_total ?? 0} used General fallback`,
-          },
-          {
-            label: "Last updated",
-            value: lastUpdatedLabel === "—" ? "—" : lastUpdatedLabel.split(",")[0],
-            caption: lastUpdatedLabel,
-          },
-        ]}
-      />
+      <StatGrid>
+        <Stat
+          label="Specialties"
+          icon={<SlidersHorizontal />}
+          value={String(overview?.total_domains ?? "—")}
+          caption={`${overview?.active_domains ?? 0} switched on`}
+        />
+        <Stat
+          label="Active styles"
+          icon={<Sparkles />}
+          value={String(overview?.active_prompts ?? "—")}
+          caption={`${overview?.default_prompts ?? 0} marked as default`}
+        />
+        <Stat
+          label="Automatic detections"
+          icon={<SlidersHorizontal />}
+          value={(overview?.detections_total ?? 0).toLocaleString()}
+          caption="Questions matched to a specialty"
+        />
+        <Stat
+          label="Used General"
+          icon={<AlertTriangle />}
+          value={(overview?.fallback_total ?? 0).toLocaleString()}
+          caption="Low-confidence questions"
+        />
+      </StatGrid>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-2xl text-[13px] leading-relaxed text-[var(--gd-muted)]">
-          Each specialty below already has a ready-made assistant style. Users never
-          pick a domain — the system chooses it automatically. Edit only when you
-          want to refine the wording.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <LedgerButton onClick={() => void load()} disabled={busy}>
-            {busy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            Refresh
-          </LedgerButton>
-          <LedgerButton
-            variant="primary"
-            onClick={() => setNewDomainOpen(true)}
-            disabled={busy}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add specialty
-          </LedgerButton>
-        </div>
+      <div style={{ marginTop: 16 }}>
+        <Callout icon={<SlidersHorizontal />}>
+          <strong>Most people never need to touch this.</strong> Each specialty already ships with a
+          sensible style. Edit one only when its answers should sound different.
+          {lastUpdatedLabel !== "—" ? (
+            <span className="adm-muted"> Last updated {lastUpdatedLabel}.</span>
+          ) : null}
+        </Callout>
       </div>
 
-      {!cards.length && !busy ? (
-        <LedgerEmpty>No domains found. Click Refresh to seed defaults.</LedgerEmpty>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {cards.map((card) => {
-            const accent = DOMAIN_ACCENT[card.slug] || "from-slate-500/15 to-transparent";
-            return (
-              <article
-                key={card.id}
-                className={`relative overflow-hidden rounded-[12px] border border-[var(--gd-border)] bg-gradient-to-br ${accent} p-4 shadow-[0_1px_0_rgba(0,0,0,0.03)]`}
+      <div style={{ marginTop: 22 }}>
+        <div className="adm-section-head">
+          <div>
+            <h2 className="adm-section-title">Specialties</h2>
+            <p className="adm-section-desc">
+              Genova picks one automatically for every question, based on the topic.
+            </p>
+          </div>
+          <span className="adm-section-meta">
+            {cards.length ? `${cards.length} answer styles` : null}
+          </span>
+        </div>
+
+        {busy && !cards.length ? (
+          <div className="adm-grid-3" aria-hidden>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <section
+                className="adm-card adm-style-card"
+                key={i}
+                style={{ gap: 10, padding: 14 }}
               >
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-[16px] font-semibold tracking-tight">
-                      {card.name}
+                <SkeletonBlock height={28} width={28} />
+                <SkeletonBlock height={13} width="55%" />
+                <SkeletonBlock height={12} />
+                <SkeletonBlock height={12} width="80%" />
+              </section>
+            ))}
+          </div>
+        ) : cards.length ? (
+          <div className="adm-grid-3">
+            {cards.map((card) => (
+              <section className="adm-card adm-style-card" key={card.id}>
+                <div className="adm-style-card__head">
+                  <span className="adm-style-card__icon" aria-hidden>
+                    <Sparkles />
+                  </span>
+                  <div className="adm-style-card__heading">
+                    <h3 className="adm-style-card__name">
+                      <span className="adm-style-card__name-text" title={card.name}>
+                        {card.name}
+                      </span>
+                      {card.is_fallback ? <Badge tone="warn">Fallback</Badge> : null}
                     </h3>
-                    <p className="mt-1 text-[12px] text-[var(--gd-muted)]">
-                      {card.purpose || card.description}
+                    <p className="adm-style-card__desc">
+                      {card.purpose || card.description || "No description recorded."}
                     </p>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
-                    {card.is_fallback ? (
-                      <LedgerStatus label="fallback" tone="warn" />
-                    ) : null}
-                    <LedgerStatus
-                      label={card.is_prompt_active ? "ready" : "off"}
-                      tone={card.is_prompt_active ? "ok" : "neutral"}
-                    />
+                  <Badge tone={card.is_prompt_active ? "ok" : "neutral"}>
+                    {card.is_prompt_active ? "Ready" : "Off"}
+                  </Badge>
+                </div>
+
+                <div className="adm-style-card__stats">
+                  <div className="adm-style-card__stat">
+                    <span className="adm-style-card__stat-value">v{card.version ?? "—"}</span>
+                    <span className="adm-style-card__stat-label">Version</span>
+                  </div>
+                  <div className="adm-style-card__stat">
+                    <span className="adm-style-card__stat-value">
+                      {card.query_count.toLocaleString()}
+                    </span>
+                    <span className="adm-style-card__stat-label">Detections</span>
+                  </div>
+                  <div className="adm-style-card__stat">
+                    <span className="adm-style-card__stat-value">
+                      {card.avg_confidence != null
+                        ? Number(card.avg_confidence).toFixed(2)
+                        : "—"}
+                    </span>
+                    <span className="adm-style-card__stat-label">Confidence</span>
                   </div>
                 </div>
-                <p className="mb-4 line-clamp-3 text-[13px] leading-relaxed text-[var(--gd-fg)]/80">
-                  {card.description}
-                </p>
-                <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[var(--gd-muted)]">
-                  <span>Version {card.version ?? "—"}</span>
-                  <span>{card.query_count} detections</span>
-                  <span>Updated {formatWhen(card.last_updated)}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <LedgerButton
-                    variant="primary"
+
+                <div className="adm-style-card__foot">
+                  <span className="adm-style-card__updated">
+                    Updated {formatDay(card.last_updated)}
+                  </span>
+                  <AdminButton
+                    size="sm"
+                    variant="ghost"
                     onClick={() => void openEditor(card)}
                     disabled={busy || !card.template_id}
                   >
-                    <Pencil className="h-3.5 w-3.5" />
-                    Edit
-                  </LedgerButton>
-                  <LedgerButton
-                    onClick={() => {
-                      void openEditor(card).then(() => {
-                        /* editor opens; user can preview there */
-                      });
-                    }}
-                    disabled={busy || !card.template_id}
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    Open
-                  </LedgerButton>
+                    Open style <ArrowUpRight />
+                  </AdminButton>
                 </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-
-      <LedgerPanel
-        title="Recent automatic choices"
-        description="When someone asks a question, the system picks a specialty. Low-confidence cases use General."
-        padded
-      >
-        {!overview?.recent_detections?.length ? (
-          <LedgerEmpty>No detections yet — they appear after chat activity.</LedgerEmpty>
-        ) : (
-          <div className="divide-y divide-[var(--gd-border)]">
-            {overview.recent_detections.map((row) => (
-              <div
-                key={String(row.id)}
-                className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-[13px]"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{String(row.domain)}</p>
-                  <p className="truncate text-[12px] text-[var(--gd-muted)]">
-                    {String(row.question_preview || "")}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 text-[12px] text-[var(--gd-muted)]">
-                  <span>{Number(row.confidence || 0).toFixed(2)}</span>
-                  {row.was_fallback ? (
-                    <LedgerStatus label="fallback" tone="warn" />
-                  ) : (
-                    <LedgerStatus label="matched" tone="ok" />
-                  )}
-                </div>
-              </div>
+              </section>
             ))}
           </div>
+        ) : (
+          <div className="adm-card">
+            <EmptyState
+              icon={<SlidersHorizontal />}
+              title="No specialties found"
+              text="Refresh to restore the built-in set of answer styles."
+              action={
+                <AdminButton size="sm" variant="secondary" onClick={() => void load()} disabled={busy}>
+                  <RefreshCw /> Refresh
+                </AdminButton>
+              }
+            />
+          </div>
         )}
-      </LedgerPanel>
+      </div>
 
-      {/* Create domain sheet */}
-      {newDomainOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
-          <div className="w-full max-w-md rounded-[12px] border border-[var(--gd-border)] bg-[var(--gd-surface)] p-5 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-[16px] font-semibold">Add a specialty</h3>
-              <button type="button" onClick={() => setNewDomainOpen(false)}>
-                <X className="h-4 w-4" />
-              </button>
+      <div style={{ marginTop: 16 }}>
+        <Card
+          title="Recent automatic choices"
+          description="When someone asks a question, Genova picks a specialty. Low-confidence questions use General."
+        >
+          {recent.length ? (
+            <div className="adm-list adm-list--scroll">
+              {recent.map((row) => (
+                <div
+                  key={String(row.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 14,
+                    padding: "12px 18px",
+                    borderBottom: "1px solid var(--adm-line-soft)",
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>
+                      {prettyDomain(String(row.domain || "general"))}
+                    </div>
+                    <div
+                      className="adm-truncate"
+                      style={{ fontSize: 12, color: "var(--adm-muted)", marginTop: 2 }}
+                    >
+                      {String(row.question_preview || "No question preview stored.")}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontSize: 12,
+                      color: "var(--adm-muted)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span>Confidence {Number(row.confidence || 0).toFixed(2)}</span>
+                    <Badge tone={row.was_fallback ? "warn" : "ok"}>
+                      {row.was_fallback ? "General" : "Matched"}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
             </div>
-            <p className="mb-3 text-[13px] text-[var(--gd-muted)]">
-              Use a short key like <code>insurance</code> and a clear display name.
-              A starter prompt is created automatically.
-            </p>
-            <div className="space-y-2">
-              <Input
-                placeholder="Key (e.g. insurance)"
-                value={newSlug}
-                onChange={(e) => setNewSlug(e.target.value)}
-              />
-              <Input
-                placeholder="Display name"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-              />
-              <Input
-                placeholder="Short description (optional)"
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-              />
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <LedgerButton onClick={() => setNewDomainOpen(false)}>
-                Cancel
-              </LedgerButton>
-              <LedgerButton
-                variant="primary"
-                onClick={() => void createDomain()}
+          ) : (
+            <EmptyState
+              icon={<SlidersHorizontal />}
+              title="No detections yet"
+              text="Specialty choices appear here after the first questions are asked."
+            />
+          )}
+        </Card>
+      </div>
+
+      {/* Create specialty */}
+      <Drawer
+        open={newDomainOpen}
+        onClose={() => setNewDomainOpen(false)}
+        title="Add a specialty"
+        description="A short key and a clear name. A starter style is created for you and can be edited later."
+        footer={
+          <>
+            <AdminButton variant="ghost" onClick={() => setNewDomainOpen(false)} disabled={busy}>
+              Cancel
+            </AdminButton>
+            <AdminButton variant="primary" onClick={() => void createDomain()} disabled={busy}>
+              <Plus /> Create specialty
+            </AdminButton>
+          </>
+        }
+      >
+        <div className="adm-stack">
+          <Field
+            label="Key"
+            htmlFor="new-domain-slug"
+            hint="Lowercase, no spaces. Used internally, e.g. insurance or compliance."
+          >
+            <TextInput
+              id="new-domain-slug"
+              value={newSlug}
+              onChange={(e) => setNewSlug(e.target.value)}
+              placeholder="insurance"
+            />
+          </Field>
+          <Field label="Display name" htmlFor="new-domain-name">
+            <TextInput
+              id="new-domain-name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Insurance documents"
+            />
+          </Field>
+          <Field
+            label="Short description"
+            htmlFor="new-domain-desc"
+            optional
+            hint="Shown to administrators on the card. People using Genova never see it."
+          >
+            <TextInput
+              id="new-domain-desc"
+              value={newDesc}
+              onChange={(e) => setNewDesc(e.target.value)}
+              placeholder="Policies, claims, and coverage questions"
+            />
+          </Field>
+          <Callout icon={<Sparkles />}>
+            The starter style answers only from document context, cites sources, and refuses to follow
+            instructions written inside uploaded files.
+          </Callout>
+        </div>
+      </Drawer>
+
+      {/* Editor */}
+      <Drawer
+        open={editorOpen && Boolean(editingCard && template)}
+        onClose={() => setEditorOpen(false)}
+        wide
+        title={editingCard ? `${editingCard.name} style` : "Answer style"}
+        description={
+          template
+            ? `Version ${template.version} · ${template.is_active ? "active" : "inactive"} — changes affect new answers only.`
+            : undefined
+        }
+        footer={
+          <>
+            <div style={{ marginRight: "auto", display: "flex", gap: 8 }}>
+              <AdminButton
+                variant={template?.is_active ? "danger" : "secondary"}
+                size="sm"
+                onClick={() => {
+                  if (template?.is_active) setConfirm({ kind: "deactivate" });
+                  else void toggleActive();
+                }}
                 disabled={busy}
               >
-                Create
-              </LedgerButton>
+                {template?.is_active ? "Switch off" : "Switch on"}
+              </AdminButton>
+              <AdminButton
+                variant="ghost"
+                size="sm"
+                onClick={() => setConfirm({ kind: "reset" })}
+                disabled={busy}
+              >
+                <RotateCcw /> Restore default
+              </AdminButton>
             </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Editor drawer */}
-      {editorOpen && editingCard && template ? (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
-          <div className="flex h-full w-full max-w-2xl flex-col border-l border-[var(--gd-border)] bg-[var(--gd-surface)] shadow-2xl">
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--gd-border)] px-5 py-4">
-              <div>
-                <p className="text-[12px] text-[var(--gd-muted)]">
-                  {editingCard.name}
-                  {editingCard.is_fallback ? " · default fallback" : ""}
-                </p>
-                <h3 className="text-[18px] font-semibold tracking-tight">
-                  Edit assistant style
-                </h3>
-                <p className="mt-1 text-[13px] text-[var(--gd-muted)]">
-                  Version {template.version}
-                  {template.is_active ? " · active" : " · inactive"}
-                </p>
-              </div>
-              <button type="button" onClick={() => setEditorOpen(false)}>
-                <X className="h-5 w-5" />
+            <AdminButton variant="ghost" onClick={() => setEditorOpen(false)}>
+              Close
+            </AdminButton>
+            <AdminButton variant="primary" onClick={() => void saveChanges()} disabled={busy}>
+              Save changes
+            </AdminButton>
+          </>
+        }
+      >
+        {editingCard && template ? (
+          <div className="adm-stack">
+            <div
+              className="adm-tabs"
+              role="tablist"
+              aria-label="Editor mode"
+              style={{ alignSelf: "flex-start" }}
+            >
+              <button
+                type="button"
+                role="tab"
+                className="adm-tab"
+                aria-selected={!advanced}
+                onClick={() => setAdvanced(false)}
+              >
+                Simple
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className="adm-tab"
+                aria-selected={advanced}
+                onClick={() => setAdvanced(true)}
+              >
+                Advanced
               </button>
             </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
-              <div className="flex gap-2 rounded-[8px] border border-[var(--gd-border)] p-1">
-                <button
-                  type="button"
-                  className={`flex-1 rounded-[6px] px-3 py-1.5 text-[13px] ${!advanced ? "bg-[var(--gd-surface-2)] font-medium" : ""
-                    }`}
-                  onClick={() => setAdvanced(false)}
+            <Field label="Display name" htmlFor="edit-style-name">
+              <TextInput
+                id="edit-style-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+            </Field>
+            <Field
+              label="What this specialty does"
+              htmlFor="edit-style-desc"
+              hint="A one-line explanation for other administrators."
+            >
+              <TextInput
+                id="edit-style-desc"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+              />
+            </Field>
+
+            {advanced ? (
+              <Field
+                label="Full instructions sent to the model"
+                htmlFor="edit-style-content"
+                hint="Advanced. Changing this changes how every answer for this specialty is written."
+              >
+                <textarea
+                  id="edit-style-content"
+                  className="adm-textarea"
+                  style={{
+                    minHeight: 280,
+                    fontFamily: "var(--adm-mono)",
+                    fontSize: 12,
+                  }}
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                />
+              </Field>
+            ) : (
+              <Callout icon={<Eye />}>
+                <strong>How answers behave:</strong> {editingCard.description}
+                <div style={{ marginTop: 6 }} className="adm-muted">
+                  Switch to Advanced only if you need to rewrite the full instruction text. Most
+                  administrators never need it.
+                </div>
+              </Callout>
+            )}
+
+            <Card
+              title="Try it safely"
+              description="Preview the assembled prompt or generate a sample answer. Nothing reaches people until you save."
+            >
+              <div className="adm-card__body--pad adm-stack" style={{ gap: 12 }}>
+                <Field label="Sample question" htmlFor="test-question">
+                  <TextInput
+                    id="test-question"
+                    value={testQuestion}
+                    onChange={(e) => setTestQuestion(e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label="Sample document text"
+                  htmlFor="test-context"
+                  hint="Use a real excerpt when you want a realistic answer."
                 >
-                  Simple
-                </button>
-                <button
-                  type="button"
-                  className={`flex-1 rounded-[6px] px-3 py-1.5 text-[13px] ${advanced ? "bg-[var(--gd-surface-2)] font-medium" : ""
-                    }`}
-                  onClick={() => setAdvanced(true)}
-                >
-                  Advanced
-                </button>
+                  <textarea
+                    id="test-context"
+                    className="adm-textarea"
+                    style={{ minHeight: 90 }}
+                    value={testContext}
+                    onChange={(e) => setTestContext(e.target.value)}
+                  />
+                </Field>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <AdminButton variant="secondary" onClick={() => void runPreview()} disabled={busy}>
+                    <Eye /> Preview prompt
+                  </AdminButton>
+                  <AdminButton variant="primary" onClick={() => void runTest()} disabled={busy}>
+                    <Sparkles /> Generate test answer
+                  </AdminButton>
+                </div>
+
+                {previewOnly ? (
+                  <>
+                    <div className="adm-hint">
+                      Detected as <strong>{String(previewOnly.domain)}</strong> · confidence{" "}
+                      {String(previewOnly.confidence)}
+                    </div>
+                    <pre className="adm-pre">
+                      {String(previewOnly.system_prompt || "").slice(0, 1400)}
+                    </pre>
+                  </>
+                ) : null}
+
+                {testResult ? (
+                  <div className="adm-stack" style={{ gap: 8 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      <Badge tone="accent">{testResult.domain}</Badge>
+                      {testResult.prompt_version ? (
+                        <Badge plain>v{testResult.prompt_version}</Badge>
+                      ) : null}
+                      {testResult.was_fallback ? <Badge tone="warn">Fallback</Badge> : null}
+                      <Badge plain>Confidence {testResult.confidence.toFixed(2)}</Badge>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 13.5,
+                        lineHeight: 1.6,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {testResult.answer}
+                    </div>
+                  </div>
+                ) : null}
               </div>
+            </Card>
 
-              <label className="block text-[12px] text-[var(--gd-muted)]">
-                Display name
-                <Input
-                  className="mt-1"
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                />
-              </label>
-              <label className="block text-[12px] text-[var(--gd-muted)]">
-                What this specialty does
-                <Input
-                  className="mt-1"
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                />
-              </label>
-
-              {!advanced ? (
-                <div className="rounded-[10px] border border-[var(--gd-border)] bg-[var(--gd-surface-2)]/40 p-4 text-[13px] leading-relaxed">
-                  <p className="mb-2 font-medium">How answers behave</p>
-                  <p className="text-[var(--gd-muted)]">
-                    {editingCard.description}
-                  </p>
-                  <p className="mt-3 text-[var(--gd-muted)]">
-                    Switch to <strong>Advanced</strong> only if you need to edit the
-                    full instruction text. Most admins never need that.
-                  </p>
+            <Card
+              title="Version history"
+              description="Every save keeps the previous text. Restoring loads it into the editor — save to make it live."
+            >
+              {versions.length ? (
+                <div className="adm-list">
+                  {versions.slice(0, 8).map((version) => (
+                    <div
+                      key={version.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        padding: "10px 18px",
+                        borderBottom: "1px solid var(--adm-line-soft)",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500 }}>
+                          Version {version.version_number}
+                        </div>
+                        <div className="adm-hint">
+                          {formatWhen(version.created_at)}
+                          {version.change_note ? ` · ${version.change_note}` : ""}
+                        </div>
+                      </div>
+                      <AdminButton
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          setConfirm({ kind: "restore", version: version.version_number })
+                        }
+                        disabled={busy || version.version_number === template.version}
+                      >
+                        <RotateCcw /> Restore
+                      </AdminButton>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <label className="block text-[12px] text-[var(--gd-muted)]">
-                  Full instructions
-                  <textarea
-                    className="mt-1 min-h-[240px] w-full rounded-[8px] border border-[var(--gd-border)] bg-transparent p-3 font-mono text-[12px] leading-relaxed"
-                    value={editContent}
-                    onChange={(e) => setEditContent(e.target.value)}
-                  />
-                </label>
+                <EmptyState
+                  title="No earlier versions"
+                  text="History appears after the first saved change."
+                />
               )}
-
-              <div className="rounded-[10px] border border-[var(--gd-border)] p-4">
-                <p className="mb-2 text-[13px] font-medium">Try it safely</p>
-                <p className="mb-3 text-[12px] text-[var(--gd-muted)]">
-                  Testing does not change what end users see until you click Save.
-                </p>
-                <Input
-                  className="mb-2"
-                  value={testQuestion}
-                  onChange={(e) => setTestQuestion(e.target.value)}
-                  placeholder="Sample question"
-                />
-                <textarea
-                  className="mb-3 min-h-[80px] w-full rounded-[8px] border border-[var(--gd-border)] bg-transparent p-2 text-[12px]"
-                  value={testContext}
-                  onChange={(e) => setTestContext(e.target.value)}
-                  placeholder="Sample document text"
-                />
-                <div className="flex flex-wrap gap-2">
-                  <LedgerButton onClick={() => void runPreview()} disabled={busy}>
-                    <Eye className="h-3.5 w-3.5" />
-                    Preview assembly
-                  </LedgerButton>
-                  <LedgerButton
-                    variant="primary"
-                    onClick={() => void runTest()}
-                    disabled={busy}
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    Run test answer
-                  </LedgerButton>
-                </div>
-                {previewOnly ? (
-                  <pre className="mt-3 max-h-40 overflow-auto rounded-[8px] border border-[var(--gd-border)] p-2 text-[11px] whitespace-pre-wrap">
-                    Domain: {String(previewOnly.domain)} (conf{" "}
-                    {String(previewOnly.confidence)})
-                    {"\n\n"}
-                    {String(previewOnly.system_prompt || "").slice(0, 900)}
-                  </pre>
-                ) : null}
-                {testResult ? (
-                  <div className="mt-3 space-y-2 rounded-[8px] border border-[var(--gd-border)] p-3 text-[13px]">
-                    <p className="text-[12px] text-[var(--gd-muted)]">
-                      Used <strong>{testResult.domain}</strong>
-                      {testResult.prompt_version
-                        ? ` · v${testResult.prompt_version}`
-                        : ""}
-                      {testResult.was_fallback ? " · fallback" : ""}
-                    </p>
-                    <p className="whitespace-pre-wrap">{testResult.answer}</p>
-                  </div>
-                ) : null}
-              </div>
-
-              {versions.length ? (
-                <div>
-                  <p className="mb-2 text-[12px] text-[var(--gd-muted)]">
-                    Version history
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {versions.slice(0, 8).map((v) => (
-                      <LedgerButton
-                        key={v.id}
-                        onClick={() => void restoreVersion(v.version_number)}
-                        disabled={busy}
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        v{v.version_number}
-                      </LedgerButton>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--gd-border)] px-5 py-4">
-              <div className="flex flex-wrap gap-2">
-                <LedgerButton onClick={() => void toggleActive()} disabled={busy}>
-                  {template.is_active ? "Deactivate" : "Activate"}
-                </LedgerButton>
-                <LedgerButton onClick={() => void resetDefault()} disabled={busy}>
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Reset to default
-                </LedgerButton>
-              </div>
-              <div className="flex gap-2">
-                <LedgerButton onClick={() => setEditorOpen(false)}>
-                  Close
-                </LedgerButton>
-                <LedgerButton
-                  variant="primary"
-                  onClick={() => void saveChanges()}
-                  disabled={busy}
-                >
-                  Save changes
-                </LedgerButton>
-              </div>
-            </div>
+            </Card>
           </div>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </Drawer>
+
+      <ConfirmDialog
+        open={confirm !== null}
+        onClose={() => setConfirm(null)}
+        onConfirm={() => confirmCopy?.run()}
+        title={confirmCopy?.title ?? ""}
+        description={confirmCopy?.description ?? ""}
+        confirmLabel={confirmCopy?.confirmLabel ?? "Confirm"}
+        destructive={confirmCopy?.destructive}
+        busy={busy}
+      />
+    </>
   );
 }

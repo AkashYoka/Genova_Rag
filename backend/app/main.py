@@ -314,7 +314,6 @@ from app.routes.auth import router as auth_router
 from app.routes.documents import router as documents_router
 from app.routes.document_hierarchy import router as document_hierarchy_router
 from app.routes.chat import router as chat_router
-from app.routes.github import router as github_router
 from app.routes.admin import router as admin_router
 from app.routes.ai_traces import router as ai_traces_router
 from app.routes.workspaces import router as workspaces_router
@@ -325,7 +324,6 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(documents_router, prefix="/api/v1")
 app.include_router(document_hierarchy_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
-app.include_router(github_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(ai_traces_router, prefix="/api/v1")
 app.include_router(prompts_router, prefix="/api/v1")

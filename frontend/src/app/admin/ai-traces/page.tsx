@@ -1,40 +1,58 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, Activity } from "lucide-react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { RequireAuth } from "@/components/auth/RequireAuth";
+import { useAuth } from "@/lib/auth";
 import { AiTracesPanel } from "@/components/admin/AiTracesPanel";
-import {
-  LedgerButton,
-  LedgerCanvas,
-  LedgerShell,
-  LedgerTitle,
-} from "@/components/ledger/LedgerPrimitives";
+import { AdminShell, type AdminSectionId } from "@/components/admin/console/AdminShell";
+import { AdminSearch } from "@/components/admin/console/AdminSearch";
+
+function AiTracesRoute() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const [mobileNav, setMobileNav] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [nonce, setNonce] = useState(0);
+
+  const navigate = (id: AdminSectionId) => {
+    router.push(id === "overview" ? "/admin" : `/admin?section=${id}`);
+  };
+
+  return (
+    <>
+      <AdminShell
+        active="traces"
+        onNavigate={navigate}
+        collapsed={false}
+        onToggleCollapsed={() => {
+          /* The standalone route keeps the full sidebar. */
+        }}
+        onOpenSearch={() => setSearchOpen(true)}
+        onRefresh={() => setNonce((value) => value + 1)}
+        refreshing={false}
+        userEmail={user?.email ?? ""}
+        userName={user?.username || "Admin"}
+        mobileNavOpen={mobileNav}
+        onMobileNav={setMobileNav}
+      >
+        <AiTracesPanel key={nonce} syncUrl />
+      </AdminShell>
+
+      <AdminSearch
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onNavigate={navigate}
+      />
+    </>
+  );
+}
 
 export default function AdminAiTracesPage() {
   return (
     <RequireAuth requireAdmin>
-      <LedgerShell>
-        <LedgerCanvas>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <Link href="/admin">
-                <LedgerButton>
-                  <ArrowLeft className="h-3.5 w-3.5" />
-                  Admin
-                </LedgerButton>
-              </Link>
-              <LedgerTitle
-                title="AI processing traces"
-                finding="Inspect retrieval, LLM calls, and failures for every user question."
-              />
-            </div>
-            <Activity className="h-5 w-5 text-[var(--gd-muted)]" />
-          </div>
-          <AiTracesPanel syncUrl />
-        </LedgerCanvas>
-      </LedgerShell>
+      <AiTracesRoute />
     </RequireAuth>
   );
 }

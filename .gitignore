@@ -50,9 +50,4 @@ frontend/test-results/
 .freebuff/
 .taste-skill/
 # Local AWS feasibility test artifacts
-.aws-feasibility-efs/
-
-experiments/
-
-Table_try/
-standalone_table_extraction/
+samples/

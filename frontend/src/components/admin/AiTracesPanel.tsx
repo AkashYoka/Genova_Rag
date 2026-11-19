@@ -1,26 +1,29 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
-import {
-  ArrowRight,
-  Loader2,
-  RefreshCw,
-  Search,
-  X,
-} from "lucide-react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, RefreshCw, Route, Search, Timer } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { api } from "@/lib/api";
 import {
-  LedgerButton,
-  LedgerEmpty,
-  LedgerError,
-  LedgerKpiStrip,
-  LedgerPanel,
-  LedgerScrollTable,
-  LedgerStatus,
-} from "@/components/ledger/LedgerPrimitives";
-import { Input } from "@/components/ui/input";
+  AdminButton,
+  Badge,
+  Callout,
+  Card,
+  Drawer,
+  EmptyState,
+  Field,
+  PageHeader,
+  Pager,
+  SearchInput,
+  SelectInput,
+  Stat,
+  StatGrid,
+  TableSkeleton,
+  TableWrap,
+  TextInput,
+  type Tone,
+} from "@/components/admin/console/ConsoleUI";
 import {
   AiTraceDetail,
   type AITraceDetail as AITraceDetailType,
@@ -63,11 +66,15 @@ const PAGE_SIZE = 20;
 
 function formatWhen(iso?: string | null): string {
   if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function formatMs(ms?: number | null): string {
@@ -76,19 +83,31 @@ function formatMs(ms?: number | null): string {
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
-function truncate(text: string, n = 80): string {
-  if (!text) return "—";
-  return text.length > n ? `${text.slice(0, n)}…` : text;
-}
-
 function userLabel(item: AITraceListItem): string {
   return item.username || item.email || (item.user_id ? item.user_id.slice(0, 8) : "—");
 }
 
-function statusTone(status: string): "ok" | "bad" | "warn" | "neutral" {
-  if (status === "success") return "ok";
-  if (status === "failed") return "bad";
+function toneFor(status: string): Tone {
+  const s = (status || "").toLowerCase();
+  if (s === "success") return "ok";
+  if (s === "failed") return "danger";
+  if (s === "partial") return "warn";
   return "neutral";
+}
+
+function statusLabel(status: string) {
+  const s = (status || "").toLowerCase();
+  if (s === "success") return "Succeeded";
+  if (s === "failed") return "Failed";
+  if (s === "partial") return "Partial";
+  return status || "Unknown";
+}
+
+function requestTypeLabel(type: string) {
+  if (type === "rag") return "Document answer";
+  if (type === "quiz") return "Quiz";
+  if (type === "special_turn") return "Special turn";
+  return type || "—";
 }
 
 function AiTracesPanelInner({
@@ -117,7 +136,6 @@ function AiTracesPanelInner({
   const [questionQ, setQuestionQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [requestType, setRequestType] = useState("all");
-  const [failedOnly, setFailedOnly] = useState(false);
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [page, setPage] = useState(1);
@@ -145,31 +163,18 @@ function AiTracesPanelInner({
       if (questionQ) params.set("q", questionQ);
       if (start) params.set("start", start);
       if (end) params.set("end", end);
-      if (failedOnly) params.set("failed_only", "true");
-      else if (statusFilter !== "all") params.set("status", statusFilter);
+      if (statusFilter !== "all") params.set("status", statusFilter);
       if (requestType !== "all") params.set("request_type", requestType);
       const result = await api.get<AITraceListResponse>(
         `/api/v1/admin/ai-traces?${params.toString()}`,
       );
       setData(result);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not load AI traces",
-      );
+      setError(err instanceof Error ? err.message : "Could not load answer traces");
     } finally {
       setLoading(false);
     }
-  }, [
-    page,
-    traceId,
-    userQ,
-    questionQ,
-    start,
-    end,
-    statusFilter,
-    requestType,
-    failedOnly,
-  ]);
+  }, [page, traceId, userQ, questionQ, start, end, statusFilter, requestType]);
 
   useEffect(() => {
     void load();
@@ -199,7 +204,7 @@ function AiTracesPanelInner({
   const lookupTrace = useCallback(async () => {
     const id = lookupInput.trim();
     if (!id) {
-      setLookupError("Enter a trace_id to look up.");
+      setLookupError("Paste a trace ID first.");
       return;
     }
     setLookupError("");
@@ -211,16 +216,12 @@ function AiTracesPanelInner({
       setDetail(result);
       setSelectedId(result.trace_id);
       if (syncUrl) {
-        router.replace(
-          `/admin/ai-traces?id=${encodeURIComponent(result.trace_id)}`,
-        );
+        router.replace(`/admin/ai-traces?id=${encodeURIComponent(result.trace_id)}`);
       }
     } catch (err) {
       setDetail(null);
       setSelectedId(null);
-      setLookupError(
-        err instanceof Error ? err.message : "Trace not found",
-      );
+      setLookupError(err instanceof Error ? err.message : "That trace ID was not found.");
     } finally {
       setDetailLoading(false);
     }
@@ -244,7 +245,7 @@ function AiTracesPanelInner({
         if (!cancelled) {
           setDetail(null);
           setLookupError(
-            err instanceof Error ? err.message : "Could not load trace detail",
+            err instanceof Error ? err.message : "Could not load the full trace.",
           );
         }
       } finally {
@@ -256,168 +257,177 @@ function AiTracesPanelInner({
     };
   }, [selectedId]);
 
-  useEffect(() => {
-    if (!selectedId) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeDetail();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedId, closeDetail]);
-
   const summary = data?.summary;
   const pages = Math.max(1, data?.pages ?? 1);
   const total = data?.total ?? 0;
+  const items = data?.items ?? [];
+  const hasFilters = Boolean(
+    traceId || userQ || questionQ || start || end || statusFilter !== "all" || requestType !== "all",
+  );
+
+  const clearFilters = () => {
+    setTraceIdInput("");
+    setUserInput("");
+    setQuestionInput("");
+    setTraceId("");
+    setUserQ("");
+    setQuestionQ("");
+    setStatusFilter("all");
+    setRequestType("all");
+    setStart("");
+    setEnd("");
+    setPage(1);
+  };
+
+  const lookupPanel = useMemo(
+    () => (
+      <Card
+        title="Have a trace ID?"
+        description="Paste an ID from an answer’s diagnostics to jump straight to that record."
+      >
+        <div className="adm-card__body--pad">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <TextInput
+              value={lookupInput}
+              onChange={(e) => setLookupInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void lookupTrace();
+              }}
+              placeholder="e.g. 5a43a10f-7175-41f5-80dd-5d93d0a13485"
+              aria-label="Trace ID to open"
+              style={{ flex: "1 1 280px", fontFamily: "var(--adm-mono)", fontSize: 12.5 }}
+            />
+            <AdminButton
+              variant="secondary"
+              onClick={() => void lookupTrace()}
+              disabled={detailLoading}
+            >
+              <Search /> Open trace
+            </AdminButton>
+          </div>
+          {lookupError ? (
+            <p className="adm-hint" style={{ color: "var(--adm-danger)", marginTop: 8 }}>
+              {lookupError}
+            </p>
+          ) : (
+            <p className="adm-hint" style={{ marginTop: 8 }}>
+              Only administrators can read these records. Nothing here changes the platform.
+            </p>
+          )}
+        </div>
+      </Card>
+    ),
+    [lookupInput, detailLoading, lookupError, lookupTrace],
+  );
 
   return (
-    <div className="ledger-stack">
-      {error ? <LedgerError>{error}</LedgerError> : null}
+    <>
+      <PageHeader
+        title="Answer traces"
+        description="A step-by-step record of how each answer was produced — which document passages were used and which model replied."
+        actions={
+          <AdminButton variant="secondary" onClick={() => void load()} disabled={loading}>
+            <RefreshCw className={loading ? "animate-spin" : undefined} /> Refresh
+          </AdminButton>
+        }
+      />
 
-      <section className="rounded-[12px] border border-[var(--gd-border)] bg-[var(--gd-surface)] p-4 shadow-sm">
-        <h2 className="text-[15px] font-semibold tracking-tight">
-          Processing Trace Lookup
-        </h2>
-        <p className="mt-1 text-[13px] text-[var(--gd-muted)]">
-          Enter a <strong>trace_id</strong> from a chat answer (WebSocket meta /
-          done event) to view the full RAG processing pipeline — retrieval,
-          prompts, and model output.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Input
-            value={lookupInput}
-            onChange={(e) => setLookupInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void lookupTrace();
-            }}
-            placeholder="e.g. 5a43a10f-7175-41f5-80dd-5d93d0a13485"
-            className="h-10 min-w-[280px] flex-1 rounded-[10px] font-mono text-[13px]"
-          />
-          <LedgerButton onClick={() => void lookupTrace()} disabled={detailLoading}>
-            {detailLoading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Search className="h-3.5 w-3.5" />
-            )}
-            Lookup Trace
-          </LedgerButton>
-          {selectedId ? (
-            <LedgerButton onClick={closeDetail}>
-              <X className="h-3.5 w-3.5" />
-              Clear
-            </LedgerButton>
-          ) : null}
-        </div>
-        {lookupError ? (
-          <p className="mt-2 text-[13px] text-[var(--gd-negative)]">{lookupError}</p>
-        ) : null}
-      </section>
-
-      {detailLoading && selectedId ? (
-        <div className="flex justify-center py-10">
-          <Loader2 className="h-6 w-6 animate-spin text-[var(--gd-muted)]" />
+      {error ? (
+        <div style={{ marginBottom: 16 }}>
+          <Callout tone="danger" icon={<AlertTriangle />}>
+            <strong>Answer traces could not be loaded.</strong> {error}
+          </Callout>
         </div>
       ) : null}
 
-      {!detailLoading && detail ? <AiTraceDetail detail={detail} /> : null}
+      <StatGrid>
+        <Stat
+          label="Traces"
+          icon={<Route />}
+          value={summary ? summary.total.toLocaleString() : "—"}
+          caption="Matching requests"
+        />
+        <Stat
+          label="Succeeded"
+          icon={<Route />}
+          value={summary ? summary.success.toLocaleString() : "—"}
+          caption="Produced a full answer"
+        />
+        <Stat
+          label="Failed"
+          icon={<AlertTriangle />}
+          value={summary ? summary.failed.toLocaleString() : "—"}
+          caption={summary?.failed ? "Open one to see why" : "Nothing failed"}
+          attention={(summary?.failed ?? 0) > 0}
+        />
+        <Stat
+          label="Average time"
+          icon={<Timer />}
+          value={summary?.avg_duration_ms != null ? formatMs(summary.avg_duration_ms) : "—"}
+          caption="Across the filtered set"
+        />
+      </StatGrid>
 
-      <LedgerKpiStrip
-        items={[
-          {
-            label: "Traces",
-            value: summary ? String(summary.total) : "—",
-            caption: "Matching requests",
-          },
-          {
-            label: "Success",
-            value: summary ? String(summary.success) : "—",
-            caption: "Completed traces",
-            emphasis: "data",
-          },
-          {
-            label: "Failed",
-            value: summary ? String(summary.failed) : "—",
-            caption: "Errored traces",
-          },
-          {
-            label: "Avg duration",
-            value: summary?.avg_duration_ms != null
-              ? formatMs(summary.avg_duration_ms)
-              : "—",
-            caption: "Across filtered set",
-          },
-        ]}
-      />
-
-      <div className="ledger-toolbar">
-        <div className="ledger-filters flex flex-wrap gap-2">
-          <div className="ledger-field mb-0">
-            <label htmlFor="trace-id">Filter Trace ID</label>
-            <Input
-              id="trace-id"
-              value={traceIdInput}
-              onChange={(e) => setTraceIdInput(e.target.value)}
-              placeholder="UUID prefix"
-              className="h-10 w-48 rounded-[10px]"
-            />
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="trace-user">User</label>
-            <Input
+      <div style={{ marginTop: 20 }}>
+        <div className="adm-toolbar">
+          <SearchInput
+            label="Search question text"
+            value={questionInput}
+            onChange={setQuestionInput}
+            placeholder="Search the question"
+          />
+          <Field label="Person" htmlFor="trace-user">
+            <TextInput
               id="trace-user"
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
-              placeholder="Username or email"
-              className="h-10 w-44 rounded-[10px]"
+              placeholder="Name or email"
+              style={{ width: 170 }}
             />
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="trace-q">Question</label>
-            <Input
-              id="trace-q"
-              value={questionInput}
-              onChange={(e) => setQuestionInput(e.target.value)}
-              placeholder="Search question text"
-              className="h-10 w-56 rounded-[10px]"
+          </Field>
+          <Field label="Trace ID" htmlFor="trace-id">
+            <TextInput
+              id="trace-id"
+              value={traceIdInput}
+              onChange={(e) => setTraceIdInput(e.target.value)}
+              placeholder="ID prefix"
+              style={{ width: 160, fontFamily: "var(--adm-mono)", fontSize: 12.5 }}
             />
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="trace-status">Status</label>
-            <select
+          </Field>
+          <Field label="Outcome" htmlFor="trace-status">
+            <SelectInput
               id="trace-status"
               value={statusFilter}
               onChange={(e) => {
                 setStatusFilter(e.target.value);
-                setFailedOnly(false);
                 setPage(1);
               }}
-              className="h-10 rounded-[10px] border border-[#e8e8e8] bg-[var(--gd-surface)] px-3 text-sm"
+              style={{ width: 150 }}
             >
-              <option value="all">All</option>
-              <option value="success">Success</option>
+              <option value="all">Any outcome</option>
+              <option value="success">Succeeded</option>
               <option value="failed">Failed</option>
               <option value="partial">Partial</option>
-            </select>
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="trace-type">Type</label>
-            <select
+            </SelectInput>
+          </Field>
+          <Field label="Request type" htmlFor="trace-type">
+            <SelectInput
               id="trace-type"
               value={requestType}
               onChange={(e) => {
                 setRequestType(e.target.value);
                 setPage(1);
               }}
-              className="h-10 rounded-[10px] border border-[#e8e8e8] bg-[var(--gd-surface)] px-3 text-sm"
+              style={{ width: 170 }}
             >
               <option value="all">All types</option>
-              <option value="rag">RAG</option>
+              <option value="rag">Document answer</option>
               <option value="quiz">Quiz</option>
               <option value="special_turn">Special turn</option>
-            </select>
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="trace-start">From</label>
-            <Input
+            </SelectInput>
+          </Field>
+          <Field label="From" htmlFor="trace-start">
+            <TextInput
               id="trace-start"
               type="date"
               value={start}
@@ -425,12 +435,11 @@ function AiTracesPanelInner({
                 setStart(e.target.value);
                 setPage(1);
               }}
-              className="h-10 w-40 rounded-[10px]"
+              style={{ width: 158 }}
             />
-          </div>
-          <div className="ledger-field mb-0">
-            <label htmlFor="trace-end">To</label>
-            <Input
+          </Field>
+          <Field label="To" htmlFor="trace-end">
+            <TextInput
               id="trace-end"
               type="date"
               value={end}
@@ -438,154 +447,199 @@ function AiTracesPanelInner({
                 setEnd(e.target.value);
                 setPage(1);
               }}
-              className="h-10 w-40 rounded-[10px]"
+              style={{ width: 158 }}
             />
-          </div>
-          <label className="mb-0 flex items-end gap-2 pb-2 text-[12px]">
-            <input
-              type="checkbox"
-              checked={failedOnly}
-              onChange={(e) => {
-                setFailedOnly(e.target.checked);
-                setPage(1);
-              }}
-            />
-            Failed only
-          </label>
-          <LedgerButton onClick={() => void load()} disabled={loading}>
-            {loading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            Refresh
-          </LedgerButton>
+          </Field>
+          {hasFilters ? (
+            <AdminButton variant="ghost" onClick={clearFilters}>
+              Clear filters
+            </AdminButton>
+          ) : null}
+          <span className="adm-toolbar__spacer" />
+          <span className="adm-toolbar__meta">
+            {loading ? "Loading…" : `${total.toLocaleString()} matching trace${total === 1 ? "" : "s"}`}
+          </span>
         </div>
-        <p className="text-[12px] text-[var(--gd-muted)]">
-          {loading
-            ? "Loading traces…"
-            : `${total} matching record${total === 1 ? "" : "s"}`}
-        </p>
+
+        <div className="adm-stack">
+          {lookupPanel}
+
+          <Card
+            title="Recent answer traces"
+            description="One row per question. Select a row to see every step it went through."
+          >
+            {loading && !data ? (
+              <TableSkeleton rows={6} />
+            ) : items.length ? (
+              <TableWrap height="auto">
+                <table className="adm-table">
+                  <thead>
+                    <tr>
+                      <th>Trace</th>
+                      <th>Person</th>
+                      <th>Question</th>
+                      <th className="adm-col-md">Type</th>
+                      <th>Outcome</th>
+                      <th className="adm-col-md">When</th>
+                      <th data-align="right" className="adm-col-sm">
+                        Time
+                      </th>
+                      <th data-align="right" className="adm-col-sm">
+                        Tokens
+                      </th>
+                      <th aria-label="Open" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item) => (
+                      <tr
+                        key={item.trace_id}
+                        data-clickable="true"
+                        tabIndex={0}
+                        onClick={() => openDetail(item.trace_id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openDetail(item.trace_id);
+                          }
+                        }}
+                      >
+                        <td>
+                          <div className="adm-cell-stack">
+                            <span className="adm-cell-main adm-mono" style={{ fontWeight: 450 }}>
+                              {item.trace_id.slice(0, 8)}
+                            </span>
+                            <span className="adm-cell-sub">
+                              {item.model_name || item.provider || "No model recorded"}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="adm-nowrap">{userLabel(item)}</td>
+                        <td>
+                          <span
+                            className="adm-clamp"
+                            style={{ display: "-webkit-box", maxWidth: 440 }}
+                            title={item.question}
+                          >
+                            {item.question || "No question recorded"}
+                          </span>
+                        </td>
+                        <td className="adm-col-md">
+                          <span style={{ fontSize: 12.5 }}>{requestTypeLabel(item.request_type)}</span>
+                        </td>
+                        <td>
+                          <Badge tone={toneFor(item.status)}>{statusLabel(item.status)}</Badge>
+                        </td>
+                        <td className="adm-col-md adm-muted adm-nowrap" style={{ fontSize: 12.5 }}>
+                          {formatWhen(item.created_at)}
+                        </td>
+                        <td data-align="right" className="adm-num adm-col-sm">
+                          {formatMs(item.duration_ms)}
+                        </td>
+                        <td data-align="right" className="adm-num adm-col-sm">
+                          {(item.total_tokens ?? 0).toLocaleString()}
+                        </td>
+                        <td data-align="right">
+                          <span className="adm-link">Open</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            ) : (
+              <EmptyState
+                icon={<Route />}
+                title={hasFilters ? "No traces match these filters" : "No answer traces yet"}
+                text={
+                  hasFilters
+                    ? "Try a wider date range, or clear the person and ID filters."
+                    : "Traces appear as soon as someone asks Genova a question."
+                }
+                action={
+                  hasFilters ? (
+                    <AdminButton size="sm" variant="secondary" onClick={clearFilters}>
+                      Clear filters
+                    </AdminButton>
+                  ) : undefined
+                }
+              />
+            )}
+            {items.length ? (
+              <div className="adm-card__foot">
+                <span>
+                  Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{" "}
+                  {total.toLocaleString()}
+                </span>
+                <Pager
+                  page={page}
+                  pages={pages}
+                  total={total}
+                  onPage={setPage}
+                  noun="traces"
+                  nounOne="trace"
+                />
+              </div>
+            ) : null}
+          </Card>
+
+          <Callout icon={<Route />}>
+            <strong>What a trace shows:</strong> the exact search queries used, the document passages
+            that were retrieved, the instructions sent to the model, and how long each step took.
+          </Callout>
+        </div>
       </div>
 
-      <LedgerPanel
-        title="Recent AI processing traces"
-        description="One row per user question. Open a Trace ID for the full pipeline view above."
+      <Drawer
+        open={selectedId !== null}
+        onClose={closeDetail}
+        wide
+        title="Trace detail"
+        description={
+          detail
+            ? `${detail.username || detail.email || "Unknown person"} · ${formatWhen(detail.created_at)}`
+            : selectedId
+              ? `Loading ${selectedId.slice(0, 8)}…`
+              : undefined
+        }
+        footer={
+          <AdminButton variant="secondary" onClick={closeDetail}>
+            Close
+          </AdminButton>
+        }
       >
-        <LedgerScrollTable
-          footer={
-            <div className="ledger-foot">
-              <span>
-                Page {page} of {pages}
-                {data?.page_size ? ` · ${data.page_size} rows per page` : ""}
-              </span>
-              <div className="flex gap-2">
-                <LedgerButton
-                  onClick={() => setPage((v) => Math.max(1, v - 1))}
-                  disabled={loading || page <= 1}
-                >
-                  Previous
-                </LedgerButton>
-                <LedgerButton
-                  onClick={() => setPage((v) => v + 1)}
-                  disabled={loading || page >= pages}
-                >
-                  Next
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </LedgerButton>
-              </div>
-            </div>
-          }
-        >
-          <table className="ledger-table" style={{ minWidth: 1100 }}>
-            <thead>
-              <tr>
-                <th>Trace ID</th>
-                <th>User</th>
-                <th>Question</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Time</th>
-                <th>Duration</th>
-                <th>Tokens</th>
-                <th>Chunks</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {loading && !data ? (
-                <tr>
-                  <td colSpan={10} className="py-8 text-center text-[var(--gd-muted)]">
-                    <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-                  </td>
-                </tr>
-              ) : null}
-              {!loading && (data?.items.length ?? 0) === 0 ? (
-                <tr>
-                  <td colSpan={10}>
-                    <LedgerEmpty>No traces match these filters.</LedgerEmpty>
-                  </td>
-                </tr>
-              ) : null}
-              {(data?.items || []).map((item) => (
-                <tr
-                  key={item.trace_id}
-                  className="cursor-pointer"
-                  onClick={() => openDetail(item.trace_id)}
-                >
-                  <td className="font-mono text-[11px]">
-                    {item.trace_id.slice(0, 8)}…
-                  </td>
-                  <td>{userLabel(item)}</td>
-                  <td title={item.question}>{truncate(item.question, 72)}</td>
-                  <td>{item.request_type}</td>
-                  <td>
-                    <LedgerStatus
-                      label={item.status}
-                      tone={statusTone(item.status)}
-                    />
-                  </td>
-                  <td className="whitespace-nowrap text-[12px]">
-                    {formatWhen(item.created_at)}
-                  </td>
-                  <td>{formatMs(item.duration_ms)}</td>
-                  <td>{item.total_tokens ?? "—"}</td>
-                  <td>{item.retrieved_chunk_count ?? "—"}</td>
-                  <td>
-                    <LedgerButton
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openDetail(item.trace_id);
-                      }}
-                    >
-                      View
-                    </LedgerButton>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </LedgerScrollTable>
-      </LedgerPanel>
-    </div>
+        {detailLoading && !detail ? (
+          <div className="adm-stack">
+            <TableSkeleton rows={3} />
+            <TableSkeleton rows={4} />
+          </div>
+        ) : detail ? (
+          <AiTraceDetail detail={detail} />
+        ) : lookupError ? (
+          <Callout tone="danger" icon={<AlertTriangle />}>
+            <strong>Trace could not be opened.</strong> {lookupError}
+          </Callout>
+        ) : (
+          <EmptyState
+            icon={<Route />}
+            title="Nothing selected"
+            text="Pick a row from the table to inspect how an answer was produced."
+          />
+        )}
+      </Drawer>
+    </>
   );
 }
 
 function AiTracesPanelWithUrl() {
   const searchParams = useSearchParams();
-  return (
-    <AiTracesPanelInner syncUrl initialId={searchParams.get("id")} />
-  );
+  return <AiTracesPanelInner syncUrl initialId={searchParams.get("id")} />;
 }
 
 export function AiTracesPanel({ syncUrl = false }: { syncUrl?: boolean }) {
   if (syncUrl) {
     return (
-      <Suspense
-        fallback={
-          <div className="p-4 text-sm text-[var(--gd-muted)]">Loading…</div>
-        }
-      >
+      <Suspense fallback={<TableSkeleton rows={6} />}>
         <AiTracesPanelWithUrl />
       </Suspense>
     );
