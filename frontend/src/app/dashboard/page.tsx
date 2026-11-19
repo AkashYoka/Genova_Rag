@@ -669,6 +669,7 @@ function DashboardPageContent() {
                         }}
                         totalPages={activeDoc.page_count}
                         highlightTarget={pdfHighlightTarget}
+                        onClose={() => setViewerOpen(false)}
                       />
                     ) : null}
                   </div>

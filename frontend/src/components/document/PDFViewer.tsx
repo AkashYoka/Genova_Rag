@@ -13,6 +13,7 @@ import {
   AlertCircle,
   RotateCw,
   Search,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api";
@@ -60,6 +61,7 @@ interface Props {
   onPageChange: (page: number) => void;
   totalPages: number;
   highlightTarget?: PdfHighlightTarget | null;
+  onClose?: () => void;
 }
 
 const isNormalizedRect = (rect: PdfHighlightRect) =>
@@ -78,6 +80,7 @@ export default function PDFViewer({
   onPageChange,
   totalPages,
   highlightTarget,
+  onClose,
 }: Props) {
   /** User zoom relative to fit-to-width (1 = page fills the pane). */
   const [userZoom, setUserZoom] = useState(1.0);
@@ -669,6 +672,27 @@ export default function PDFViewer({
             Fit
           </Button>
         </div>
+
+        {onClose ? (
+          <>
+            <div className="genova-pdf-toolbar-divider" aria-hidden />
+            <div
+              className="genova-pdf-toolbar-group ml-auto"
+              aria-label="Close viewer"
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(toolBtn, "hover:text-[var(--gd-negative)]")}
+                onClick={onClose}
+                aria-label="Close PDF viewer"
+                title="Close PDF viewer"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        ) : null}
       </div>
 
       {/* ── PDF Render ──────────────────────────────── */}
