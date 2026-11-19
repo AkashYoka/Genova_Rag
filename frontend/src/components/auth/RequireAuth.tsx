@@ -7,7 +7,7 @@ import { isAdminUser } from "@/lib/admin";
 
 interface RequireAuthProps {
   children: React.ReactNode;
-  /** When true, non-admin authenticated users are sent to /dashboard */
+  /** When true, non-admin authenticated users are sent to the documents library */
   requireAdmin?: boolean;
 }
 
@@ -27,7 +27,7 @@ export function RequireAuth({ children, requireAdmin = false }: RequireAuthProps
       return;
     }
     if (requireAdmin && !isAdminUser(user)) {
-      router.replace("/dashboard");
+      router.replace("/dashboard?view=documents");
     }
   }, [initialized, user, requireAdmin, router]);
 

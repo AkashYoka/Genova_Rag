@@ -143,7 +143,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (mounted && !loading && user) {
-      router.replace("/dashboard");
+      router.replace("/dashboard?view=documents");
     }
   }, [user, loading, router, mounted]);
 

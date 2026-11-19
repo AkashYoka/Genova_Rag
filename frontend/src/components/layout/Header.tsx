@@ -3,7 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -40,7 +40,7 @@ import GoogleDriveSettings from "@/components/settings/GoogleDriveSettings";
 interface HeaderProps {
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
-  /** Pass DocumentSidebar JSX so the mobile sheet can render it */
+  /** Pass sidebar JSX so the mobile sheet can render it */
   mobileSheetContent?: React.ReactNode;
 }
 
@@ -55,7 +55,6 @@ export default function Header({
 }: HeaderProps) {
   const { user, logout } = useAuth();
   const router = useRouter();
-  const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const mounted = useSyncExternalStore(
     subscribe,
@@ -82,7 +81,6 @@ export default function Header({
     router.replace("/login");
   };
 
-
   const toolBtn =
     "h-8 w-8 text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]";
 
@@ -95,8 +93,8 @@ export default function Header({
             size="icon"
             className={`${toolBtn} md:hidden`}
             onClick={() => setSheetOpen(true)}
-            title="Open sidebar"
-            aria-label="Open document navigation"
+            title="Open navigation"
+            aria-label="Open navigation"
             aria-expanded={sheetOpen}
             aria-controls="mobile-document-navigation"
           >
@@ -109,10 +107,8 @@ export default function Header({
               size="icon"
               className={`${toolBtn} hidden md:inline-flex`}
               onClick={onToggleSidebar}
-              title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-              aria-label={
-                sidebarOpen ? "Close document sidebar" : "Open document sidebar"
-              }
+              title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+              aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
               aria-pressed={sidebarOpen}
             >
               {sidebarOpen ? (
@@ -124,9 +120,9 @@ export default function Header({
           ) : null}
 
           <Link
-            href="/dashboard"
+            href="/dashboard?view=documents"
             className="flex min-w-0 cursor-pointer items-center gap-2.5"
-            aria-label="Go to homepage"
+            aria-label="Genova documents"
           >
             <Logo size={26} />
             <span className="hidden min-w-0 flex-col sm:flex">
@@ -135,28 +131,6 @@ export default function Header({
             </span>
           </Link>
 
-          <nav className="ml-3 hidden items-center gap-1 sm:flex" aria-label="Main Navigation">
-            <Link
-              href="/dashboard"
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                pathname === "/dashboard"
-                  ? "bg-[var(--gd-active)] text-[var(--gd-text)] font-medium"
-                  : "text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
-              }`}
-            >
-              Workspace
-            </Link>
-            <Link
-              href="/documents"
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                pathname === "/documents"
-                  ? "bg-[var(--gd-active)] text-[var(--gd-text)] font-medium"
-                  : "text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
-              }`}
-            >
-              Documents
-            </Link>
-          </nav>
         </div>
 
         <div className="flex items-center gap-1">
@@ -188,7 +162,10 @@ export default function Header({
 
           <KeyboardShortcutsModal />
 
-          <span className="mx-1 hidden h-5 w-px bg-[var(--gd-border)] sm:block" aria-hidden />
+          <span
+            className="mx-1 hidden h-5 w-px bg-[var(--gd-border)] sm:block"
+            aria-hidden
+          />
 
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -251,7 +228,7 @@ export default function Header({
       <aside
         id="mobile-document-navigation"
         className={[
-          "fixed inset-y-0 left-0 z-50 w-72 flex flex-col",
+          "fixed inset-y-0 left-0 z-50 flex w-72 flex-col",
           "bg-sidebar border-r border-sidebar-border",
           "transform transition-transform duration-300 ease-in-out md:hidden",
           sheetOpen ? "translate-x-0" : "-translate-x-full",
@@ -260,16 +237,15 @@ export default function Header({
         aria-hidden={!sheetOpen}
         {...(!sheetOpen ? { inert: true } : {})}
       >
-        <div className="h-14 flex items-center justify-between px-4 border-b border-sidebar-border flex-shrink-0">
-          {/* MOBILE LOGO — clicking navigates to dashboard and closes the sheet */}
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-sidebar-border px-4">
           <Link
-            href="/dashboard"
-            className="flex items-center gap-2.5 hover:opacity-85 transition-opacity cursor-pointer"
-            aria-label="Go to homepage"
+            href="/dashboard?view=documents"
+            className="flex items-center gap-2.5 transition-opacity hover:opacity-85"
+            aria-label="Genova documents"
             onClick={() => setSheetOpen(false)}
           >
             <Logo size={28} />
-            <span className="font-semibold text-sm">Document AI Analyst</span>
+            <span className="text-sm font-semibold">Genova</span>
           </Link>
           <Button
             variant="ghost"
@@ -278,36 +254,17 @@ export default function Header({
             onClick={() => setSheetOpen(false)}
             aria-label="Close navigation"
           >
-            <X className="w-4 h-4" />
+            <X className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="flex border-b border-sidebar-border p-2 gap-1 bg-sidebar-accent/30">
-          <Link
-            href="/dashboard"
-            onClick={() => setSheetOpen(false)}
-            className={`flex-1 text-center py-1.5 px-2 rounded-md text-xs font-medium transition-colors ${
-              pathname === "/dashboard"
-                ? "bg-primary text-primary-foreground font-semibold"
-                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-            }`}
-          >
-            Workspace
-          </Link>
-          <Link
-            href="/documents"
-            onClick={() => setSheetOpen(false)}
-            className={`flex-1 text-center py-1.5 px-2 rounded-md text-xs font-medium transition-colors ${
-              pathname === "/documents"
-                ? "bg-primary text-primary-foreground font-semibold"
-                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-            }`}
-          >
-            Document Library
-          </Link>
-        </div>
-
-        <div className="flex-1 overflow-hidden">
+        <div
+          className="min-h-0 flex-1 overflow-hidden"
+          onClickCapture={(event) => {
+            const target = event.target as HTMLElement | null;
+            if (target?.closest("[data-sidebar-nav]")) setSheetOpen(false);
+          }}
+        >
           {sheetOpen ? mobileSheetContent : null}
         </div>
       </aside>

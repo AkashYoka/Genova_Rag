@@ -1201,9 +1201,7 @@ def _generate_answer_direct(
 
     attach_ids = _unique_document_ids(document_ids)
 
-    # No documents attached: do not search the whole user corpus (that pollutes
-    # domain detection and leaks unrelated chunks). Prefer session memory, else
-    # refuse with the standard insufficient-info message after logging General.
+    # No documents attached: require at least one source before corpus search.
     if not has_attach:
         _resolve_runtime_prompts(
             question=question,
@@ -1216,17 +1214,9 @@ def _generate_answer_direct(
             prompt_type="rag",
             session_id=session_id,
         )
-        if chat_history:
-            return _chat_memory_answer(
-                question,
-                chat_history,
-                llm_provider=llm_provider,
-                prior_sources=_prior_sources_from_history(chat_history),
-            )
         return {
             "answer": (
-                "I couldn't find sufficient information in the uploaded documents "
-                "to answer this question."
+                "Attach at least one document to search, then ask your question again."
             ),
             "sources": [],
         }
@@ -1492,6 +1482,7 @@ def _generate_answer_stream_direct(
     yield f"data: {json.dumps({'type': 'status', 'data': 'retrieving'})}\n\n"
     attach_ids = _unique_document_ids(document_ids)
 
+    # No documents attached: require at least one source before corpus search.
     if not has_attach:
         _resolve_runtime_prompts(
             question=question,
@@ -1504,23 +1495,8 @@ def _generate_answer_stream_direct(
             prompt_type="rag",
             session_id=session_id,
         )
-        if chat_history:
-            result = _chat_memory_answer(
-                question,
-                chat_history,
-                llm_provider=llm_provider,
-                prior_sources=_prior_sources_from_history(chat_history),
-            )
-            yield f"data: {json.dumps({'type': 'sources', 'data': result.get('sources') or []})}\n\n"
-            yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer') or ''})}\n\n"
-            usage = result.get("usage")
-            if isinstance(usage, dict) and usage:
-                yield f"data: {json.dumps({'type': 'usage', 'data': usage})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            return
         msg = (
-            "I couldn't find sufficient information in the uploaded documents "
-            "to answer this question."
+            "Attach at least one document to search, then ask your question again."
         )
         yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
         yield f"data: {json.dumps({'type': 'token', 'data': msg})}\n\n"

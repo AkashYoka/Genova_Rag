@@ -26,12 +26,12 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (initialized && user) {
-      router.replace("/dashboard");
+      router.replace("/dashboard?view=documents");
     }
   }, [user, initialized, router]);
 
   const handleGoogleSuccess = useCallback(() => {
-    router.replace("/dashboard");
+    router.replace("/dashboard?view=documents");
   }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {

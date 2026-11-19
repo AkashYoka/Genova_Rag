@@ -7,7 +7,7 @@
 
 .genova-desk {
   /* Color tokens inherit from globals.css --gd-* (Signal Mesa). Layout only here. */
-  --gd-sidebar: 240px;
+  --gd-sidebar: 248px;
   --gd-sessions: 280px;
   --gd-inspector: 360px;
   --gd-chat-max: 48rem;
@@ -68,30 +68,9 @@
   overflow: hidden;
 }
 
-.genova-desk-docs {
+.genova-desk-sidebar {
   width: var(--gd-sidebar);
-  flex-shrink: 0;
-  align-self: stretch;
-  min-height: 0;
-  height: 100%;
-  border-right: 1px solid var(--gd-border);
-  background: var(--gd-ground);
-  overflow: hidden;
-  display: none;
-}
-
-@media (min-width: 768px) {
-  .genova-desk-docs.is-open {
-    display: flex;
-    flex-direction: column;
-  }
-}
-
-.genova-desk-sessions {
-  width: var(--gd-sessions);
-  max-width: 100%;
-  flex-shrink: 0;
-  align-self: stretch;
+  flex: 0 0 var(--gd-sidebar);
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -100,94 +79,54 @@
   overflow: hidden;
   display: none;
   transition:
-    width 200ms ease,
-    border-right-color 200ms ease;
+    width 180ms ease,
+    flex-basis 180ms ease,
+    border-right-color 180ms ease;
 }
 
-/* Hidden from the chat header toggle — the conversation claims the space. */
-.genova-desk-sessions.is-collapsed {
+.genova-desk-sidebar.is-collapsed {
   width: 0;
-  border-right-width: 0;
+  flex-basis: 0;
   border-right-color: transparent;
 }
 
-/* Keep the list at its natural width while the column animates open/closed. */
-.genova-desk-sessions > .dashboard-sessions-shell {
-  width: var(--gd-sessions);
-  /* Column flex parent: a pixel flex-basis would become a height. */
+.genova-desk-sidebar > * {
+  width: var(--gd-sidebar);
   flex: 0 0 auto;
-  align-self: stretch;
-  max-width: none;
-  min-width: 0;
+  height: 100%;
+}
+
+@media (min-width: 768px) {
+  .genova-desk-sidebar {
+    display: flex;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .genova-desk-sessions {
+  .genova-desk-sidebar {
     transition: none;
   }
 }
 
-@media (min-width: 768px) {
-  .genova-desk-sessions {
-    display: flex;
-    flex-direction: column;
-  }
-}
-
-/* Neutralize ChatSessionSidebar chrome so it sits on the open plane */
-.genova-desk-sessions .dashboard-sessions-shell > div.md\:flex {
-  width: 100% !important;
-  max-width: 100%;
-  border: 0 !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-}
-
-/* Achromatic nav: active = grey pill, not brand fill */
-.genova-desk-sessions [aria-current="true"] {
-  background: var(--gd-active) !important;
-  border-color: transparent !important;
-  color: var(--gd-text) !important;
-}
-.genova-desk-sessions [aria-current="true"] svg {
-  color: var(--gd-text) !important;
-}
-.genova-desk-sessions .border-b {
-  border-color: var(--gd-border) !important;
-  background: transparent !important;
-}
-.genova-desk-sessions .text-xs.font-semibold.uppercase {
-  font-size: 12px !important;
-  font-weight: 400 !important;
-  letter-spacing: 0 !important;
-  text-transform: none !important;
-  color: var(--gd-faint) !important;
-}
-.genova-desk-sessions .text-xs.font-semibold.uppercase::first-letter {
-  text-transform: uppercase;
-}
-
-.genova-desk-docs .border-sidebar-border,
-.genova-desk-docs .border-b {
-  border-color: var(--gd-border) !important;
-}
-
-.genova-desk-docs [aria-current="true"] {
-  background: var(--gd-active) !important;
-  border-color: transparent !important;
-}
-
-/* Keep library list scrollable inside the flex column */
-.genova-desk-docs [data-slot="scroll-area"] {
-  min-height: 0;
+/* ── Main region: workspace, or the documents library ───────────────────── */
+.genova-desk-main {
+  display: flex;
   flex: 1 1 0;
-  height: auto;
-  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
-.genova-desk-docs [data-slot="scroll-area-viewport"] {
-  height: 100% !important;
-  max-height: 100%;
+
+.genova-desk-workspace {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.genova-desk-workspace.is-hidden {
+  display: none;
 }
 
 /* ── Assistant column — ChatGPT / Claude / Perplexity direction ──────────── */
@@ -355,14 +294,14 @@
   color: var(--gd-muted);
 }
 
-/* Fixed bottom composer — ChatGPT-like */
+/* Fixed bottom composer — two-tier ask rail */
 .genova-desk-chat .genova-desk-chat-composer {
   flex-shrink: 0;
-  padding: 0 16px 14px;
+  padding: 0 16px 16px;
   background: linear-gradient(
     to top,
-    var(--gd-surface) 70%,
-    color-mix(in oklab, var(--gd-surface) 0%, transparent)
+    var(--gd-surface) 72%,
+    color-mix(in oklab, var(--gd-surface) 70%, transparent)
   );
 }
 
@@ -372,17 +311,442 @@
   margin-inline: auto;
 }
 
-.genova-desk-chat .genova-desk-chat-composer-card {
-  overflow: hidden;
-  border: 1px solid var(--gd-border);
-  border-radius: 22px;
-  background: var(--gd-surface);
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--gd-border) 40%, transparent);
+.genova-desk-chat .genova-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.genova-desk-chat .genova-desk-chat-composer-card:focus-within {
-  border-color: color-mix(in oklab, var(--gd-accent) 35%, var(--gd-border));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--gd-accent) 18%, transparent);
+.genova-desk-chat .genova-composer-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--gd-border);
+  border-radius: 10px;
+  background: var(--gd-raised);
+  font-size: 12px;
+  color: var(--gd-text);
+}
+
+.genova-desk-chat .genova-composer-status.is-live {
+  border-color: color-mix(in oklab, var(--gd-negative) 28%, var(--gd-border));
+  background: color-mix(in oklab, var(--gd-negative) 8%, var(--gd-surface));
+}
+
+.genova-desk-chat .genova-composer-status.is-error {
+  border-color: color-mix(in oklab, var(--gd-negative) 28%, var(--gd-border));
+  color: var(--gd-negative);
+}
+
+.genova-desk-chat .genova-composer-status-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.genova-desk-chat .genova-composer-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--gd-negative);
+  flex-shrink: 0;
+}
+
+.genova-desk-chat .genova-composer-status-action {
+  flex-shrink: 0;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gd-muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.genova-desk-chat .genova-composer-status-action:hover {
+  background: var(--gd-surface);
+  color: var(--gd-text);
+}
+
+.genova-desk-chat .genova-composer-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-height: 28px;
+  padding: 0 2px;
+}
+
+.genova-desk-chat .genova-composer-scope-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--gd-faint);
+}
+
+.genova-desk-chat .genova-composer-scope-value {
+  font-size: 12px;
+  color: var(--gd-muted);
+}
+
+.genova-desk-chat .genova-composer-scope-cta {
+  border-radius: 6px;
+  padding: 2px 6px;
+  color: var(--gd-accent);
+  transition: background-color 120ms ease;
+}
+
+.genova-desk-chat .genova-composer-scope-cta:hover {
+  background: var(--gd-accent-soft);
+}
+
+.genova-desk-chat .genova-composer-chips {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.genova-desk-chat .genova-composer-chip {
+  display: inline-flex;
+  max-width: 14rem;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 8px;
+  border: 1px solid var(--gd-border);
+  border-radius: 999px;
+  background: var(--gd-raised);
+  color: var(--gd-text);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.genova-desk-chat .genova-composer-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: var(--gd-muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.genova-desk-chat .genova-composer-chip-remove:hover {
+  background: var(--gd-surface);
+  color: var(--gd-negative);
+}
+
+.genova-desk-chat .genova-composer-scope-clear {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--gd-muted);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.genova-desk-chat .genova-composer-scope-clear:hover {
+  color: var(--gd-negative);
+}
+
+.genova-desk-chat .genova-composer-picker {
+  overflow: hidden;
+  border: 1px solid var(--gd-border);
+  border-radius: 12px;
+  background: var(--gd-surface);
+}
+
+.genova-desk-chat .genova-composer-picker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--gd-rule);
+}
+
+.genova-desk-chat .genova-composer-picker-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--gd-text);
+  letter-spacing: -0.01em;
+}
+
+.genova-desk-chat .genova-composer-picker-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--gd-muted);
+}
+
+.genova-desk-chat .genova-composer-picker-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gd-faint);
+}
+
+.genova-desk-chat .genova-composer-picker-list {
+  max-height: 12rem;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.genova-desk-chat .genova-composer-picker-empty {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--gd-muted);
+}
+
+.genova-desk-chat .genova-composer-picker-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--gd-text);
+  transition: background-color 120ms ease;
+}
+
+.genova-desk-chat .genova-composer-picker-item:hover {
+  background: var(--gd-raised);
+}
+
+.genova-desk-chat .genova-composer-picker-item.is-selected {
+  background: var(--gd-accent-soft);
+  font-weight: 500;
+}
+
+.genova-desk-chat .genova-composer-check {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gd-border);
+  border-radius: 4px;
+  background: var(--gd-surface);
+}
+
+.genova-desk-chat .genova-composer-check.is-on {
+  border-color: var(--gd-accent);
+  background: var(--gd-accent);
+  color: #fff;
+}
+
+.genova-desk-chat .genova-composer-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--gd-rule);
+  font-size: 11px;
+  color: var(--gd-muted);
+}
+
+.genova-desk-chat .genova-composer-picker-done {
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--gd-primary);
+  color: var(--gd-primary-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.genova-desk-chat .genova-composer-picker-done:hover {
+  opacity: 0.92;
+}
+
+.genova-desk-chat .genova-composer-shell {
+  overflow: hidden;
+  border: 1px solid var(--gd-border);
+  border-radius: 16px;
+  background: var(--gd-ground);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.genova-desk-chat .genova-composer-shell:focus-within {
+  border-color: color-mix(in oklab, var(--gd-accent) 40%, var(--gd-border));
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--gd-accent) 12%, transparent);
+  background: var(--gd-surface);
+}
+
+.genova-desk-chat .genova-composer-input {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  max-height: 140px;
+  resize: none;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 14px 16px 8px !important;
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+  color: var(--gd-text) !important;
+}
+
+.genova-desk-chat .genova-composer-input::placeholder {
+  color: var(--gd-muted);
+}
+
+.genova-desk-chat .genova-composer-input:focus,
+.genova-desk-chat .genova-composer-input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: 0 !important;
+}
+
+.genova-desk-chat .genova-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--gd-rule);
+}
+
+.genova-desk-chat .genova-composer-bar-left,
+.genova-desk-chat .genova-composer-bar-right {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.genova-desk-chat .genova-composer-provider {
+  display: inline-flex;
+  max-width: 11rem;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--gd-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.genova-desk-chat .genova-composer-provider:hover {
+  background: var(--gd-raised);
+  color: var(--gd-text);
+}
+
+.genova-desk-chat .genova-composer-provider select {
+  min-width: 0;
+  max-width: 7.5rem;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  outline: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: inherit;
+}
+
+.genova-desk-chat .genova-composer-provider select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.genova-desk-chat .genova-composer-tool {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--gd-muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.genova-desk-chat .genova-composer-tool:hover {
+  background: var(--gd-raised);
+  color: var(--gd-text);
+}
+
+.genova-desk-chat .genova-composer-tool:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.genova-desk-chat .genova-composer-tool.is-active {
+  background: var(--gd-accent-soft);
+  color: var(--gd-accent);
+}
+
+.genova-desk-chat .genova-composer-tool.is-recording {
+  background: color-mix(in oklab, var(--gd-negative) 12%, transparent);
+  color: var(--gd-negative);
+}
+
+.genova-desk-chat .genova-composer-tool.is-danger:hover {
+  color: var(--gd-negative);
+}
+
+.genova-desk-chat .genova-composer-tool-count {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--gd-accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.genova-desk-chat .genova-composer-send {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--gd-raised);
+  color: var(--gd-faint);
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    opacity 140ms ease;
+}
+
+.genova-desk-chat .genova-composer-send.is-ready {
+  background: var(--gd-primary);
+  color: var(--gd-primary-ink);
+}
+
+.genova-desk-chat .genova-composer-send.is-ready:hover {
+  opacity: 0.92;
+}
+
+.genova-desk-chat .genova-composer-send:disabled {
+  opacity: 0.55;
 }
 
 /* Message rows — Claude/ChatGPT flat conversation */
@@ -615,6 +979,7 @@
   }
 }
 
+
 /* Keep notes/PDF/compare content inside the column; avoid intrinsic min-width blowout. */
 .genova-desk-inspector > * {
   min-width: 0;
@@ -634,9 +999,193 @@
   max-width: min(420px, 40vw);
 }
 
+.genova-desk-inspector.is-pdf {
+  flex: 0 1 min(46vw, 560px);
+  width: min(46vw, 560px);
+  max-width: min(46vw, calc(100vw - 320px));
+  min-width: 0;
+}
+
 /* Center the page when it fits; fall back to start so wide pages stay scrollable. */
 .genova-desk-inspector .genova-pdf-scroll {
   justify-content: safe center;
+  overscroll-behavior: contain;
+}
+
+.genova-desk-inspector .genova-pdf-document {
+  display: flex;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+  margin-inline: auto;
+}
+
+/* PDF viewer control rail — one aligned bar, three groups */
+.genova-pdf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--gd-border);
+  background: var(--gd-ground);
+  overflow: hidden;
+}
+
+.genova-pdf-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 32px;
+}
+
+.genova-pdf-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  flex-shrink: 0;
+  background: var(--gd-border);
+}
+
+.genova-pdf-page-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--gd-border);
+  border-radius: 8px;
+  background: var(--gd-surface);
+}
+
+.genova-pdf-page-input {
+  height: 22px !important;
+  min-width: 0;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  text-align: center;
+  font-size: 12px !important;
+  font-variant-numeric: tabular-nums;
+  color: var(--gd-text) !important;
+}
+
+.genova-pdf-page-input:focus,
+.genova-pdf-page-input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: 0 !important;
+}
+
+.genova-pdf-page-input.is-error {
+  color: var(--gd-negative) !important;
+}
+
+.genova-pdf-page-meta {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gd-muted);
+  white-space: nowrap;
+}
+
+.genova-pdf-search {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.genova-pdf-search-field {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  max-width: 100%;
+}
+
+.genova-pdf-search-icon {
+  position: absolute;
+  left: 8px;
+  width: 13px;
+  height: 13px;
+  color: var(--gd-faint);
+  pointer-events: none;
+}
+
+.genova-pdf-search-input {
+  height: 28px !important;
+  width: 100%;
+  min-width: 0;
+  padding: 0 8px 0 26px !important;
+  border: 1px solid var(--gd-border) !important;
+  border-radius: 8px !important;
+  background: var(--gd-surface) !important;
+  font-size: 12px !important;
+  color: var(--gd-text) !important;
+  box-shadow: none !important;
+}
+
+.genova-pdf-search-input::placeholder {
+  font-size: 11px;
+  color: var(--gd-faint);
+}
+
+.genova-pdf-search-input:focus,
+.genova-pdf-search-input:focus-visible {
+  border-color: color-mix(in oklab, var(--gd-accent) 40%, var(--gd-border)) !important;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--gd-accent) 14%, transparent) !important;
+}
+
+.genova-pdf-search-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.genova-pdf-search-count {
+  min-width: 2.25rem;
+  padding: 0 4px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gd-muted);
+  white-space: nowrap;
+}
+
+.genova-pdf-zoom-label {
+  min-width: 2.5rem;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gd-muted);
+  white-space: nowrap;
+}
+
+.genova-pdf-toolbar-divider {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1100px) {
+  .genova-pdf-toolbar-divider {
+    display: none;
+  }
+
+  .genova-pdf-search {
+    order: 3;
+    flex: 1 1 100%;
+    margin-top: 2px;
+  }
 }
 
 .genova-desk-inspector-tabs {
@@ -887,6 +1436,11 @@ body:has(.genova-notes.is-expanded) .ck.ck-balloon-panel {
     padding: 0 12px 12px;
   }
 
+  .genova-desk-chat .genova-composer-input {
+    min-height: 48px;
+    padding: 12px 14px 6px !important;
+  }
+
   .genova-desk-chat .gc-msg.is-user .gc-msg-body {
     max-width: min(82%, 36rem);
   }
@@ -935,7 +1489,230 @@ body:has(.genova-notes.is-expanded) .ck.ck-balloon-panel {
     border-radius: 16px;
   }
 
-  .genova-desk-chat .genova-desk-chat-composer-card {
-    border-radius: 18px;
+  .genova-desk-chat .genova-composer-shell {
+    border-radius: 14px;
+  }
+
+  .genova-desk-chat .genova-composer-provider {
+    max-width: 8.5rem;
+  }
+}
+
+/* ── Documents view ─────────────────────────────────────────────────────── */
+.genova-docs-view {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--gd-ground);
+}
+
+.genova-docs-canvas {
+  width: 100%;
+  max-width: 1240px;
+  flex: 1 1 0;
+  min-height: 0;
+  margin-inline: auto;
+  padding: 12px 20px 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.genova-docs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.genova-docs-panel {
+  border: 1px solid var(--gd-border);
+  border-radius: 10px;
+  background: var(--gd-surface);
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.genova-docs-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.genova-docs-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--gd-surface);
+  border-bottom: 1px solid var(--gd-border);
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--gd-muted);
+  white-space: nowrap;
+}
+
+.genova-docs-table tbody td {
+  min-width: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--gd-rule);
+  vertical-align: middle;
+  color: var(--gd-text);
+}
+
+.genova-docs-table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.genova-docs-table tbody tr:hover {
+  background: color-mix(in oklab, var(--gd-raised) 55%, transparent);
+}
+
+.genova-docs-table tbody tr.is-selected {
+  background: var(--gd-active);
+}
+
+.genova-docs-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.genova-docs-table .cell-num {
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gd-muted);
+}
+
+.genova-docs-table thead th.cell-num {
+  text-align: right;
+}
+
+.genova-docs-table tbody tr:hover .group-hover\:opacity-100,
+.genova-docs-table tbody tr:focus-within .group-hover\:opacity-100 {
+  opacity: 1;
+}
+
+@media (max-width: 767px) {
+  .genova-docs-canvas {
+    padding: 10px 12px 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .genova-docs-table tbody tr {
+    transition: none;
+  }
+}
+
+/* ── Chat welcome, prompt starters, composer polish ───────────────────── */
+.genova-desk-chat .genova-chat-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--gd-border);
+  border-radius: 999px;
+  background: var(--gd-raised);
+  color: var(--gd-muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.genova-chat-prompts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  max-width: 36rem;
+  margin-top: 16px;
+}
+
+.genova-chat-prompt {
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--gd-border);
+  border-radius: 10px;
+  background: var(--gd-surface);
+  color: var(--gd-text);
+  font-size: 12px;
+  line-height: 1.45;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.genova-chat-prompt:hover {
+  border-color: color-mix(in oklab, var(--gd-text) 20%, var(--gd-border));
+  background: var(--gd-raised);
+}
+
+.genova-chat-prompt:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--gd-accent) 30%, transparent);
+}
+
+.genova-chat-footnote {
+  margin-top: 14px;
+  max-width: 32rem;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gd-faint);
+}
+
+/* ── Document library table polish ────────────────────────────────────── */
+.genova-docs-canvas {
+  max-width: 1320px;
+}
+
+.genova-docs-table thead th {
+  padding: 10px 14px;
+  background: var(--gd-ground);
+  font-weight: 500;
+}
+
+.genova-docs-table tbody td {
+  padding: 12px 14px;
+}
+
+.genova-docs-table tbody tr.is-selected {
+  box-shadow: inset 2px 0 0 var(--gd-accent);
+}
+
+.genova-docs-table tbody tr:focus-within {
+  background: color-mix(in oklab, var(--gd-raised) 55%, transparent);
+}
+
+@media (max-width: 767px) {
+  .genova-chat-prompts {
+    grid-template-columns: 1fr;
+  }
+
+  .genova-docs-table thead th,
+  .genova-docs-table tbody td {
+    padding: 10px 12px;
+  }
+}
+
+/* Tablet: keep only name, status and actions — fixed widths would starve the name. */
+@media (max-width: 1023px) {
+  .genova-docs-table {
+    table-layout: auto;
+  }
+
+  .genova-docs-table thead th:first-child,
+  .genova-docs-table tbody td:first-child {
+    width: 34px;
+  }
+
+  .genova-docs-table tbody td:last-child {
+    white-space: nowrap;
   }
 }

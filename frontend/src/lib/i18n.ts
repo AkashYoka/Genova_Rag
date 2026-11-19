@@ -82,7 +82,7 @@ const resources = {
         askAboutDocument: "Ask about your document",
         selectDocument: "Select a document",
         readyPrompt: "\"{{name}}\" is ready. Ask any question and get cited answers.",
-        uploadPrompt: "Upload and select a document from the sidebar to start chatting.",
+        uploadPrompt: "Upload and select a document to start chatting.",
         fallbackError: "Failed to get response: {{message}}",
         clearConfirm: "Clear all chat history for this document?",
         askPlaceholder: "Ask about \"{{name}}\"...",

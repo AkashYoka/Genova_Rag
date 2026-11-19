@@ -21,7 +21,6 @@ import {
   type SourceBoundingBox,
   type SourceChunk,
 } from "@/store/chat-store";
-import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -456,6 +455,12 @@ export default function ChatPanel({
       setAttachPickerOpen(true);
       setAttachFilter(question.slice("/attach".length).trim());
       setInput("");
+      return;
+    }
+
+    if (attachedDocs.length < 1) {
+      toast.error("Attach at least one document to search.");
+      setAttachPickerOpen(true);
       return;
     }
 
@@ -1158,7 +1163,7 @@ export default function ChatPanel({
         onClick={scrollToBottom}
         aria-label="Scroll to bottom"
         className={cn(
-          "absolute right-4 bottom-[5.5rem] z-50 rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] p-1.5 text-[var(--gd-text)] shadow-sm transition-[opacity,transform] duration-200 hover:bg-[var(--gd-raised)]",
+          "absolute right-4 bottom-[7.5rem] z-50 rounded-lg border border-[var(--gd-border)] bg-[var(--gd-surface)] p-1.5 text-[var(--gd-text)] shadow-sm transition-[opacity,transform] duration-200 hover:bg-[var(--gd-raised)]",
           showScrollButton
             ? "opacity-100 translate-y-0"
             : "opacity-0 translate-y-2 pointer-events-none",
@@ -1170,26 +1175,27 @@ export default function ChatPanel({
       {/* ── Composer ───────────────────────────────── */}
       <div className="genova-desk-chat-composer relative">
         <div className="genova-desk-chat-composer-inner">
-          <div className="genova-desk-chat-composer-card">
-            {/* Speech status strip */}
+          <div className="genova-composer">
             {(isRecording || speechError) && (
-              <div className="flex items-center justify-between gap-2 border-b border-[var(--gd-border)] bg-[var(--gd-raised)] px-3 py-1.5 text-xs">
-                <div className="flex min-w-0 items-center gap-2">
+              <div
+                className={cn(
+                  "genova-composer-status",
+                  speechError && !isRecording && "is-error",
+                  isRecording && "is-live",
+                )}
+              >
+                <div className="genova-composer-status-copy">
                   {isRecording ? (
                     <>
-                      <span className="relative flex h-2 w-2 shrink-0">
-                        <span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--gd-negative)]" />
-                      </span>
-                      <span className="truncate font-medium text-[var(--gd-text)]">
+                      <span className="genova-composer-live-dot" aria-hidden />
+                      <span>
                         {t("chat.listening", {
                           defaultValue: "Listening… speak now.",
                         })}
                       </span>
                     </>
                   ) : (
-                    <span className="truncate font-medium text-[var(--gd-negative)]">
-                      {speechError}
-                    </span>
+                    <span>{speechError}</span>
                   )}
                 </div>
                 <button
@@ -1201,7 +1207,7 @@ export default function ChatPanel({
                       setSpeechError(null);
                     }
                   }}
-                  className="shrink-0 rounded px-1.5 py-0.5 font-semibold text-[var(--gd-muted)] transition-colors hover:bg-[var(--gd-surface)] hover:text-[var(--gd-text)]"
+                  className="genova-composer-status-action"
                   aria-label={
                     isRecording
                       ? "Stop speech recording"
@@ -1211,64 +1217,73 @@ export default function ChatPanel({
                   {isRecording ? (
                     t("chat.stop", { defaultValue: "Stop" })
                   ) : (
-                    <X className="h-3 w-3" />
+                    <X className="h-3.5 w-3.5" />
                   )}
                 </button>
               </div>
             )}
 
-            {/* Attached document chips */}
-            {attachedDocs.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--gd-border)] px-3 py-2">
-                {attachedDocs.map((doc) => (
-                  <span
-                    key={doc.id}
-                    className="inline-flex max-w-[15rem] items-center gap-1.5 rounded-md border border-[var(--gd-border)] bg-[var(--gd-raised)] py-1 pr-1 pl-2.5 text-[11px] font-medium text-[var(--gd-text)]"
-                    title={doc.filename}
-                  >
-                    <FileText
-                      className="h-3 w-3 shrink-0 text-[var(--gd-muted)]"
-                      aria-hidden="true"
-                    />
-                    <span className="truncate">{doc.filename}</span>
-                    <button
-                      type="button"
-                      className="rounded-md p-0.5 text-[var(--gd-muted)] transition-colors hover:bg-[var(--gd-surface)] hover:text-[var(--gd-negative)]"
-                      aria-label={`Remove ${doc.filename}`}
-                      onClick={() => removeAttachedDoc(doc.id)}
+            <div className="genova-composer-scope" aria-live="polite">
+              <span className="genova-composer-scope-label">Searching</span>
+              {attachedDocs.length > 0 ? (
+                <div className="genova-composer-chips">
+                  {attachedDocs.map((doc) => (
+                    <span
+                      key={doc.id}
+                      className="genova-composer-chip"
+                      title={doc.filename}
                     >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
+                      <FileText className="h-3 w-3 shrink-0" aria-hidden />
+                      <span className="truncate">{doc.filename}</span>
+                      <button
+                        type="button"
+                        className="genova-composer-chip-remove"
+                        aria-label={`Remove ${doc.filename}`}
+                        onClick={() => removeAttachedDoc(doc.id)}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <button
+                    type="button"
+                    className="genova-composer-scope-clear"
+                    onClick={() => setAttachedDocs([])}
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  className="rounded-md px-1.5 py-1 text-[11px] font-medium text-[var(--gd-muted)] transition-colors hover:text-[var(--gd-negative)]"
-                  onClick={() => setAttachedDocs([])}
+                  className="genova-composer-scope-value genova-composer-scope-cta"
+                  onClick={() => setAttachPickerOpen(true)}
                 >
-                  Clear all
+                  Attach a source to search
                 </button>
-              </div>
-            )}
+              )}
+            </div>
 
-            {/* Attach picker */}
             {attachPickerOpen && (
-              <div className="border-b border-[var(--gd-border)]">
-                <div className="flex items-center justify-between px-3 py-1.5">
-                  <span className="text-[10px] font-semibold tracking-wider text-[var(--gd-muted)] uppercase">
-                    Attach PDFs
-                  </span>
-                  <span className="text-[10px] tabular-nums text-[var(--gd-muted)]">
+              <div className="genova-composer-picker">
+                <div className="genova-composer-picker-head">
+                  <div>
+                    <p className="genova-composer-picker-title">Attach sources</p>
+                    <p className="genova-composer-picker-sub">
+                      Select at least one PDF to search
+                    </p>
+                  </div>
+                  <span className="genova-composer-picker-count">
                     {attachedDocs.length} selected
                   </span>
                 </div>
                 <div
-                  className="max-h-48 overflow-y-auto px-1 pb-1"
+                  className="genova-composer-picker-list"
                   role="listbox"
                   aria-label="Attach documents"
                 >
                   {attachCandidates.length === 0 ? (
-                    <p className="px-3 py-3 text-xs text-[var(--gd-muted)]">
+                    <p className="genova-composer-picker-empty">
                       {readyDocs.length === 0
                         ? "No ready documents to attach."
                         : "No matching PDFs."}
@@ -1284,40 +1299,34 @@ export default function ChatPanel({
                           aria-selected={selected}
                           onClick={() => toggleAttachedDoc(doc)}
                           className={cn(
-                            "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/30",
-                            selected
-                              ? "bg-[var(--gd-accent-soft)] font-medium text-[var(--gd-text)]"
-                              : "text-[var(--gd-text)] hover:bg-[var(--gd-raised)]",
+                            "genova-composer-picker-item",
+                            selected && "is-selected",
                           )}
                         >
                           <span
                             className={cn(
-                              "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-                              selected
-                                ? "border-[var(--gd-accent)] bg-[var(--gd-accent)] text-white"
-                                : "border-[var(--gd-border)] bg-[var(--gd-surface)]",
+                              "genova-composer-check",
+                              selected && "is-on",
                             )}
-                            aria-hidden="true"
+                            aria-hidden
                           >
-                            {selected && <Check className="h-3 w-3" />}
+                            {selected ? <Check className="h-3 w-3" /> : null}
                           </span>
-                          <span className="flex-1 truncate">
-                            {doc.original_name}
-                          </span>
+                          <span className="truncate">{doc.original_name}</span>
                         </button>
                       );
                     })
                   )}
                 </div>
-                <div className="flex items-center justify-between gap-2 border-t border-[var(--gd-border)] px-3 py-1.5">
-                  <span className="text-[10px] text-[var(--gd-muted)]">
+                <div className="genova-composer-picker-foot">
+                  <span>
                     {attachedDocs.length === 0
-                      ? "None selected → search all indexed docs"
-                      : `Search limited to ${attachedDocs.length} PDF${attachedDocs.length === 1 ? "" : "s"}`}
+                      ? "Attach a source to enable search"
+                      : `Searching ${attachedDocs.length} source${attachedDocs.length === 1 ? "" : "s"}`}
                   </span>
                   <button
                     type="button"
-                    className="h-6 shrink-0 rounded-md bg-[var(--gd-accent)] px-2.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/30"
+                    className="genova-composer-picker-done"
                     onClick={() => {
                       setAttachPickerOpen(false);
                       if (isAttachCommand) setInput("");
@@ -1329,57 +1338,7 @@ export default function ChatPanel({
               </div>
             )}
 
-            {/* Writing area — ChatGPT-style single row */}
-            <div className="flex items-end gap-0.5 px-2 py-2">
-              <label className="relative mb-0.5 flex shrink-0 items-center">
-                <Cpu
-                  className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[var(--gd-muted)]"
-                  aria-hidden="true"
-                />
-                <select
-                  value={llmProvider}
-                  disabled={streaming || availableLlmProviders.length <= 1}
-                  onChange={(e) =>
-                    setLlmProvider(e.target.value as LlmProviderId)
-                  }
-                  className="h-8 max-w-[9.3rem] cursor-pointer appearance-none rounded-md bg-transparent py-0 pr-6 pl-7 text-xs font-medium text-[var(--gd-muted)] outline-none transition-colors hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)] focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-label="LLM provider"
-                >
-                  {llmProviderSelectOptions(availableLlmProviders).map(
-                    (opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ),
-                  )}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-1.5 h-3 w-3 text-[var(--gd-muted)]"
-                  aria-hidden="true"
-                />
-              </label>
-
-              <button
-                type="button"
-                disabled={streaming || readyDocs.length === 0}
-                onClick={() => setAttachPickerOpen((v) => !v)}
-                className={cn(
-                  "relative mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--gd-accent)]/25 disabled:pointer-events-none disabled:opacity-50",
-                  attachPickerOpen
-                    ? "bg-[var(--gd-accent-soft)] text-[var(--gd-accent)]"
-                    : "text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
-                )}
-                aria-label="Attach documents"
-                aria-expanded={attachPickerOpen}
-              >
-                <Paperclip className="h-4 w-4" aria-hidden="true" />
-                {attachedDocs.length > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-md bg-[var(--gd-accent)] px-0.5 text-[9px] font-medium leading-none text-white">
-                    {attachedDocs.length}
-                  </span>
-                )}
-              </button>
-
+            <div className="genova-composer-shell">
               <Textarea
                 ref={textareaRef}
                 id="chat-input"
@@ -1390,142 +1349,196 @@ export default function ChatPanel({
                 placeholder={
                   attachedDocs.length > 0
                     ? `Ask about ${attachedDocs.length} attached PDF${attachedDocs.length === 1 ? "" : "s"}…`
-                    : "Ask across all indexed documents…"
+                    : "Attach a source, then ask a question…"
                 }
                 disabled={streaming}
-                className="min-h-[36px] max-h-28 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-[15px] text-[var(--gd-text)] placeholder:text-[var(--gd-muted)] shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+                className="genova-composer-input"
                 rows={1}
                 aria-label="Chat message"
                 aria-describedby="chat-input-hint"
               />
 
-              {messages.length > 0 && (
-                <div className="mb-0.5 flex shrink-0 items-center">
-                  <DropdownMenu
-                    open={exportMenuOpen}
-                    onOpenChange={setExportMenuOpen}
-                  >
-                    <DropdownMenuTrigger
-                      id="export-chat-btn"
-                      type="button"
-                      disabled={exporting}
-                      className={cn(
-                        buttonVariants({ variant: "ghost", size: "icon" }),
-                        "h-8 w-8 rounded-md text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
+              <div className="genova-composer-bar">
+                <div className="genova-composer-bar-left">
+                  <label className="genova-composer-provider">
+                    <Cpu className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    <select
+                      value={llmProvider}
+                      disabled={streaming || availableLlmProviders.length <= 1}
+                      onChange={(e) =>
+                        setLlmProvider(e.target.value as LlmProviderId)
+                      }
+                      aria-label="LLM provider"
+                    >
+                      {llmProviderSelectOptions(availableLlmProviders).map(
+                        (opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ),
                       )}
-                      aria-label={t("chat.exportTitle")}
-                      title={exporting ? "Preparing export…" : t("chat.exportTitle")}
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      id="chat-export-menu"
-                      align="end"
-                      side="top"
-                      aria-label="Export chat"
-                      className="min-w-[160px]"
-                    >
-                      <DropdownMenuItem
-                        id="export-md-btn"
-                        className="gap-2 px-3 py-2"
-                        disabled={exporting}
-                        onClick={() => void handleExport("md")}
-                      >
-                        {t("chat.markdown")}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        id="export-pdf-btn"
-                        className="gap-2 px-3 py-2"
-                        disabled={exporting}
-                        onClick={() => void handleExport("pdf")}
-                      >
-                        {exporting ? "Preparing PDF…" : t("chat.pdf")}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                    </select>
+                    <ChevronDown className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+                  </label>
+
+                  <button
+                    type="button"
+                    disabled={streaming || readyDocs.length === 0}
+                    onClick={() => setAttachPickerOpen((v) => !v)}
+                    className={cn(
+                      "genova-composer-tool",
+                      attachPickerOpen && "is-active",
+                    )}
+                    aria-label="Attach documents"
+                    aria-expanded={attachPickerOpen}
+                  >
+                    <Paperclip className="h-4 w-4" aria-hidden />
+                    <span className="hidden sm:inline">Sources</span>
+                    {attachedDocs.length > 0 ? (
+                      <span className="genova-composer-tool-count">
+                        {attachedDocs.length}
+                      </span>
+                    ) : null}
+                  </button>
+
                   <Tooltip>
                     <TooltipTrigger
+                      id="mic-btn"
                       type="button"
-                      onClick={handleClear}
+                      disabled={streaming}
+                      onClick={toggleRecording}
                       className={cn(
-                        buttonVariants({ variant: "ghost", size: "icon" }),
-                        "h-8 w-8 rounded-md text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-negative)]",
+                        "genova-composer-tool",
+                        isRecording && "is-recording",
                       )}
-                      aria-label="Clear chat history"
+                      aria-label={
+                        isRecording
+                          ? t("chat.stopRecording", {
+                              defaultValue: "Stop recording",
+                            })
+                          : t("chat.startRecording", {
+                              defaultValue: "Start recording",
+                            })
+                      }
+                      aria-pressed={isRecording}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      {isRecording ? (
+                        <MicOff className="h-4 w-4" />
+                      ) : (
+                        <Mic className="h-4 w-4" />
+                      )}
                     </TooltipTrigger>
-                    <TooltipContent>Clear chat history</TooltipContent>
+                    <TooltipContent>
+                      {isRecording
+                        ? t("chat.stopRecording", {
+                            defaultValue: "Stop recording",
+                          })
+                        : t("chat.startRecording", {
+                            defaultValue: "Start recording",
+                          })}
+                    </TooltipContent>
                   </Tooltip>
                 </div>
-              )}
 
-              <Tooltip>
-                <TooltipTrigger
-                  id="mic-btn"
-                  type="button"
-                  disabled={streaming}
-                  onClick={toggleRecording}
-                  className={cn(
-                    buttonVariants({ variant: "ghost", size: "icon" }),
-                    "mb-0.5 h-8 w-8 shrink-0 rounded-md text-[var(--gd-muted)] transition-colors",
-                    isRecording
-                      ? "animate-pulse bg-[color-mix(in_oklab,var(--gd-negative)_15%,transparent)] text-[var(--gd-negative)]"
-                      : "hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]",
-                  )}
-                  aria-label={
-                    isRecording
-                      ? t("chat.stopRecording", {
-                        defaultValue: "Stop recording",
-                      })
-                      : t("chat.startRecording", {
-                        defaultValue: "Start recording",
-                      })
-                  }
-                  aria-pressed={isRecording}
-                >
-                  {isRecording ? (
-                    <MicOff className="h-4 w-4" />
-                  ) : (
-                    <Mic className="h-4 w-4" />
-                  )}
-                </TooltipTrigger>
-                <TooltipContent>
-                  {isRecording
-                    ? t("chat.stopRecording", {
-                      defaultValue: "Stop recording",
-                    })
-                    : t("chat.startRecording", {
-                      defaultValue: "Start recording",
-                    })}
-                </TooltipContent>
-              </Tooltip>
+                <div className="genova-composer-bar-right">
+                  {messages.length > 0 ? (
+                    <>
+                      <DropdownMenu
+                        open={exportMenuOpen}
+                        onOpenChange={setExportMenuOpen}
+                      >
+                        <DropdownMenuTrigger
+                          id="export-chat-btn"
+                          type="button"
+                          disabled={exporting}
+                          className="genova-composer-tool"
+                          aria-label={t("chat.exportTitle")}
+                          title={
+                            exporting
+                              ? "Preparing export…"
+                              : t("chat.exportTitle")
+                          }
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          id="chat-export-menu"
+                          align="end"
+                          side="top"
+                          aria-label="Export chat"
+                          className="min-w-[160px]"
+                        >
+                          <DropdownMenuItem
+                            id="export-md-btn"
+                            className="gap-2 px-3 py-2"
+                            disabled={exporting}
+                            onClick={() => void handleExport("md")}
+                          >
+                            {t("chat.markdown")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            id="export-pdf-btn"
+                            className="gap-2 px-3 py-2"
+                            disabled={exporting}
+                            onClick={() => void handleExport("pdf")}
+                          >
+                            {exporting ? "Preparing PDF…" : t("chat.pdf")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
 
-              <Tooltip>
-                <TooltipTrigger
-                  id="send-btn"
-                  type="button"
-                  onClick={streaming ? handleStop : handleSend}
-                  disabled={!streaming && !input.trim()}
-                  className={cn(
-                    "mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors",
-                    streaming || input.trim()
-                      ? "bg-[var(--gd-text)] text-[var(--gd-surface)] hover:opacity-90"
-                      : "bg-[var(--gd-raised)] text-[var(--gd-faint)]",
-                    "disabled:opacity-50",
-                  )}
-                  aria-label={streaming ? "Stop generating" : "Send message"}
-                >
-                  {streaming ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-3.5 w-3.5" />
-                  )}
-                </TooltipTrigger>
-                <TooltipContent>
-                  {streaming ? "Stop generating" : "Send message"}
-                </TooltipContent>
-              </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger
+                          type="button"
+                          onClick={handleClear}
+                          className="genova-composer-tool is-danger"
+                          aria-label="Clear chat history"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </TooltipTrigger>
+                        <TooltipContent>Clear chat history</TooltipContent>
+                      </Tooltip>
+                    </>
+                  ) : null}
+
+                  <Tooltip>
+                    <TooltipTrigger
+                      id="send-btn"
+                      type="button"
+                      onClick={streaming ? handleStop : handleSend}
+                      disabled={
+                        !streaming &&
+                        (!input.trim() || attachedDocs.length < 1)
+                      }
+                      className={cn(
+                        "genova-composer-send",
+                        (streaming ||
+                          (input.trim() && attachedDocs.length > 0)) &&
+                          "is-ready",
+                      )}
+                      aria-label={
+                        streaming ? "Stop generating" : "Send message"
+                      }
+                    >
+                      {streaming ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-3.5 w-3.5" />
+                      )}
+                      <span className="hidden sm:inline">
+                        {streaming ? "Stop" : "Ask"}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {streaming
+                        ? "Stop generating"
+                        : attachedDocs.length < 1
+                          ? "Attach a source to search"
+                          : "Send message"}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              </div>
             </div>
           </div>
 

@@ -101,10 +101,10 @@ function SettingsPageContent() {
         <LedgerButton
           variant="ghost"
           className="w-full justify-start"
-          onClick={() => router.push("/dashboard")}
+          onClick={() => router.push("/dashboard?view=documents")}
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to workspace
+          Back to documents
         </LedgerButton>
       }
     />

@@ -218,7 +218,7 @@ export function AdminShell({
         type="button"
         className="adm-nav-item"
         onClick={() => {
-          window.location.href = "/dashboard";
+          window.location.href = "/dashboard?view=documents";
         }}
       >
         <ArrowLeft />
@@ -319,7 +319,7 @@ export function AdminShell({
                 variant="secondary"
                 style={{ width: "100%" }}
                 onClick={() => {
-                  window.location.href = "/dashboard";
+                  window.location.href = "/dashboard?view=documents";
                 }}
               >
                 <ArrowLeft style={{ width: 15, height: 15 }} />

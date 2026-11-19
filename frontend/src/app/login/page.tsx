@@ -23,12 +23,12 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   const postLoginPath = useCallback(() => {
-    if (typeof window === "undefined") return "/dashboard";
+    if (typeof window === "undefined") return "/dashboard?view=documents";
     const next = new URLSearchParams(window.location.search).get("next");
     if (next && next.startsWith("/") && !next.startsWith("//")) {
       return next;
     }
-    return "/dashboard";
+    return "/dashboard?view=documents";
   }, []);
 
   useEffect(() => {

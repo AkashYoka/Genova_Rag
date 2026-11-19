@@ -7,7 +7,6 @@ import { normalizeDocInfo, type DocumentListApiResponse } from "@/types/document
 import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -36,7 +35,6 @@ interface Props {
   loading?: boolean;
   onSelectDoc: (doc: DocInfo) => void;
   onDocumentsChange: () => void;
-  onDocumentRenamed: (doc: DocInfo) => void;
 }
 
 function DocumentListSkeleton() {
@@ -67,16 +65,12 @@ export default function DocumentSidebar({
   loading = false,
   onSelectDoc,
   onDocumentsChange,
-  onDocumentRenamed,
 }: Props) {
   const { t } = useTranslation();
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [editingDocId, setEditingDocId] = useState<string | null>(null);
-  const [draftName, setDraftName] = useState("");
-  const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("active");
   const [trashDocuments, setTrashDocuments] = useState<DocInfo[]>([]);
   const [loadingTrash, setLoadingTrash] = useState(false);
@@ -394,63 +388,8 @@ export default function DocumentSidebar({
     }
   };
 
-  const startRename = (doc: DocInfo, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    setEditingDocId(doc.id);
-    setDraftName(doc.original_name);
-  };
-
-  const cancelRename = () => {
-    setEditingDocId(null);
-    setDraftName("");
-  };
-
-  const submitRename = async (doc: DocInfo) => {
-    const nextName = draftName.trim();
-
-    if (!nextName) {
-      toast.error("Document name cannot be empty");
-      return;
-    }
-
-    if (nextName === doc.original_name) {
-      cancelRename();
-      return;
-    }
-
-    const optimisticDoc = { ...doc, original_name: nextName };
-    onDocumentRenamed(optimisticDoc);
-    setRenamingDocId(doc.id);
-
-    try {
-      const updatedDoc = await api.renameDocument<DocInfo>(doc.id, nextName);
-      onDocumentRenamed(updatedDoc);
-      cancelRename();
-      toast.success("Document renamed");
-    } catch (err) {
-      onDocumentRenamed(doc);
-      const message = err instanceof Error ? err.message : "Rename failed";
-      toast.error(message);
-    } finally {
-      setRenamingDocId(null);
-    }
-  };
-
-  const handleRenameKeyDown = (
-    doc: DocInfo,
-    e: React.KeyboardEvent<HTMLInputElement>,
-  ) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void submitRename(doc);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      cancelRename();
-    }
-  };
-
   const handleDocumentKeyDown = (doc: DocInfo, e: React.KeyboardEvent) => {
-    if (editingDocId === doc.id || doc.status !== "ready") return;
+    if (doc.status !== "ready") return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onSelectDoc(doc);
@@ -649,8 +588,6 @@ export default function DocumentSidebar({
             ) : (
               <div className="space-y-1 pb-3">
                 {documents.map((doc) => {
-                  const isEditing = editingDocId === doc.id;
-                  const isRenaming = renamingDocId === doc.id;
                   const isSelected = selectedIds.has(doc.id);
 
                   return (
@@ -664,7 +601,7 @@ export default function DocumentSidebar({
                       }
                       aria-label={`Select document ${doc.original_name}. Status: ${doc.status}`}
                       onClick={() =>
-                        doc.status === "ready" && !isEditing && onSelectDoc(doc)
+                        doc.status === "ready" && onSelectDoc(doc)
                       }
                       onKeyDown={(e) => handleDocumentKeyDown(doc, e)}
                       className={`w-full text-left px-2 py-1.5 rounded-md transition-colors duration-150 group
@@ -691,25 +628,13 @@ export default function DocumentSidebar({
 
                         <span className="shrink-0">{statusIcon(doc.status)}</span>
                         <div className="flex-1 min-w-0">
-                          {isEditing ? (
-                            <Input
-                              value={draftName}
-                              onChange={(e) => setDraftName(e.target.value)}
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => handleRenameKeyDown(doc, e)}
-                              disabled={isRenaming}
-                              autoFocus
-                              className="h-7 px-2 text-sm font-medium"
-                            />
-                          ) : (
-                            <p
-                              className="text-[13px] font-medium truncate leading-tight"
-                              onDoubleClick={(e) => startRename(doc, e)}
-                              title="Double-click to rename"
-                            >
-                              {doc.original_name}
-                            </p>
-                          )}
+                          <p
+                            className="text-[13px] font-medium truncate leading-tight"
+                            title={doc.original_name}
+                          >
+                            {doc.original_name}
+                          </p>
+
 
                           {doc.summary ? (
                             <p

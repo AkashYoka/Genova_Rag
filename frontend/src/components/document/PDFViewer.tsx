@@ -12,7 +12,9 @@ import {
   Loader2,
   AlertCircle,
   RotateCw,
+  Search,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api";
 import {
   findPageForQuote,
@@ -77,7 +79,9 @@ export default function PDFViewer({
   totalPages,
   highlightTarget,
 }: Props) {
-  const [scale, setScale] = useState(1.0);
+  /** User zoom relative to fit-to-width (1 = page fills the pane). */
+  const [userZoom, setUserZoom] = useState(1.0);
+  const [fitWidth, setFitWidth] = useState(0);
   const [rotation, setRotation] = useState(0);
   const [pageInput, setPageInput] = useState(String(currentPage));
   const [pageInputError, setPageInputError] = useState(false);
@@ -133,14 +137,18 @@ export default function PDFViewer({
 
   // --- NEW: Search State ---
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
+  const [nativePageWidth, setNativePageWidth] = useState(612);
   const {
     searchTerm,
     setSearchTerm,
     matches,
     currentIndex,
     setCurrentIndex,
+    searching: pdfSearching,
     performSearch,
+    clearSearch,
   } = usePdfSearch();
+  const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
 
   // Sync page input state with current page prop updates during render phase
   if (currentPage !== prevCurrentPage) {
@@ -148,6 +156,49 @@ export default function PDFViewer({
     setPageInput(String(currentPage));
     setPageInputError(false);
   }
+
+  // Fit the page to the pane width so the right edge is not clipped.
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      const styles = window.getComputedStyle(el);
+      const padX =
+        (Number.parseFloat(styles.paddingLeft) || 0) +
+        (Number.parseFloat(styles.paddingRight) || 0);
+      setFitWidth(Math.max(0, el.clientWidth - padX));
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!pdfDoc) return;
+    let cancelled = false;
+    void pdfDoc
+      .getPage(currentPage)
+      .then((page) => {
+        if (cancelled) return;
+        const viewport = page.getViewport({ scale: 1, rotation });
+        setNativePageWidth(viewport.width || 612);
+      })
+      .catch(() => {
+        if (!cancelled) setNativePageWidth(612);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDoc, currentPage, rotation]);
+
+  const pageWidth =
+    fitWidth > 0 ? Math.max(160, fitWidth * userZoom) : undefined;
+  /** CSS px per PDF unit — used for citation overlays with unit "pdf". */
+  const scale =
+    pageWidth && nativePageWidth > 0 ? pageWidth / nativePageWidth : userZoom;
 
   const pdfUrl = `${API_BASE}/api/v1/documents/${documentId}/pdf`;
 
@@ -166,6 +217,7 @@ export default function PDFViewer({
   );
 
   const handleDocumentLoad = useCallback((pdf: PDFDocumentProxy) => {
+    pdfDocRef.current = pdf;
     setPdfDoc(pdf);
   }, []);
 
@@ -328,10 +380,12 @@ export default function PDFViewer({
 
   // Reset captured doc when the file identity changes
   useEffect(() => {
+    pdfDocRef.current = null;
     setPdfDoc(null);
+    clearSearch();
     setQuoteRects([]);
     setResolvedQuotePage(null);
-  }, [documentId]);
+  }, [documentId, clearSearch]);
 
   // Clear quote-derived state when the citation target changes identity.
   useEffect(() => {
@@ -345,13 +399,17 @@ export default function PDFViewer({
       if (isModifier) {
         if (e.key === "=" || e.key === "+") {
           e.preventDefault();
-          setScale((s) => Math.min(2.0, s + 0.1));
+          setUserZoom((z) => Math.min(2.5, Number((z + 0.1).toFixed(2))));
         } else if (e.key === "-") {
           e.preventDefault();
-          setScale((s) => Math.max(0.5, s - 0.1));
+          setUserZoom((z) => Math.max(0.5, Number((z - 0.1).toFixed(2))));
         } else if (e.key === "r" || e.key === "R") {
           e.preventDefault();
           setRotation((r) => (r + 90) % 360);
+        } else if (e.key === "0") {
+          e.preventDefault();
+          setUserZoom(1);
+          setRotation(0);
         }
       }
     };
@@ -433,14 +491,17 @@ export default function PDFViewer({
     }
   };
 
+  const toolBtn =
+    "h-7 w-7 shrink-0 rounded-md text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]";
+
   return (
-    <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col overflow-hidden bg-background">
-      <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b border-border/50 bg-card/50 px-2 py-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+    <div className="flex h-full min-h-0 min-w-0 w-full max-w-full flex-col overflow-hidden bg-[var(--gd-surface)]">
+      <div className="genova-pdf-toolbar" role="toolbar" aria-label="PDF controls">
+        <div className="genova-pdf-toolbar-group" aria-label="Page navigation">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 shrink-0"
+            className={toolBtn}
             onClick={() => {
               const newPage = Math.max(1, currentPage - 1);
               onPageChange(newPage);
@@ -449,68 +510,17 @@ export default function PDFViewer({
             disabled={currentPage <= 1}
             aria-label="Go to previous PDF page"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="h-4 w-4" />
           </Button>
 
-          {/* --- NEW: Search Integration --- */}
-          <div className="flex min-w-0 items-center gap-1 border-l pl-2 sm:gap-2">
-            <Input
-              placeholder="Search..."
-              className="h-7 w-20 min-w-0 max-w-[8rem] flex-1 text-xs sm:w-28"
-              value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
-                performSearch(pdfDoc, e.target.value);
-              }}
-            />
-            {matches.length > 0 && (
-              <div className="flex shrink-0 items-center gap-1">
-                <span className="text-[10px] text-muted-foreground">
-                  {currentIndex + 1}/{matches.length}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => {
-                    const prevIdx = Math.max(0, currentIndex - 1);
-                    setCurrentIndex(prevIdx);
-                    onPageChange(matches[prevIdx].page);
-                  }}
-                >
-                  <ChevronLeft className="w-3 h-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => {
-                    const nextIdx = Math.min(
-                      matches.length - 1,
-                      currentIndex + 1,
-                    );
-                    setCurrentIndex(nextIdx);
-                    onPageChange(matches[nextIdx].page);
-                  }}
-                >
-                  <ChevronRight className="w-3 h-3" />
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* Page jump input — Page X of Y */}
           <form
             onSubmit={(event) => {
               event.preventDefault();
               handlePageJump(pageInput);
             }}
-            className="flex shrink-0 items-center gap-1 text-xs"
+            className="genova-pdf-page-form"
             aria-label="PDF page navigation"
           >
-            <span className="text-muted-foreground text-[10px] hidden xl:inline">
-              Page
-            </span>
             <Input
               value={pageInput}
               onChange={(e) => {
@@ -518,23 +528,23 @@ export default function PDFViewer({
                 setPageInputError(false);
               }}
               onBlur={() => handlePageJump(pageInput)}
-              className={`h-7 text-center text-xs p-0 bg-background/50 transition-colors ${
-                String(currentPage).length >= 3 ? "w-14" : "w-10"
-              } ${pageInputError ? "border-destructive text-destructive" : ""}`}
+              className={cn(
+                "genova-pdf-page-input",
+                String(currentPage).length >= 3 ? "w-12" : "w-9",
+                pageInputError && "is-error",
+              )}
               aria-label={`Page number input, current page ${currentPage} of ${totalPages}`}
               aria-invalid={pageInputError}
               title={`Enter page number between 1 and ${totalPages}`}
               inputMode="numeric"
             />
-            <span className="text-muted-foreground text-[10px]">
-              of {totalPages}
-            </span>
+            <span className="genova-pdf-page-meta">/ {totalPages}</span>
           </form>
 
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 shrink-0"
+            className={toolBtn}
             onClick={() => {
               const newPage = Math.min(totalPages, currentPage + 1);
               onPageChange(newPage);
@@ -543,53 +553,120 @@ export default function PDFViewer({
             disabled={currentPage >= totalPages}
             aria-label="Go to next PDF page"
           >
-            <ChevronRight className="w-4 h-4" />
+            <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="genova-pdf-toolbar-divider" aria-hidden />
+
+        <div className="genova-pdf-toolbar-group genova-pdf-search" aria-label="Find in PDF">
+          <div className="genova-pdf-search-field">
+            <Search className="genova-pdf-search-icon" aria-hidden />
+            <Input
+              placeholder={pdfDoc ? "Find in document" : "Loading PDF…"}
+              className="genova-pdf-search-input"
+              value={searchTerm}
+              disabled={!pdfDoc}
+              onChange={(e) => {
+                const next = e.target.value;
+                setSearchTerm(next);
+                performSearch(pdfDocRef.current, next);
+              }}
+              aria-label="Search PDF text"
+            />
+          </div>
+          {pdfSearching ? (
+            <span className="genova-pdf-search-count" aria-live="polite">
+              …
+            </span>
+          ) : null}
+          {matches.length > 0 ? (
+            <div className="genova-pdf-search-nav">
+              <span className="genova-pdf-search-count">
+                {currentIndex + 1}/{matches.length}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={toolBtn}
+                onClick={() => {
+                  const prevIdx = Math.max(0, currentIndex - 1);
+                  setCurrentIndex(prevIdx);
+                  onPageChange(matches[prevIdx].page);
+                }}
+                aria-label="Previous search match"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={toolBtn}
+                onClick={() => {
+                  const nextIdx = Math.min(
+                    matches.length - 1,
+                    currentIndex + 1,
+                  );
+                  setCurrentIndex(nextIdx);
+                  onPageChange(matches[nextIdx].page);
+                }}
+                aria-label="Next search match"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="genova-pdf-toolbar-divider" aria-hidden />
+
+        <div className="genova-pdf-toolbar-group" aria-label="Zoom and rotate">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
-            onClick={() => setScale((current) => Math.max(0.5, current - 0.1))}
+            className={toolBtn}
+            onClick={() =>
+              setUserZoom((z) => Math.max(0.5, Number((z - 0.1).toFixed(2))))
+            }
             aria-label="Zoom out PDF"
           >
-            <ZoomOut className="w-3.5 h-3.5" />
+            <ZoomOut className="h-3.5 w-3.5" />
           </Button>
-          <span className="text-[10px] text-muted-foreground min-w-[36px] text-center">
-            {Math.round(scale * 100)}%
+          <span className="genova-pdf-zoom-label">
+            {Math.round(userZoom * 100)}%
           </span>
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
-            onClick={() => setScale((current) => Math.min(2.0, current + 0.1))}
+            className={toolBtn}
+            onClick={() =>
+              setUserZoom((z) => Math.min(2.5, Number((z + 0.1).toFixed(2))))
+            }
             aria-label="Zoom in PDF"
           >
-            <ZoomIn className="w-3.5 h-3.5" />
+            <ZoomIn className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className={toolBtn}
             onClick={() => setRotation((current) => (current + 90) % 360)}
             aria-label="Rotate PDF"
             title="Rotate 90°"
           >
-            <RotateCw className="w-3.5 h-3.5" />
+            <RotateCw className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"
-            className="h-7 px-2 text-[10px] font-medium"
+            className="h-7 shrink-0 rounded-md px-2 text-[11px] font-medium text-[var(--gd-muted)] hover:bg-[var(--gd-raised)] hover:text-[var(--gd-text)]"
             onClick={() => {
-              setScale(1.0);
+              setUserZoom(1);
               setRotation(0);
             }}
-            aria-label="Reset PDF zoom and rotation"
-            title="Reset to 100% and 0°"
+            aria-label="Fit PDF to panel width"
+            title="Fit to width"
           >
-            Reset
+            Fit
           </Button>
         </div>
       </div>
@@ -597,7 +674,7 @@ export default function PDFViewer({
       {/* ── PDF Render ──────────────────────────────── */}
       <div
         ref={scrollContainerRef}
-        className="genova-pdf-scroll relative flex min-h-0 min-w-0 w-full max-w-full flex-1 items-start overflow-auto bg-muted/30 p-4"
+        className="genova-pdf-scroll relative flex min-h-0 min-w-0 w-full max-w-full flex-1 items-start justify-center overflow-auto bg-[var(--gd-raised)] p-3"
       >
         <Document
           key={documentId}
@@ -635,14 +712,20 @@ export default function PDFViewer({
               </p>
             </div>
           }
-          className="border border-border bg-card shadow-md"
+          className="genova-pdf-document"
         >
-          {/* w-max so the anchor matches the rendered page width — overlays are
-              percent-positioned against this box, not the narrower inspector pane. */}
-          <div ref={pageAnchorRef} className="relative w-max max-w-none">
+          {/* Anchor matches rendered page width for percent-based citation overlays. */}
+          <div
+            ref={pageAnchorRef}
+            className={cn(
+              "relative",
+              userZoom > 1 ? "w-max max-w-none" : "w-full max-w-full",
+            )}
+            style={pageWidth ? { width: pageWidth } : undefined}
+          >
             <Page
               pageNumber={currentPage}
-              scale={scale}
+              width={pageWidth}
               rotate={rotation}
               renderAnnotationLayer={false}
               renderTextLayer={true}
