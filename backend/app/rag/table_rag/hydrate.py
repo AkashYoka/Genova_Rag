@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.rag.table_rag.ids import parse_table_payload
 from app.rag.table_rag.independent_rows import independent_rows_prompt_block
 from app.rag.table_rag.nxt import compact_table_prompt_block
-from app.rag.table_rag.store import load_tables_by_ids
+from app.rag.table_rag.store import list_document_tables, load_tables_by_ids
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,120 @@ def _scope_lock_bonus(query: str, caption: str) -> int:
     if c_refs and not (q_refs & c_refs):
         return -50
     return 0
+
+
+def _caption_rank_score(query: str, caption: str) -> Tuple[int, int]:
+    """(scope_lock, token_overlap) — no domain/phrasing rules."""
+    scope = _scope_lock_bonus(query, caption)
+    overlap = len(_content_tokens(query) & _content_tokens(caption))
+    return scope, overlap
+
+
+def _inject_caption_matched_siblings(
+    items: List[Dict[str, Any]],
+    *,
+    user_id: str,
+    query: str,
+    max_inject: int = 2,
+) -> List[Dict[str, Any]]:
+    """Add same-document SQL tables with stronger caption↔query token overlap.
+
+    Retrieval can miss a sibling matrix entirely. This only uses caption text
+    already stored for the document — no age/indication/unit parsers.
+    """
+    if not query.strip() or max_inject <= 0:
+        return items
+
+    doc_ids: List[str] = []
+    seen_docs: Set[str] = set()
+    have_ids: Set[str] = set()
+    for item in items:
+        did = str(item.get("document_id") or "").strip()
+        tid = str(item.get("table_id") or "").strip()
+        if tid:
+            have_ids.add(f"{did}:{tid}" if did else tid)
+        if did and did not in seen_docs:
+            seen_docs.add(did)
+            doc_ids.append(did)
+    if not doc_ids:
+        return items
+
+    best_have = 0
+    for item in items:
+        _, ov = _caption_rank_score(query, _caption_of(item))
+        if ov > best_have:
+            best_have = ov
+
+    scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    for did in doc_ids:
+        try:
+            rows = list_document_tables(document_id=did, user_id=user_id)
+        except Exception as exc:
+            logger.warning("Sibling table list failed for %s: %s", did, exc)
+            continue
+        for row in rows:
+            tid = str(row.get("table_id") or "").strip()
+            if not tid:
+                continue
+            key = f"{did}:{tid}"
+            if key in have_ids or tid in have_ids:
+                continue
+            cap = str(row.get("caption") or "")
+            scope, overlap = _caption_rank_score(query, cap)
+            # Only inject when caption overlap beats what retrieval already has,
+            # or Table-N scope lock applies.
+            if scope <= 0 and overlap < 2:
+                continue
+            if scope <= 0 and overlap <= best_have:
+                continue
+            scored.append((scope, overlap, row))
+
+    if not scored:
+        return items
+
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    out = list(items)
+    injected = 0
+    for scope, overlap, row in scored:
+        if injected >= max_inject:
+            break
+        tid = str(row.get("table_id") or "").strip()
+        did = str(row.get("document_id") or "").strip()
+        table = row.get("table") if isinstance(row.get("table"), dict) else None
+        if not tid or not table:
+            continue
+        out.append(
+            {
+                "id": f"sibling:{did}:{tid}",
+                "document_id": did,
+                "table_id": tid,
+                "table": dict(table),
+                "caption": row.get("caption") or "",
+                "section": row.get("section") or row.get("caption") or "",
+                "subsection": row.get("subsection") or "",
+                "chunk_type": "table",
+                "content_type": "table",
+                "page": row.get("page_start") or table.get("page"),
+                "pages": row.get("pages") or table.get("pages") or [],
+                "text": (row.get("summary_text") or row.get("caption") or "")[:2000],
+                "filename": row.get("filename") or "",
+                "score": 0.0,
+                "confidence": 0.0,
+                "_hydrate_relevant": [],
+                "_sibling_caption_inject": True,
+                "_sibling_rank": {"scope": scope, "overlap": overlap},
+            }
+        )
+        have_ids.add(f"{did}:{tid}")
+        injected += 1
+        logger.info(
+            "TableRAG sibling inject %s:%s overlap=%s scope=%s",
+            did,
+            tid,
+            overlap,
+            scope,
+        )
+    return out
 
 
 def _stub_table_prompt(table: Dict[str, Any]) -> str:
@@ -289,15 +403,19 @@ def hydrate_retrieved_tables(
                     item["table_needs_verification"] = True
         out.append(item)
 
-    # Rank by Table-N scope lock first, then caption↔query token overlap.
+    # Vector hits often miss the caption-best sibling; inject from SQL.
+    if query and query.strip():
+        out = _inject_caption_matched_siblings(
+            out, user_id=user_id, query=query, max_inject=max(2, full_n // 2)
+        )
+
+    # Rank by Table-N scope lock, then caption↔query token overlap.
     q_refs = _table_refs_in_text(query or "")
     if query and query.strip():
-        qtok = _content_tokens(query)
         scored: List[Tuple[int, int, int, Dict[str, Any]]] = []
         for idx, item in enumerate(out):
             cap = _caption_of(item)
-            scope = _scope_lock_bonus(query, cap)
-            overlap = len(qtok & _content_tokens(cap))
+            scope, overlap = _caption_rank_score(query, cap)
             scored.append((scope, overlap, -idx, item))
         if any(s != 0 or o > 0 for s, o, _, _ in scored):
             scored.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)

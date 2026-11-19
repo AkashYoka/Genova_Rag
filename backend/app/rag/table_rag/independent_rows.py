@@ -140,6 +140,63 @@ def _col_match_score(header: str, qnums: Sequence[float]) -> int:
     return sum(1 for n in qnums if _text_covers_number(header or "", n))
 
 
+def _nums_covered(text: str, qnums: Sequence[float]) -> Set[float]:
+    return {n for n in qnums if _text_covers_number(text or "", n)}
+
+
+def _content_toks(text: str) -> Set[str]:
+    return set(_WORD_RE.findall((text or "").lower()))
+
+
+def _tok_forms(tok: str) -> Set[str]:
+    """Light morphology so weighs↔weight affinity works without stemming libs."""
+    t = (tok or "").lower()
+    if len(t) < 2:
+        return set()
+    forms = {t}
+    if len(t) > 3 and t.endswith("s"):
+        forms.add(t[:-1])
+    else:
+        forms.add(t + "s")
+    if len(t) >= 4:
+        forms.add(t[:4])
+    return forms
+
+
+def _number_local_context(query: str, num: float, *, radius: int = 3) -> Set[str]:
+    """Word tokens near a query number (for axis affinity, not domain rules)."""
+    q = query or ""
+    # Find a decimal/int spelling of num in the query.
+    target = str(int(num)) if float(num).is_integer() else str(num)
+    tokens = re.findall(r"[A-Za-z]+|\d+(?:\.\d+)?", q)
+    idxs = [
+        i
+        for i, tok in enumerate(tokens)
+        if tok.replace(",", "") == target
+        or (
+            tok.replace(".", "", 1).isdigit()
+            and abs(float(tok) - num) < 1e-9
+        )
+    ]
+    out: Set[str] = set()
+    for i in idxs:
+        for j in range(max(0, i - radius), min(len(tokens), i + radius + 1)):
+            if j == i:
+                continue
+            t = tokens[j].lower()
+            if t.isalpha() and len(t) >= 2:
+                out |= _tok_forms(t)
+    return out
+
+
+def _axis_affinity(num: float, query: str, axis_text: str) -> int:
+    ctx = _number_local_context(query, num)
+    axis: Set[str] = set()
+    for t in _content_toks(axis_text):
+        axis |= _tok_forms(t)
+    return len(ctx & axis)
+
+
 def select_query_near_indices(
     table: Dict[str, Any],
     query: Optional[str],
@@ -150,7 +207,9 @@ def select_query_near_indices(
     """Pick row/value-column indices whose bands cover query numbers.
 
     Returns (row_indices, value_col_indices). Either may be None (= keep all).
-    Domain-agnostic: uses numeric range geometry only.
+    Domain-agnostic: numeric range geometry + query-local word affinity to
+    row-key headers vs value-column headers (so the same number is not used
+    on both axes when the question's nearby words point to one axis).
     """
     qnums = _query_numbers(query or "")
     if len(qnums) < 1:
@@ -163,6 +222,68 @@ def select_query_near_indices(
 
     value_cols = sorted(_parallel_value_columns(headers))
     key_cols = [ci for ci in range(len(headers)) if ci not in set(value_cols)]
+    row_axis_text = " ".join(headers[ci] for ci in (key_cols or [0]) if ci < len(headers))
+
+    # Joint cell ranking when we have parallel value columns + multiple numbers.
+    if value_cols and len(qnums) >= 2 and (query or "").strip():
+        cell_scores: List[Tuple[int, int, int, int]] = []
+        # (score, affinity, ri, ci)
+        for ri, row in enumerate(rows):
+            row_blob = " ".join(
+                _cell(row[ci]) if ci < len(row) else "" for ci in (key_cols or [0])
+            )
+            for ci in value_cols:
+                col_header = headers[ci]
+                row_hit: Set[float] = set()
+                col_hit: Set[float] = set()
+                aff = 0
+                for n in qnums:
+                    covers_row = _text_covers_number(row_blob, n)
+                    covers_col = _text_covers_number(col_header, n)
+                    if not covers_row and not covers_col:
+                        continue
+                    r_aff = _axis_affinity(n, query or "", row_axis_text)
+                    c_aff = _axis_affinity(n, query or "", col_header)
+                    if covers_row and covers_col:
+                        # Ambiguous geometrically — assign by local context.
+                        if r_aff > c_aff:
+                            row_hit.add(n)
+                            aff += r_aff
+                        elif c_aff > r_aff:
+                            col_hit.add(n)
+                            aff += c_aff
+                        else:
+                            # Tie: skip; do not count on both axes.
+                            continue
+                    elif covers_row:
+                        # Prefer row only if context does not clearly favor col.
+                        if c_aff > r_aff and c_aff > 0:
+                            continue
+                        row_hit.add(n)
+                        aff += r_aff
+                    else:
+                        if r_aff > c_aff and r_aff > 0:
+                            continue
+                        col_hit.add(n)
+                        aff += c_aff
+                if not row_hit or not col_hit:
+                    continue
+                if row_hit & col_hit:
+                    continue
+                score = len(row_hit) + len(col_hit)
+                cell_scores.append((score, aff, ri, ci))
+        if cell_scores:
+            cell_scores.sort(key=lambda x: (-x[0], -x[1], x[2], x[3]))
+            best = cell_scores[0][0]
+            best_aff = cell_scores[0][1]
+            winners = [
+                t
+                for t in cell_scores
+                if t[0] == best and t[1] >= best_aff
+            ][: max(2, max_cols)]
+            picked_rows = sorted({ri for _s, _a, ri, _ci in winners})[:max_rows]
+            picked_cols = sorted({ci for _s, _a, _ri, ci in winners})[:max_cols]
+            return picked_rows, picked_cols
 
     row_scores: List[Tuple[int, int]] = []
     for ri, row in enumerate(rows):
