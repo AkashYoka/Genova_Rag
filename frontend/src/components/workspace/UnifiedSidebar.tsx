@@ -3,22 +3,20 @@
 /**
  * UnifiedSidebar
  *
- * One navigation column for the whole application: start a conversation,
- * jump into the document library (All / Active / Indexing / Trash), and switch
- * between recent chats. It replaces the chat-only session sidebar.
+ * Navigation for the desk: start a conversation, open the source library,
+ * and switch between recent chats. Active / Trash filtering lives in the
+ * documents view itself — not duplicated here.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import {
   Edit2,
-  FileText,
   FolderOpen,
   Loader2,
   MessageSquare,
   Plus,
   Search,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
 import { useChatStore, type ChatSession } from "@/store/chat-store";
@@ -40,7 +38,6 @@ interface UnifiedSidebarProps {
   counts: DocumentLibrary["counts"];
   onOpenWorkspace: () => void;
   onOpenDocuments: (opts: { tab: DocTab; filter: DocStatusFilter }) => void;
-  onUploadDocuments: () => void;
   mobile?: boolean;
 }
 
@@ -52,12 +49,9 @@ const ROW_ACTIVE = "bg-[var(--gd-active)] font-medium text-[var(--gd-text)]";
 
 export default function UnifiedSidebar({
   view,
-  docTab,
-  docFilter,
   counts,
   onOpenWorkspace,
   onOpenDocuments,
-  onUploadDocuments,
   mobile = false,
 }: UnifiedSidebarProps) {
   const sessions = useChatStore((state) => state.sessions);
@@ -87,60 +81,7 @@ export default function UnifiedSidebar({
   }, [sessions, sessionQuery]);
 
   const inDocuments = view === "documents";
-  const indexingActive =
-    inDocuments && docTab === "active" && docFilter === "indexing";
-  const showIndexing = counts.indexing > 0 || indexingActive;
-
-  const docItems: Array<{
-    key: string;
-    label: string;
-    hint: string;
-    icon: typeof FolderOpen;
-    count: number;
-    active: boolean;
-    open: () => void;
-  }> = [
-    {
-      key: "all",
-      label: "All documents",
-      hint: "Every file in your library",
-      icon: FolderOpen,
-      count: counts.active,
-      active: inDocuments && docTab === "active" && docFilter === "all",
-      open: () => onOpenDocuments({ tab: "active", filter: "all" }),
-    },
-    {
-      key: "active",
-      label: "Active",
-      hint: "Ready to answer questions",
-      icon: FileText,
-      count: counts.ready,
-      active: inDocuments && docTab === "active" && docFilter === "ready",
-      open: () => onOpenDocuments({ tab: "active", filter: "ready" }),
-    },
-    ...(showIndexing
-      ? [
-          {
-            key: "indexing",
-            label: "Indexing",
-            hint: "Being prepared for search",
-            icon: Loader2,
-            count: counts.indexing,
-            active: indexingActive,
-            open: () => onOpenDocuments({ tab: "active", filter: "indexing" }),
-          },
-        ]
-      : []),
-    {
-      key: "trash",
-      label: "Trash",
-      hint: "Removed files you can still restore",
-      icon: Trash2,
-      count: counts.trash,
-      active: inDocuments && docTab === "trash",
-      open: () => onOpenDocuments({ tab: "trash", filter: "all" }),
-    },
-  ];
+  const indexingCount = counts.indexing;
 
   const handleCreate = async () => {
     if (creating) return;
@@ -215,43 +156,43 @@ export default function UnifiedSidebar({
         </Button>
       </div>
 
-
-
-      <nav className="shrink-0 px-2.5 pt-4" aria-label="Document library">
+      <nav className="shrink-0 px-2.5 pt-4" aria-label="Sources">
         <p className="px-2 pb-1.5 text-[11px] font-medium text-[var(--gd-faint)]">
-          Document library
+          Sources
         </p>
         <div className="flex flex-col gap-0.5">
-          {docItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.key}
-                type="button"
-                data-sidebar-nav
-                title={item.hint}
-                aria-current={item.active ? "page" : undefined}
-                onClick={item.open}
-                className={cn(ROW_BASE, item.active ? ROW_ACTIVE : ROW_IDLE)}
-              >
-                <Icon
-                  className={cn(
-                    "h-3.5 w-3.5 shrink-0",
-                    item.key === "indexing" && counts.indexing > 0
-                      ? "animate-spin text-[var(--gd-warning)] motion-reduce:animate-none"
-                      : "",
-                  )}
-                  aria-hidden
-                />
-                <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                {item.count > 0 ? (
-                  <span className="num shrink-0 text-[11px] text-[var(--gd-faint)]">
-                    {item.count}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
+          <button
+            type="button"
+            data-sidebar-nav
+            title="Browse and manage the files the assistant can search"
+            aria-current={inDocuments ? "page" : undefined}
+            onClick={() => onOpenDocuments({ tab: "active", filter: "all" })}
+            className={cn(ROW_BASE, inDocuments ? ROW_ACTIVE : ROW_IDLE)}
+          >
+            <FolderOpen className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1 truncate">Browse library</span>
+            {counts.active > 0 ? (
+              <span className="num shrink-0 text-[11px] text-[var(--gd-faint)]">
+                {counts.active}
+              </span>
+            ) : null}
+          </button>
+
+          {indexingCount > 0 ? (
+            <div
+              className="mx-1 mt-0.5 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] text-[var(--gd-warning)]"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2
+                className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none"
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1 truncate">
+                {indexingCount} preparing for search
+              </span>
+            </div>
+          ) : null}
         </div>
       </nav>
 
@@ -272,7 +213,7 @@ export default function UnifiedSidebar({
 
         <div className="relative px-1 pb-2">
           <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--gd-faint)]"
+            className="pointer-events-none absolute left-3 top-[40%] h-3.5 w-3.5 -translate-y-1/2 text-[var(--gd-faint)]"
             aria-hidden
           />
           <Input

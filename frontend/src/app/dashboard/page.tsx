@@ -136,12 +136,33 @@ function writeSidebarOpen(open: boolean): void {
   sidebarOpenListeners.forEach((listener) => listener());
 }
 
+type DeskView = "workspace" | "documents";
+
+function viewFromSearchParams(
+  params: URLSearchParams | { get: (key: string) => string | null },
+): DeskView {
+  return params.get("view") === "documents" ? "documents" : "workspace";
+}
+
 function DashboardPageContent() {
   const { user, initialized } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const view: "workspace" | "documents" =
-    searchParams.get("view") === "documents" ? "documents" : "workspace";
+  // Optimistic local view so Open chat / New conversation switch immediately.
+  // A pending-nav ref ignores stale ?view=documents while the router catches up.
+  const [view, setView] = useState<DeskView>(() =>
+    viewFromSearchParams(searchParams),
+  );
+  const pendingViewRef = useRef<DeskView | null>(null);
+
+  useEffect(() => {
+    const next = viewFromSearchParams(searchParams);
+    if (pendingViewRef.current) {
+      if (next !== pendingViewRef.current) return;
+      pendingViewRef.current = null;
+    }
+    setView(next);
+  }, [searchParams]);
 
   const library = useDocumentLibrary();
   const activeSessionTitle = useChatStore(
@@ -202,6 +223,8 @@ function DashboardPageContent() {
   }, [user?.id, initialized, loadNotes]);
 
   const openWorkspace = useCallback(() => {
+    pendingViewRef.current = "workspace";
+    setView("workspace");
     router.replace("/dashboard", { scroll: false });
   }, [router]);
 
@@ -209,6 +232,8 @@ function DashboardPageContent() {
     (opts?: { tab?: "active" | "trash"; filter?: "all" | "ready" | "indexing" }) => {
       if (opts?.tab) setDocTab(opts.tab);
       if (opts?.filter) setStatusFilter(opts.filter);
+      pendingViewRef.current = "documents";
+      setView("documents");
       router.replace("/dashboard?view=documents", { scroll: false });
     },
     [router, setDocTab, setStatusFilter],
@@ -358,7 +383,6 @@ function DashboardPageContent() {
       counts={library.counts}
       onOpenWorkspace={openWorkspace}
       onOpenDocuments={openDocuments}
-      onUploadDocuments={library.openFilePicker}
     />
   );
 
@@ -381,7 +405,6 @@ function DashboardPageContent() {
             counts={library.counts}
             onOpenWorkspace={openWorkspace}
             onOpenDocuments={openDocuments}
-            onUploadDocuments={library.openFilePicker}
             mobile
           />
         }
