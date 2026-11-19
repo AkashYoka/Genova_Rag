@@ -305,6 +305,12 @@ def _annotate_source_chunks(
         chunk["table_id"] = record["table_id"]
         chunk["table_ids"] = json.dumps([record["table_id"]])
         chunk["table_json"] = json.dumps(full, ensure_ascii=False)
+        cap = str(full.get("caption") or full.get("table_title") or "").strip()
+        if cap and not str(chunk.get("caption") or "").strip():
+            chunk["caption"] = cap
+        # Captioned tables should not keep sticky sibling subsection metadata.
+        if cap:
+            chunk["subsection"] = ""
         if record.get("needs_verification"):
             chunk["table_needs_verification"] = True
 

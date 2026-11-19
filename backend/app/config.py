@@ -306,7 +306,9 @@ class Settings(BaseSettings):
     TABLE_RAG_HYDRATE_ON_RETRIEVE: bool = True
     TABLE_RAG_INDEX_VERSION: str = "v3_layout_table"
     # Final chunk count for table-modality answers (token control).
-    TABLE_RAG_ANSWER_TOP_K: int = 5
+    # Keep ≥ TOP_K_RERANK so sibling dosing matrices are not sliced off before
+    # caption boost can promote the matching table (was 5 → T1 lost at rank 7).
+    TABLE_RAG_ANSWER_TOP_K: int = 8
     # Slim markdown grids in prompts (vs per-cell [r,c|header]=value).
     TABLE_RAG_PROMPT_SLIM: bool = True
     # Max body rows in the LLM table appendix (structured lookups pass all rows).

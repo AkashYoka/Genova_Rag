@@ -69,8 +69,6 @@ def _collect_row_hints(chunk: Dict[str, Any]) -> List[int]:
 
 
 def _content_tokens(text: str) -> set[str]:
-    import re
-
     stop = {
         "the",
         "and",

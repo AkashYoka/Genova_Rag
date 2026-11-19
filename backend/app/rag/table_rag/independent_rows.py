@@ -140,10 +140,6 @@ def _col_match_score(header: str, qnums: Sequence[float]) -> int:
     return sum(1 for n in qnums if _text_covers_number(header or "", n))
 
 
-def _nums_covered(text: str, qnums: Sequence[float]) -> Set[float]:
-    return {n for n in qnums if _text_covers_number(text or "", n)}
-
-
 def _content_toks(text: str) -> Set[str]:
     return set(_WORD_RE.findall((text or "").lower()))
 

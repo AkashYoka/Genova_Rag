@@ -18,7 +18,7 @@ Common example question:
 import json
 import logging
 import re
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Sequence, Set, Tuple
 
 from app.config import get_settings
 from app.rag.embeddings.embeddings import embed_query
@@ -144,53 +144,110 @@ def rrf_merge(
 
 # ── Query helpers ─────────────────────────────────────────────────────────────
 
-# Structural cues only — no product / indication / unit vocab.
-_STRUCTURED_LOOKUP_RE = re.compile(
-    r"(?i)\b("
-    r"table|chart|grid|matrix|schedule|lookup|row|column|cell|"
-    r"parameter|threshold|limit|range|total|rate|amount"
-    r")\b"
-)
-_STRUCTURED_NUM_RE = re.compile(r"(?i)\b\d+(?:\.\d+)?\b")
-_QUERY_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{3,}", re.I)
-_QUERY_STOPWORDS = {
-    "the", "a", "an", "and", "or", "but", "for", "with", "from", "that",
-    "this", "these", "those", "what", "which", "when", "where", "how",
-    "why", "does", "did", "have", "has", "was", "were", "please", "check",
-    "below", "content", "according", "using", "into", "about", "your",
-    "you", "any", "some", "all", "based", "should", "would", "could",
-}
+def _number_spans(text: str) -> List[Tuple[float, int, int, str]]:
+    """Parse numeric spans, joining thousands separators (``1,200`` → 1200).
+
+    Character lexer only — no vocabulary. Returns (value, start, end, written).
+    """
+    s = text or ""
+    out: List[Tuple[float, int, int, str]] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        if not s[i].isdigit():
+            i += 1
+            continue
+        start = i
+        j = i
+        while j < n and s[j].isdigit():
+            j += 1
+        written = s[i:j]
+        # Join ``,ddd`` thousands groups (exactly three digits each).
+        while j < n and s[j] == ",":
+            k = j + 1
+            while k < n and s[k].isdigit():
+                k += 1
+            if k - (j + 1) != 3:
+                break
+            written += s[j + 1 : k]
+            j = k
+        end = j
+        if j < n and s[j] == "." and j + 1 < n and s[j + 1].isdigit():
+            k = j + 1
+            while k < n and s[k].isdigit():
+                k += 1
+            written = written + "." + s[j + 1 : k]
+            end = k
+            j = k
+        i = j
+        try:
+            out.append((float(written), start, end, written))
+        except ValueError:
+            pass
+    return out
+
+
+def _query_number_strings(text: str) -> List[str]:
+    """Digit tokens only (no vocabulary lists); keeps thousands groups intact."""
+    return [w for _v, _a, _b, w in _number_spans(text)]
+
+
+def _normalize_thousands_in_text(text: str) -> str:
+    """Rewrite ``1,200`` → ``1200`` so downstream parsers see one number."""
+    spans = _number_spans(text)
+    if not spans:
+        return text
+    parts: List[str] = []
+    last = 0
+    for _val, start, end, written in spans:
+        parts.append(text[last:start])
+        # Emit plain digits/decimals (no thousands commas).
+        parts.append(written)
+        last = end
+    parts.append(text[last:])
+    return "".join(parts)
 
 
 def _query_content_tokens(text: str) -> Set[str]:
-    return {
-        t.lower()
-        for t in _QUERY_TOKEN_RE.findall(text or "")
-        if t.lower() not in _QUERY_STOPWORDS
-    }
+    """Alphabetic tokens length ≥ 3 — no stopword / cue vocabulary."""
+    return {t for t in "".join(ch.lower() if ch.isalpha() else " " for ch in (text or "")).split() if len(t) >= 3}
 
 
-def _structured_table_query_variants(query: str) -> List[str]:
-    """Deterministic variants that prioritize tables/schedules for lookup asks.
+def _numeric_query_variants(query: str) -> List[str]:
+    """Extra search strings from the question's own numbers + content words.
 
-    Domain-agnostic: no product names, indications, or unit vocab. Surfaces
-    numeric tokens from the question so BM25 can hit matching cells.
+    Only tokens from the query — no canned cue phrases.
     """
     q = query.strip()
-    has_lookup = bool(_STRUCTURED_LOOKUP_RE.search(q))
-    nums = _STRUCTURED_NUM_RE.findall(q)
-    if not q or (not has_lookup and len(nums) < 2):
+    nums = _query_number_strings(q)
+    if not q or len(nums) < 2:
         return []
-    variants: List[str] = [
-        "table chart schedule parameters lookup",
-        "lookup table row column matching criteria",
-    ]
-    if nums:
-        variants.append("table " + " ".join(nums[:6]))
+    variants: List[str] = [" ".join(nums[:8])]
     topic_tokens = sorted(_query_content_tokens(q))[:8]
     if topic_tokens:
-        variants.append("table " + " ".join(topic_tokens))
+        variants.append(" ".join(topic_tokens + nums[:4]))
     return variants
+
+
+def _prev_word(text: str, index: int) -> str:
+    """Alphabetic word immediately before ``index`` (for bigram protection)."""
+    i = index - 1
+    while i >= 0 and not text[i].isalnum():
+        i -= 1
+    end = i + 1
+    while i >= 0 and text[i].isalpha():
+        i -= 1
+    return text[i + 1 : end].lower()
+
+
+def _caption_number_bigrams(caption: str) -> Set[Tuple[str, float]]:
+    """(prev_word, number) pairs from caption — structural ids without vocab."""
+    out: Set[Tuple[str, float]] = set()
+    for val, start, _end, _w in _number_spans(caption or ""):
+        prev = _prev_word(caption or "", start)
+        if prev:
+            out.add((prev, val))
+    return out
 
 
 def transform_query(
@@ -204,14 +261,14 @@ def transform_query(
     ``retrieve`` only enables them as a fallback when the top-1 hybrid RRF
     score falls below ``TABLE_RAG_REWRITE_FALLBACK_THRESHOLD``.
 
-    Deterministic table-oriented variants are always included.
+    Numeric variants (from the question itself) are always considered.
     Blank strip → ``[]``.
     """
     original_query = query.strip()
     if not original_query:
         return []
 
-    structured_variants = _structured_table_query_variants(original_query)
+    numeric_variants = _numeric_query_variants(original_query)
 
     generated_queries: List[str] = []
     rewrite_enabled = bool(
@@ -227,10 +284,8 @@ def transform_query(
             )
             generated_queries = []
 
-    # Prefer deterministic table-oriented variants ahead of LLM paraphrases so
-    # narrative chunks do not crowd out the matching schedule/matrix.
     return _dedupe_queries(
-        [original_query, *structured_variants, *generated_queries]
+        [original_query, *numeric_variants, *generated_queries]
     )[:MAX_QUERY_VARIANTS]
 
 
@@ -510,35 +565,265 @@ def _dedupe_table_hits_by_table_id(
     return [best[k] for k in order] + passthrough
 
 
+_TABLE_CAPTION_RE = re.compile(
+    r"(?im)^\s*((?:tables?|tbl\.?)\s+[0-9A-Z][^\n]{0,240})"
+)
+
+
+def _recover_chunk_caption(item: Dict[str, Any]) -> str:
+    """Backfill caption for corpora indexed before caption metadata existed."""
+    cap = str(item.get("caption") or item.get("table_title") or "").strip()
+    if cap:
+        return cap
+    raw_tj = item.get("table_json")
+    try:
+        if isinstance(raw_tj, str) and raw_tj.strip():
+            parsed = json.loads(raw_tj)
+        elif isinstance(raw_tj, dict):
+            parsed = raw_tj
+        else:
+            parsed = None
+        if isinstance(parsed, dict):
+            cap = str(parsed.get("caption") or parsed.get("table_title") or "").strip()
+            if cap:
+                return cap
+    except Exception:
+        pass
+    text = str(item.get("text") or "")
+    m = _TABLE_CAPTION_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
+def _table_payload_from_chunk(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    table = item.get("table")
+    if isinstance(table, dict) and (table.get("headers") or table.get("rows")):
+        return table
+    raw = item.get("table_json")
+    try:
+        if isinstance(raw, str) and raw.strip():
+            parsed = json.loads(raw)
+        elif isinstance(raw, dict):
+            parsed = raw
+        else:
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        return None
+    return None
+
+
+def _caption_number_coverage(caption: str, query: str) -> int:
+    """How many query numbers fall in numeric bands stated in the caption.
+
+    Domain-agnostic geometry (e.g. ``6 to <12`` covers ``8``) so sibling
+    matrices whose titles encode applicability bands outrank ones that do not.
+    """
+    if not (caption or "").strip() or not (query or "").strip():
+        return 0
+    try:
+        from app.rag.table_rag.independent_rows import (
+            _query_numbers,
+            _text_covers_number,
+        )
+    except Exception:
+        return 0
+    covered = 0
+    for n in _query_numbers(query):
+        if _text_covers_number(caption, n):
+            covered += 1
+    return covered
+
+
+def _axis_label_for_affinity(text: str) -> str:
+    """Axis label for word affinity: drop numerals and parenthetical units."""
+    cleaned = re.sub(r"\([^)]*\)", " ", text or "")
+    cleaned = re.sub(r"\d+(?:\.\d+)?", " ", cleaned)
+    return cleaned.strip()
+
+
+def _lookup_query_for_hydrate(query: str, chunks: Sequence[Dict[str, Any]]) -> str:
+    """Mask query numbers not anchored to retrieved table axes.
+
+    Hydrate/prune uses the query string for band matching. Numbers that only
+    appear as ages, prescribed amounts, or cadence counts (no local-word
+    affinity to a retrieved axis that also covers the number) are replaced
+    with ``N`` so they cannot pull the wrong row/column — without changing
+    hydrate or independent_rows.
+
+    Also normalizes thousands separators and preserves numbers that form the
+    same (prev_word, value) bigram as a retrieved caption (structural ids).
+    """
+    if not (query or "").strip() or not chunks:
+        return query
+    # ``1,200`` → ``1200`` so prune sees one number, not ``1`` + ``200``.
+    query = _normalize_thousands_in_text(query)
+    try:
+        from app.rag.table_rag.independent_rows import (
+            _axis_affinity,
+            _parallel_value_columns,
+            _query_numbers,
+            _text_covers_number,
+        )
+    except Exception:
+        return query
+
+    # Build (cover_text, affinity_axis) pairs from retrieved table geometry.
+    axes: List[Tuple[str, str]] = []
+    protected_bigrams: Set[Tuple[str, float]] = set()
+    for chunk in chunks:
+        cap = _recover_chunk_caption(chunk)
+        table = _table_payload_from_chunk(chunk)
+        if not cap and table:
+            cap = str(table.get("caption") or table.get("table_title") or "")
+        protected_bigrams |= _caption_number_bigrams(cap)
+        if not table:
+            continue
+        headers = [str(h or "").strip() for h in (table.get("headers") or [])]
+        rows = table.get("rows") or []
+        if not headers:
+            continue
+        value_cols = _parallel_value_columns(headers)
+        key_cols = [i for i in range(len(headers)) if i not in value_cols] or [0]
+        for ci in key_cols:
+            label = _axis_label_for_affinity(headers[ci])
+            for row in rows:
+                cell = str(row[ci] if ci < len(row) else "")
+                if cell:
+                    axes.append((cell, label or headers[ci]))
+        for ci in sorted(value_cols):
+            h = headers[ci]
+            axes.append((h, _axis_label_for_affinity(h) or h))
+
+    if not axes:
+        return query
+
+    keep: Set[float] = set()
+    for n in _query_numbers(query):
+        for cover_text, axis_label in axes:
+            if not _text_covers_number(cover_text, n):
+                continue
+            if _axis_affinity(n, query, axis_label) > 0:
+                keep.add(n)
+                break
+
+    if not keep:
+        return query
+
+    # Rewrite via number spans (keeps thousands intact; no digit-regex split).
+    parts: List[str] = []
+    last = 0
+    for val, start, end, written in _number_spans(query):
+        parts.append(query[last:start])
+        prev = _prev_word(query, start)
+        if val in keep or (prev, val) in protected_bigrams:
+            parts.append(written)
+        else:
+            parts.append("N")
+        last = end
+    parts.append(query[last:])
+    return "".join(parts)
+
+
+def _caption_coalesce_key(caption: str) -> str:
+    """Stable key for grouping prose/table hits that share a caption."""
+    return " ".join((caption or "").lower().split())
+
+
+def _is_structured_table_chunk(item: Dict[str, Any]) -> bool:
+    """True when the chunk carries a real table payload / table_id."""
+    chunk_type = str(
+        item.get("chunk_type") or item.get("content_type") or ""
+    ).lower()
+    index_kind = str(item.get("index_kind") or "").lower()
+    table_kinds = {
+        "table",
+        "table_card",
+        "table_row_window",
+        "table_summary",
+        "table_interpretation",
+        "table_row",
+    }
+    return bool(
+        chunk_type in table_kinds
+        or index_kind in table_kinds
+        or item.get("table_id")
+        or item.get("table_json")
+    )
+
+
+def _coalesce_caption_sibling_scores(
+    candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Raise structured table scores to match stronger prose caption siblings.
+
+    Hybrid often ranks a text chunk that quotes ``Table N. …`` above the
+    layout table row (no ``table_id`` on the prose hit). Table boost then
+    amplifies the weaker sibling table and the wrong matrix wins. Before
+    boost, copy the best caption-group score onto every structured hit that
+    shares that recovered caption — no reindex required.
+    """
+    if not candidates:
+        return candidates
+    groups: Dict[str, List[int]] = {}
+    caps: List[str] = []
+    for idx, chunk in enumerate(candidates):
+        cap = _recover_chunk_caption(chunk)
+        caps.append(cap)
+        if not cap:
+            continue
+        key = _caption_coalesce_key(cap)
+        if key:
+            groups.setdefault(key, []).append(idx)
+    if not groups:
+        return candidates
+
+    out = [dict(c) for c in candidates]
+    for key, idxs in groups.items():
+        if len(idxs) < 2:
+            continue
+        best = max(float(out[i].get("score") or 0) for i in idxs)
+        structured = [i for i in idxs if _is_structured_table_chunk(out[i])]
+        if not structured:
+            continue
+        for i in structured:
+            cur = float(out[i].get("score") or 0)
+            if cur < best:
+                out[i]["score"] = best
+                out[i]["_caption_score_coalesced"] = True
+            if caps[i] and not out[i].get("caption"):
+                out[i]["caption"] = caps[i]
+    return out
+
+
 def _boost_table_candidates(
     query: str,
     candidates: List[Dict[str, Any]],
     *,
     modality: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Prefer table / Table-facts / TableRAG index chunks for lookup questions.
+    """Prefer table chunks when routing or numeric evidence says so.
 
-    Domain-agnostic: when the query looks like a table/schedule/parameter
-    lookup, boost any table (or linearized ``Table facts:`` block). Extra
-    weight when the table text shares content tokens with the query so the
-    relevant matrix outranks unrelated narrative paragraphs.
-
-    ``modality`` comes from TableRAG query routing:
-      - table: stronger table boost + mild paragraph downrank
-      - both: moderate table boost
-      - paragraph: no boost (preserve text RAG)
+    Uses query modality from the router and/or presence of multiple numbers —
+    no keyword vocabulary for 'table/schedule/lookup'.
     """
     if not candidates:
         return candidates
 
     modality_l = (modality or "").lower()
-    structured_query = bool(_STRUCTURED_LOOKUP_RE.search(query or ""))
-    # Boost only when the question looks tabular/numeric or routing says table.
-    # Plain "both"/paragraph questions keep existing text-RAG ranking.
-    if modality_l == "paragraph" and not structured_query:
+    numeric_lookup = len(_query_number_strings(query or "")) >= 2
+    # table/both → boost; paragraph stays text-RAG unless the question carries
+    # multiple numbers (matrix-style ask without cue words).
+    if modality_l == "paragraph" and not numeric_lookup:
         return candidates
-    if modality_l != "table" and not structured_query:
+    if modality_l not in {"table", "both"} and not numeric_lookup:
         return candidates
+
+    # Prose hits that quote the same caption can outrank the layout table row;
+    # fold their RRF onto the structured sibling before applying factors.
+    candidates = _coalesce_caption_sibling_scores(candidates)
 
     q_tokens = _query_content_tokens(query or "")
     boosted: List[Dict[str, Any]] = []
@@ -595,17 +880,30 @@ def _boost_table_candidates(
                 factor += 0.1
         if is_table and q_tokens:
             overlap = len(q_tokens & _query_content_tokens(text))
-            # Caption/section overlap prefers the matrix whose title matches the
-            # question (any domain) over sibling tables in the same PDF.
-            captionish = " ".join(
-                str(item.get(k) or "")
-                for k in ("caption", "section", "subsection", "table_title")
-            )
+            # Prefer the table's own caption for title overlap. Sticky section/
+            # subsection headings often belong to a sibling block and must not
+            # outrank the caption when one is available (works on old indexes
+            # via caption recovery from table_json / chunk text).
+            caption = _recover_chunk_caption(item)
+            if caption:
+                item["caption"] = caption
+                captionish = caption
+            else:
+                captionish = " ".join(
+                    str(item.get(k) or "")
+                    for k in ("section", "subsection", "table_title")
+                )
             cap_overlap = len(q_tokens & _query_content_tokens(captionish))
             if cap_overlap >= 2:
                 factor += 0.35
             elif cap_overlap == 1:
                 factor += 0.18
+            # Caption band coverage (e.g. age/period ranges in the title).
+            cap_cov = _caption_number_coverage(captionish, query or "")
+            if cap_cov >= 2:
+                factor += 0.45
+            elif cap_cov == 1:
+                factor += 0.32
             if overlap >= 2:
                 factor += 0.2
             elif overlap == 1:
@@ -632,12 +930,80 @@ def _boost_table_candidates(
                     factor *= 0.75
         if modality_l == "table" and is_paragraph:
             factor *= 0.85
+        # Stash caption coverage for a relative pass among sibling tables.
+        item["_cap_num_cov"] = (
+            _caption_number_coverage(
+                str(item.get("caption") or ""), query or ""
+            )
+            if is_table
+            else 0
+        )
         if factor != 1.0:
             item["score"] = score * factor
             item["boost_reason"] = "structured_table"
             if modality_l:
                 item["query_modality"] = modality_l
         boosted.append(item)
+
+    # Among tables, prefer captions that cover more query numbers (e.g. an
+    # age/period band in the title). Down-rank siblings with strictly lower
+    # coverage so a weak vector hit with a matching band can outrank a strong
+    # hit whose caption excludes that number.
+    max_cov = 0
+    for item in boosted:
+        if item.get("boost_reason") == "structured_table":
+            max_cov = max(max_cov, int(item.get("_cap_num_cov") or 0))
+    if max_cov > 0:
+        for item in boosted:
+            cov = int(item.get("_cap_num_cov") or 0)
+            if item.get("boost_reason") == "structured_table" and cov < max_cov:
+                item["score"] = float(item.get("score") or 0) * 0.7
+                item["boost_reason"] = "structured_table_cap_cov"
+            item.pop("_cap_num_cov", None)
+    else:
+        for item in boosted:
+            item.pop("_cap_num_cov", None)
+
+    # Relative caption↔query overlap among siblings, ignoring tokens that
+    # appear in every sibling caption (shared boilerplate). Down-rank only
+    # when strictly below the sibling max so RRF order holds on ties.
+    table_caps: List[Tuple[Dict[str, Any], Set[str]]] = []
+    for item in boosted:
+        if not item.get("boost_reason"):
+            continue
+        cap = str(item.get("caption") or "")
+        if not cap:
+            continue
+        table_caps.append((item, _query_content_tokens(cap)))
+    if len(table_caps) >= 2 and q_tokens:
+        df: Dict[str, int] = {}
+        for _item, toks in table_caps:
+            for t in toks:
+                df[t] = df.get(t, 0) + 1
+        n_caps = len(table_caps)
+        universal = {t for t, c in df.items() if c >= n_caps}
+        scored_ov: List[Tuple[Dict[str, Any], int]] = []
+        max_ov = 0
+        for item, toks in table_caps:
+            # Prefer longer tokens so tiny fragments (e.g. unit stems) do not
+            # dominate sibling separation.
+            ov = len(
+                {
+                    t
+                    for t in (q_tokens & toks) - universal
+                    if len(t) >= 5
+                }
+            )
+            scored_ov.append((item, ov))
+            max_ov = max(max_ov, ov)
+        if max_ov > 0:
+            for item, ov in scored_ov:
+                if ov < max_ov:
+                    item["score"] = float(item.get("score") or 0) * 0.78
+                    if str(item.get("boost_reason") or "").startswith(
+                        "structured_table"
+                    ):
+                        item["boost_reason"] = "structured_table_cap_ov"
     return boosted
 
 
@@ -1068,8 +1434,16 @@ def retrieve(
         try:
             from app.rag.table_rag import hydrate_retrieved_tables
 
+            # Scrub unanchored numbers (age/prescribed/cadence) before prune.
+            hydrate_query = _lookup_query_for_hydrate(query, top_chunks)
             top_chunks = hydrate_retrieved_tables(
-                top_chunks, user_id=user_id, query=query
+                top_chunks, user_id=user_id, query=hydrate_query
+            )
+            # Hydrate may re-order by caption overlap; restore retrieval scores
+            # so boost/RRF ranking (e.g. indication-matched table) stays first.
+            top_chunks.sort(
+                key=lambda x: float(x.get("score") or 0),
+                reverse=True,
             )
         except Exception as exc:
             logger.warning("TableRAG hydrate skipped: %s", exc)

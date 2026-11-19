@@ -212,6 +212,8 @@ def _chunk_metadata(
         "page_end",
         "section",
         "subsection",
+        "caption",
+        "table_title",
         "content_type",
         "extraction_method",
         "ocr_confidence",
@@ -232,6 +234,22 @@ def _chunk_metadata(
         value = chunk.get(key)
         if value not in (None, ""):
             metadata[key] = value
+    # Prefer caption from table_json when the chunk dict omitted it.
+    if not metadata.get("caption"):
+        raw_tj = chunk.get("table_json")
+        try:
+            if isinstance(raw_tj, str) and raw_tj.strip():
+                parsed = json.loads(raw_tj)
+            elif isinstance(raw_tj, dict):
+                parsed = raw_tj
+            else:
+                parsed = None
+            if isinstance(parsed, dict):
+                cap = str(parsed.get("caption") or parsed.get("table_title") or "").strip()
+                if cap:
+                    metadata["caption"] = cap[:2000]
+        except Exception:
+            pass
     if chunk.get("table_needs_verification"):
         metadata["table_needs_verification"] = True
     for key in ("bbox", "table_json", "layout_metadata"):
@@ -476,6 +494,8 @@ def query_chunks(
                 "page_end",
                 "section",
                 "subsection",
+                "caption",
+                "table_title",
                 "content_type",
                 "extraction_method",
                 "ocr_confidence",
@@ -560,6 +580,8 @@ def get_chunks_by_ids(user_id: str, chunk_ids: List[str]) -> List[Dict[str, Any]
             "page_end",
             "section",
             "subsection",
+            "caption",
+            "table_title",
             "content_type",
             "extraction_method",
             "chunk_index",

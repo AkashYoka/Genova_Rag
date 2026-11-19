@@ -258,11 +258,37 @@ def _chunk_table(
     rows: List[List[str]] = [list(row) for row in (table.get("rows") or [])]
     caption = table.get("caption") or element.metadata.get("caption") or ""
     header_text = _table_header_text(headers)
-    prefix_parts = [part for part in (section, subsection) if part]
+    # Caption is the table's own title; do not keep sticky subsection headings
+    # that often belong to a previous sibling block.
+    table_subsection = "" if caption else subsection
+    prefix_parts = [part for part in (section, table_subsection) if part]
     context = "\n".join(prefix_parts)
     if caption:
         context = f"{context}\n{caption}".strip()
     base = "\n\n".join(part for part in (context, header_text) if part)
+
+    def _table_fields(extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        fields: Dict[str, Any] = {
+            "chunk_type": "table",
+            "content_type": "table",
+            "section": section,
+            "subsection": table_subsection,
+            "extraction_method": element.extraction_method,
+            "table_json": json.dumps(table, ensure_ascii=False),
+            "layout_metadata": json.dumps(
+                {"bboxes": [list(element.bbox.as_tuple())] if element.bbox else []}
+            ),
+        }
+        if caption:
+            fields["caption"] = str(caption)
+        if document_id:
+            fields["document_id"] = str(document_id)
+        if document_name:
+            fields["document_name"] = document_name
+        if extra:
+            fields.update(extra)
+        return fields
+
     if not rows:
         return [
             {
@@ -271,15 +297,7 @@ def _chunk_table(
                 "page_start": element.page_start,
                 "page_end": element.page_end,
                 "chunk_index": chunk_index_start,
-                "chunk_type": "table",
-                "content_type": "table",
-                "section": section,
-                "subsection": subsection,
-                "extraction_method": element.extraction_method,
-                "table_json": json.dumps(table, ensure_ascii=False),
-                "layout_metadata": json.dumps({"bboxes": [list(element.bbox.as_tuple())] if element.bbox else []}),
-                **({"document_id": str(document_id)} if document_id else {}),
-                **({"document_name": document_name} if document_name else {}),
+                **_table_fields(),
             }
         ]
 
@@ -291,7 +309,7 @@ def _chunk_table(
         rows,
         caption=caption,
         section=section,
-        subsection=subsection,
+        subsection=table_subsection,
         include_markdown=True,
     )
     full_text = rich_text.strip() or "\n\n".join(part for part in (context, element.text) if part)
@@ -303,15 +321,7 @@ def _chunk_table(
                 "page_start": element.page_start,
                 "page_end": element.page_end,
                 "chunk_index": chunk_index_start,
-                "chunk_type": "table",
-                "content_type": "table",
-                "section": section,
-                "subsection": subsection,
-                "extraction_method": element.extraction_method,
-                "table_json": json.dumps(table, ensure_ascii=False),
-                "layout_metadata": json.dumps({"bboxes": [list(element.bbox.as_tuple())] if element.bbox else []}),
-                **({"document_id": str(document_id)} if document_id else {}),
-                **({"document_name": document_name} if document_name else {}),
+                **_table_fields(),
             }
         ]
 
@@ -351,22 +361,27 @@ def _chunk_table(
                 "page_start": element.page_start,
                 "page_end": element.page_end,
                 "chunk_index": chunk_index_start + len(chunks),
-                "chunk_type": "table",
-                "content_type": "table",
-                "section": section,
-                "subsection": subsection,
-                "extraction_method": element.extraction_method,
-                "table_json": json.dumps(part_table, ensure_ascii=False),
-                "table_part": len(chunks) + 1,
-                "layout_metadata": json.dumps(
+                **_table_fields(
                     {
-                        "bboxes": [list(element.bbox.as_tuple())] if element.bbox else [],
-                        "table_split": True,
-                        "row_start": table.get("rows", []).index(current[0]) if current[0] in table.get("rows", []) else 0,
+                        "table_json": json.dumps(part_table, ensure_ascii=False),
+                        "table_part": len(chunks) + 1,
+                        "layout_metadata": json.dumps(
+                            {
+                                "bboxes": (
+                                    [list(element.bbox.as_tuple())]
+                                    if element.bbox
+                                    else []
+                                ),
+                                "table_split": True,
+                                "row_start": (
+                                    table.get("rows", []).index(current[0])
+                                    if current[0] in table.get("rows", [])
+                                    else 0
+                                ),
+                            }
+                        ),
                     }
                 ),
-                **({"document_id": str(document_id)} if document_id else {}),
-                **({"document_name": document_name} if document_name else {}),
             }
         )
         current = []

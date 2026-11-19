@@ -330,6 +330,9 @@ def build_page_elements(
             table_payload["page_start"] = page_start
             table_payload["page_end"] = page_end
             table_ordinal += 1
+            # Captioned tables own their title; sticky subsection headings from
+            # prior siblings often pollute retrieval metadata (wrong section).
+            table_subsection = "" if obj.caption else state.subsection
             elements.append(
                 DocumentElement(
                     element_type="table",
@@ -338,7 +341,7 @@ def build_page_elements(
                     page_end=page_end,
                     bbox=obj.bbox,
                     section=state.section,
-                    subsection=state.subsection,
+                    subsection=table_subsection,
                     extraction_method=obj.extraction_method,
                     content_type="table",
                     metadata={
